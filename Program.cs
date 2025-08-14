@@ -23,7 +23,7 @@ namespace LmStudioInteractive
         };
 
         private static readonly Uri BaseUri = new("http://127.0.0.1:1234"); // LM Studio default
-        private const string DefaultModel = "";
+        private const string DefaultModel = "qwen/qwen3-4b-2507";
 
         public static async Task Main(string[] args)
         {
