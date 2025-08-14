@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "CodingAgent": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
