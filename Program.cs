@@ -50,7 +50,7 @@ namespace thuvu
             // Tools you expose to the model
             var tools = BuildTools.GetBuildTools();
             Console.WriteLine("thuvu version "+Helpers.GetCurrentGitTag());
-            Console.WriteLine("(type /exit to quit, /help for full list of commands");
+            Console.WriteLine("type /exit to quit, /help for full list of commands");
             Console.WriteLine($"Model: {model}");
             Console.WriteLine();
 
