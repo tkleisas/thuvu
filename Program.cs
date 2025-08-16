@@ -24,7 +24,7 @@ namespace thuvu
             WriteIndented = false
         };
 
-        private static readonly Uri BaseUri = new("http://127.0.0.1:1234"); // LM Studio default
+        //private static readonly Uri BaseUri = new("http://127.0.0.1:1234"); // LM Studio default
         private const string DefaultModel = "qwen/qwen3-4b-2507";
         //private static bool _streamResponses = true; // default: streaming on
         private static int _currentContextLength = 0;
@@ -35,8 +35,8 @@ namespace thuvu
             var model = DefaultModel;
             Models.AgentConfig.LoadConfig();
 
-            using var http = new HttpClient { BaseAddress = BaseUri, Timeout = TimeSpan.FromMinutes(10) };
-            _currentContextLength = (int)await GetContextLengthAsync(http, model, CancellationToken.None);
+            using var http = new HttpClient { BaseAddress = new Uri(AgentConfig.Config.HostUrl), Timeout = TimeSpan.FromMinutes(10) };
+            _currentContextLength = (int)await GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None);
             // Conversation state
             var messages = new List<ChatMessage>
             {
@@ -179,6 +179,7 @@ namespace thuvu
                     final = await CompleteWithToolsAsync(
                         http, AgentConfig.Config.Model, messages, tools, CancellationToken.None,
                         onToolResult: AutoPrettyPrinterCallback  // <— NEW
+                        
                     );
                 }
 
@@ -241,7 +242,7 @@ namespace thuvu
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
                         var toolResult = await ExecuteToolAsync(name, argsJson, ct);
-
+                        Console.WriteLine($"[tool] {name}({argsJson}) => {toolResult}");
                         // NEW: auto pretty print callback
                         onToolResult?.Invoke(name, toolResult);
 
@@ -300,7 +301,7 @@ namespace thuvu
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
                         var toolResult = await ExecuteToolAsync(name, argsJson, ct);
-
+                        Console.WriteLine($"[tool] {name}({argsJson}) => {toolResult}");
                         // NEW: auto pretty print callback
                         onToolResult?.Invoke(name, toolResult);
 
