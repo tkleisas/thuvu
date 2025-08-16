@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-
-internal static class UnifiedDiff
+namespace thuvu;
+public static class UnifiedDiff
 {
     public static (bool applied, string rejects) Apply(string patch, string root)
     {

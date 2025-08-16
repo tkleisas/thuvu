@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace CodingAgent.BuildTools
+namespace thuvu.Tools
 {
     public class SearchFilesToolImpl
     {
@@ -67,7 +67,7 @@ namespace CodingAgent.BuildTools
 
             return results.ToArray();
         }
-        private static string? DetectProjectRoot(string startDir)
+        public static string? DetectProjectRoot(string startDir)
         {
             try
             {

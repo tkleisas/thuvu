@@ -1,0 +1,64 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>false</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <DockerfileContext>.</DockerfileContext>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
+  </ItemGroup>
+	<PropertyGroup>
+		<DQ>"</DQ>
+	</PropertyGroup>
+
+	<!-- Compute Git values BEFORE the SDK writes assembly attributes -->
+	<Target Name="ComputeGitVersion" BeforeTargets="GenerateAssemblyInfo">
+		<Exec Command="git describe --tags --always --dirty" ConsoleToMSBuild="true" IgnoreExitCode="true">
+			<Output TaskParameter="ConsoleOutput" PropertyName="GitTagRaw" />
+		</Exec>
+		<Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true">
+			<Output TaskParameter="ConsoleOutput" PropertyName="GitShaShortRaw" />
+		</Exec>
+
+		<PropertyGroup>
+			<GitTag>$([System.String]::Copy('$(GitTagRaw)').Trim())</GitTag>
+			<GitShaShort>$([System.String]::Copy('$(GitShaShortRaw)').Trim())</GitShaShort>
+
+			<!-- Fallbacks for non-git builds -->
+			<GitTagSafe Condition="'$(GitTag)' == ''">unknown</GitTagSafe>
+			<GitTagSafe Condition="'$(GitTag)' != ''">$(GitTag)</GitTagSafe>
+			<GitShaShort Condition="'$(GitShaShort)' == ''">0000000</GitShaShort>
+
+			<!-- Let the SDK emit [assembly: AssemblyInformationalVersion(...)] -->
+			<InformationalVersion>$(GitTagSafe)</InformationalVersion>
+		</PropertyGroup>
+	</Target>
+
+	<!-- Generate ONLY the helper class with constants -->
+	<Target Name="GenerateGitInfo" BeforeTargets="CoreCompile" DependsOnTargets="ComputeGitVersion">
+		<ItemGroup>
+			<_GitInfoLines Include="// &lt;auto-generated/&gt;" />
+			<!-- Use a block namespace to avoid a semicolon; escape %3B for semicolons in items -->
+			<_GitInfoLines Include="namespace $(RootNamespace) {" Condition="'$(RootNamespace)' != ''" />
+			<_GitInfoLines Include="internal static class ThisBuild {" />
+			<_GitInfoLines Include="    public const string GitTag = $(DQ)$(GitTagSafe)$(DQ)%3B" />
+			<_GitInfoLines Include="    public const string GitSha = $(DQ)$(GitShaShort)$(DQ)%3B" />
+			<_GitInfoLines Include="}" />
+			<_GitInfoLines Include="}" Condition="'$(RootNamespace)' != ''" />
+		</ItemGroup>
+
+		<WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs"
+						  Lines="@(_GitInfoLines)"
+						  Overwrite="true"
+						  Encoding="UTF-8" />
+		<ItemGroup>
+			<Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
+		</ItemGroup>
+	</Target>
+
+</Project>

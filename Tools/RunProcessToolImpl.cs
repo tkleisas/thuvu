@@ -5,13 +5,13 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace CodingAgent.Tools
+namespace thuvu.Tools
 {
     public class RunProcessToolImpl
     {
         // --- run_process (whitelisted) ---
-        private static readonly HashSet<string> AllowedCmds = new(StringComparer.OrdinalIgnoreCase)
-{ "dotnet", "bash", "powershell" };
+        public static readonly HashSet<string> AllowedCmds = new(StringComparer.OrdinalIgnoreCase)
+        { "dotnet", "git", "bash", "powershell" };
 
         public static async Task<string> RunProcessToolAsync(string rawArgs)
         {

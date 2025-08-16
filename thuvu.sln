@@ -1,9 +1,9 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.14.36401.2 d17.14
+VisualStudioVersion = 17.14.36401.2
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodingAgent", "CodingAgent.csproj", "{F640EAE1-B540-451D-B9EC-061B925C8931}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "thuvu", "thuvu.csproj", "{F640EAE1-B540-451D-B9EC-061B925C8931}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

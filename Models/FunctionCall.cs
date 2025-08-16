@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
-namespace CodingAgent.Models
+namespace thuvu.Models
 {
     public sealed class FunctionCall
     {

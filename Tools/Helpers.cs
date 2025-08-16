@@ -1,11 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace CodingAgent.Tools
+namespace thuvu.Tools
 {
     public class Helpers
     {
@@ -92,6 +93,14 @@ namespace CodingAgent.Tools
             return doc.RootElement.TryGetProperty("query", out var q) && q.ValueKind == JsonValueKind.String
                 ? (q.GetString() ?? "")
                 : "";
+        }
+
+        public static string GetCurrentGitTag()
+        {
+            var info = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion ?? "unknown";
+            return info;
         }
 
     }

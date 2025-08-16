@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace CodingAgent.Tools
+namespace thuvu.Tools
 {
     public class DotnetToolImpl
     {

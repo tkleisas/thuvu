@@ -1,0 +1,3 @@
+T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage Changelog
+
+16 Aug 2025. thuvu version 0.0.2
