@@ -12,6 +12,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
   </ItemGroup>
+  <ItemGroup>
+    <Folder Include="images\" />
+  </ItemGroup>
 	<PropertyGroup>
 		<DQ>"</DQ>
 	</PropertyGroup>
@@ -52,10 +55,7 @@
 			<_GitInfoLines Include="}" Condition="'$(RootNamespace)' != ''" />
 		</ItemGroup>
 
-		<WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs"
-						  Lines="@(_GitInfoLines)"
-						  Overwrite="true"
-						  Encoding="UTF-8" />
+		<WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs" Lines="@(_GitInfoLines)" Overwrite="true" Encoding="UTF-8" />
 		<ItemGroup>
 			<Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
 		</ItemGroup>
