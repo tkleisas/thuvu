@@ -1,16 +1,18 @@
 ﻿using CodingAgent;
-using thuvu.Models;
-using thuvu.Tools;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using thuvu.Models;
+using thuvu.Tools;
 
 namespace thuvu
 {
@@ -24,12 +26,14 @@ namespace thuvu
 
         private static readonly Uri BaseUri = new("http://127.0.0.1:1234"); // LM Studio default
         private const string DefaultModel = "qwen/qwen3-4b-2507";
-        private static bool _streamResponses = true; // default: streaming on
+        //private static bool _streamResponses = true; // default: streaming on
         private static int _currentContextLength = 0;
         public static async Task Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
             var model = DefaultModel;
+            Models.AgentConfig.LoadConfig();
+
             using var http = new HttpClient { BaseAddress = BaseUri, Timeout = TimeSpan.FromMinutes(10) };
             _currentContextLength = (int)await GetContextLengthAsync(http, model, CancellationToken.None);
             // Conversation state
@@ -49,9 +53,11 @@ namespace thuvu
 
             // Tools you expose to the model
             var tools = BuildTools.GetBuildTools();
-            Console.WriteLine("thuvu version "+Helpers.GetCurrentGitTag());
+            Console.WriteLine("T.H.U.V.U. coding agent (C) 2025 "+Helpers.GetCurrentGitTag());
             Console.WriteLine("type /exit to quit, /help for full list of commands");
-            Console.WriteLine($"Model: {model}");
+            Console.WriteLine($"Config file: {AgentConfig.GetConfigPath()}");
+            Console.WriteLine($"Model: {AgentConfig.Config.Model}");
+            Console.WriteLine($"Host:  {AgentConfig.Config.HostUrl}");
             Console.WriteLine();
 
             while (true)
@@ -85,15 +91,15 @@ namespace thuvu
                 if (user.StartsWith("/stream", StringComparison.OrdinalIgnoreCase))
                 {
                     var arg = user.Length > 7 ? user[7..].Trim() : "";
-                    if (string.Equals(arg, "on", StringComparison.OrdinalIgnoreCase)) _streamResponses = true;
-                    else if (string.Equals(arg, "off", StringComparison.OrdinalIgnoreCase)) _streamResponses = false;
+                    if (string.Equals(arg, "on", StringComparison.OrdinalIgnoreCase)) AgentConfig.Config.StreamConfig = true;
+                    else if (string.Equals(arg, "off", StringComparison.OrdinalIgnoreCase)) AgentConfig.Config.StreamConfig = false;
                     else
                     {
                         Console.WriteLine("Usage: /stream on|off");
                         continue;
                     }
 
-                    Console.WriteLine($"Streaming is now {(_streamResponses ? "ON" : "OFF")}.");
+                    Console.WriteLine($"Streaming is now {(AgentConfig.Config.StreamConfig ? "ON" : "OFF")}.");
                     continue;
                 }
                 if (user.Equals("/help", StringComparison.OrdinalIgnoreCase))
@@ -135,6 +141,21 @@ namespace thuvu
                     await HandlePullCommandAsync(user, CancellationToken.None);
                     continue;
                 }
+                if (user.Equals("/config", StringComparison.OrdinalIgnoreCase) ||
+                    user.StartsWith("/config ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleConfigCommandAsync(user, http, CancellationToken.None);
+                    continue;
+                }
+
+                if (user.StartsWith("/set ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleSetCommandAsync(user, http, CancellationToken.None);
+                    continue;
+                }
+
+
+
                 if (string.IsNullOrWhiteSpace(user)) continue;
 
                 messages.Add(new ChatMessage("user", user));
@@ -142,10 +163,10 @@ namespace thuvu
                 // Send to LM Studio and run tool loop until final answer
                 string? final;
 
-                if (_streamResponses)
+                if (AgentConfig.Config.StreamConfig)
                 {
                     final = await CompleteWithToolsStreamingAsync(
-                        http, model, messages, tools, CancellationToken.None,
+                        http, AgentConfig.Config.Model, messages, tools, CancellationToken.None,
                         onToken: token => Console.Write(token),
                         onToolResult: AutoPrettyPrinterCallback,   // <— NEW
                         onUsage: u => Console.WriteLine($"\n[tokens] prompt={u.PromptTokens}, completion={u.CompletionTokens}, total={u.TotalTokens}")  // <— NEW
@@ -155,7 +176,7 @@ namespace thuvu
                 else
                 {
                     final = await CompleteWithToolsAsync(
-                        http, model, messages, tools, CancellationToken.None,
+                        http, AgentConfig.Config.Model, messages, tools, CancellationToken.None,
                         onToolResult: AutoPrettyPrinterCallback  // <— NEW
                     );
                 }
@@ -1233,8 +1254,107 @@ namespace thuvu
 
             return null;
         }
+        // /config show|path|reload|save
+        private static Task HandleConfigCommandAsync(string line, HttpClient http, CancellationToken ct)
+        {
+            var rest = line.Length > 7 ? line[7..].Trim() : "show";
+            switch (rest.ToLowerInvariant())
+            {
+                case "path":
+                    Console.WriteLine(AgentConfig.GetConfigPath());
+                    break;
+                case "show":
+                    Console.WriteLine($"HostUrl   : {AgentConfig.Config.HostUrl}");
+                    Console.WriteLine($"Model     : {AgentConfig.Config.Model}");
+                    Console.WriteLine($"Stream    : {AgentConfig.Config.Stream}");
+                    Console.WriteLine($"TimeoutMs : {AgentConfig.Config.TimeoutMs}");
+                    break;
+                case "reload":
+                    AgentConfig.LoadConfig();
+                    AgentConfig.ApplyConfig(http);
+                    Console.WriteLine("Config reloaded.");
+                    break;
+                case "save":
+                    Console.WriteLine(AgentConfig.SaveConfig() ? "Config saved." : "Failed to save config.");
+                    break;
+                default:
+                    Console.WriteLine("Usage: /config [show|path|reload|save]");
+                    break;
+            }
+            return Task.CompletedTask;
+        }
+
+        // /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms>
+        private static Task HandleSetCommandAsync(string line, HttpClient http, CancellationToken ct)
+        {
+            var args = TokenizeArgs(line); // you already have this helper
+            if (args.Count < 3)
+            {
+                Console.WriteLine("Usage: /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms>");
+                return Task.CompletedTask;
+            }
+
+            var key = args[1].ToLowerInvariant();
+            switch (key)
+            {
+                case "model":
+                    {
+                        var id = string.Join(' ', args.Skip(2));
+                        if (string.IsNullOrWhiteSpace(id)) { Console.WriteLine("Model id required."); break; }
+                        AgentConfig.Config.Model = id.Trim();
+                        AgentConfig.SaveConfig();
+                        Console.WriteLine($"Model set to: {AgentConfig.Config.Model}");
+                        break;
+                    }
+                case "host":
+                    {
+                        var url = string.Join(' ', args.Skip(2));
+                        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+                            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                        {
+                            Console.WriteLine("Please provide a valid http(s) URL, e.g. http://127.0.0.1:1234");
+                            break;
+                        }
+                        AgentConfig.Config.HostUrl = uri.ToString().TrimEnd('/'); // normalize (optional)
+                        AgentConfig.ApplyConfig(http); // update live client
+                        AgentConfig.SaveConfig();
+                        Console.WriteLine($"Host set to: {AgentConfig.Config.HostUrl}");
+                        break;
+                    }
+                case "stream":
+                    {
+                        var v = args[2].ToLowerInvariant();
+                        if (v is "on" or "off")
+                        {
+                            AgentConfig.Config.Stream = v == "on";
+
+                            AgentConfig.SaveConfig();
+                            Console.WriteLine($"Streaming is now {(AgentConfig.Config.Stream ? "ON" : "OFF")}.");
+                        }
+                        else Console.WriteLine("Usage: /set stream on|off");
+                        break;
+                    }
+                case "timeout":
+                    {
+                        if (!int.TryParse(args[2], out var ms) || ms < 1000 || ms > 600_000)
+                        {
+                            Console.WriteLine("Timeout must be 1000..600000 ms.");
+                            break;
+                        }
+                        AgentConfig.Config.TimeoutMs = ms;
+                        AgentConfig.SaveConfig();
+                        Console.WriteLine($"Default process timeout set to {AgentConfig.Config.TimeoutMs} ms.");
+                        break;
+                    }
+                default:
+                    Console.WriteLine("Supported keys: model, host, stream, timeout");
+                    break;
+            }
+            return Task.CompletedTask;
+        }
         private static void PrintHelp()
         {
+            Console.WriteLine("(T)ool for (H)eurustic (U)niversal (V)ersatile (U)sage (THUVU)");
             Console.WriteLine("Commands:");
             Console.WriteLine("  /help                         Show this help");
             Console.WriteLine("  /exit                         Quit");
@@ -1265,6 +1385,12 @@ namespace thuvu
             Console.WriteLine("         /pull");
             Console.WriteLine("         /pull --clean-working-tree --stash-untracked");
             Console.WriteLine("         /pull --merge --ff-only");
+            Console.WriteLine("  / config[show | path | reload | save]   Inspect or manage config file");
+            Console.WriteLine("  /set model<id> Change model id and persist");
+            Console.WriteLine("  /set host<url> Change LM Studio host URL and persist");
+            Console.WriteLine("  /set stream on| off                Toggle streaming and persist");
+            Console.WriteLine("  /set timeout<ms> Default timeout for / run & dotnet / git tools");
+
         }
 
 
