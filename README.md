@@ -11,8 +11,10 @@ qwen/qwen3-4b-2507 is a great model for this purpose, as it supports tool usage 
 It is also very fast and can run on a decent laptop without a GPU.
 
 ## Models and environment used
-LM studio and qwen/qwen3-4b-2507 as the local LLM. You can use any other model that supports tool usage.
-For lm studio you can increase the context window to the maximum supported by the model. That is going to 
+LM Studio 0.3.23 and qwen/qwen3-4b-2507 as the local LLM. Please note that I haven't tested this
+with previous versions of LM Studio, so you should use at least this version.
+You can use any other model that supports tool usage. This is indicated by the hammer icon on the model card in LM studio.
+For LM Studio you can increase the context window to the maximum supported by the model. That is going to 
 increase the memory usage a lot. For example for qwen3-4b-2507 when loaded I can see the memory usage
 going up to 38 GB. Also, if you do not have huge amounts of VRAM like me, you may have to uncheck the option
 Offload KV cache to GPU memory in the model settings, because it will not fit in the GPU memory.
@@ -21,7 +23,7 @@ Offload KV cache to GPU memory in the model settings, because it will not fit in
 ## How to run
 1. Download the code and extract it to a folder. You can built the code with Visual Studio 2022 or later, vs code
 with the C# extension or any other IDE that supports .NET 8.0 like Rider.
-2. Start LM studio and load the model you want to use on the Developer tab. The model will be served by default
+2. Start LM Studio and load the model you want to use on the Developer tab. The model will be served by default
 on http://localhost:1234.
 3. Run the thuvu.exe file and the agent will start. You can chat with it by typing in the console or invoke
 commands by typing a command starting with a slash, like /help that will show you the available commands.
