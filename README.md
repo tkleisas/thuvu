@@ -1,4 +1,4 @@
-# T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage
+ï»¿# T.H.U.V.U. â€” Tool for Heuristic Universal Versatile Usage
 
 I vibe-coded this agent in a few hours in order to better understand the mechanics of AI agents and see 
 how far can I go by using local LLMs.
@@ -9,5 +9,5 @@ It is somehow usable on my laptop running the LLM mainly on the CPU, on a Thinkp
 with 64 gigs of RAM, on windows 11.
 The agent is not perfect, but it is a good start for a local AI agent.
 The name is a reference to the late and great comedian Thanassis Veggos who made a 2 part film series 
-where the main character (ÈÂ) Èïõ Âïõ (Thou Vou) was an aspiring secret agent, studying at the
+where the main character (Î˜Î’) Î˜Î¿Ï… Î’Î¿Ï… (Thou Vou) was an aspiring secret agent, studying at the
 secret agent school and messing up all the tasks he was assigned.
