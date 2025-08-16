@@ -74,6 +74,7 @@ namespace thuvu.Tools
                 var dir = new DirectoryInfo(startDir);
                 while (dir != null)
                 {
+                    if (File.Exists("PROJECT.md")) return dir.FullName;
                     // Heuristics for a repo/project root
                     if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
                     if (Directory.EnumerateFiles(dir.FullName, "*.sln", SearchOption.TopDirectoryOnly).Any()) return dir.FullName;
@@ -116,30 +117,31 @@ namespace thuvu.Tools
 
         private static System.Text.RegularExpressions.Regex GlobToRegex(string glob)
         {
+            // Normalize to forward slashes
             var g = glob.Replace('\\', '/').Trim();
 
-            // Escape regex specials
-            var sb = new System.Text.StringBuilder();
-            foreach (var c in g)
-            {
-                if ("^$.+(){}[]|\\".Contains(c)) { sb.Append('\\').Append(c); }
-                else sb.Append(c);
-            }
-            g = sb.ToString();
+            // Escape regex special chars first
+            g = System.Text.RegularExpressions.Regex.Escape(g);
 
-            // ** handling
-            g = g.Replace("/**/", "/.*/");
-            g = g.Replace("**/", ".*(/)?");
-            g = g.Replace("/**", "(/.*)?");
-            g = g.Replace("**", ".*");
+            // Handle ** with care (order matters!)
+            // 1) "**/"  => zero or more directories, INCLUDING none (so root files match)
+            g = g.Replace(@"\*\*/", @"(?:.*/)?");
 
-            // * and ?
-            g = g.Replace("*", "[^/]*");
-            g = g.Replace("?", "[^/]");
+            // 2) "/**"  => slash followed by zero or more directories (or nothing)
+            g = g.Replace(@"/\*\*", @"(?:/.*)?");
+
+            // 3) remaining "**" => any chars (across dirs)
+            g = g.Replace(@"\*\*", @".*");
+
+            // Single-segment wildcards
+            g = g.Replace(@"\*", @"[^/]*");  // * within a path segment
+            g = g.Replace(@"\?", @"[^/]");   // ? within a path segment
 
             return new System.Text.RegularExpressions.Regex("^" + g + "$",
-                System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                System.Text.RegularExpressions.RegexOptions.Compiled |
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         }
+
 
         private static readonly string[] ExcludedDirNames = new[]
         {

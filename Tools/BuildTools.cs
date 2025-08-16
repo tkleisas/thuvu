@@ -177,7 +177,7 @@ namespace thuvu.Tools
                     """).RootElement
                 }
             },
-                        new Tool
+            new Tool
             {
                 Type = "function",
                 Function = new FunctionDef
@@ -191,6 +191,24 @@ namespace thuvu.Tools
                         "solution_or_project":{"type":"string"},
                         "filter":{"type":"string","description":"Run filter expression"},
                         "logger":{"type":"string","enum":["trx","console"],"default":"trx"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "dotnet_new",
+                    Description = "Run 'dotnet new'.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "solution_or_project":{"type":"string"},
+                        "template":{"type":"string","description":"Select template for project"}
                       }
                     }
                     """).RootElement

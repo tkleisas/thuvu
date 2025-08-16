@@ -31,6 +31,7 @@ namespace thuvu
         public static async Task Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
+            Console.WriteLine(AppContext.BaseDirectory);
             var model = DefaultModel;
             Models.AgentConfig.LoadConfig();
 
@@ -402,6 +403,8 @@ namespace thuvu
                         return await DotnetToolImpl.DotnetTestTool(argsJson);
                     case "dotnet_run":
                         return await DotnetToolImpl.DotnetRunTool(argsJson);
+                    case "dotnet_new":
+                        return await DotnetToolImpl.DotnetNewTool(argsJson);
                     // git
                     case "git_status":
                         return await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildGitStatusArgs(argsJson)));

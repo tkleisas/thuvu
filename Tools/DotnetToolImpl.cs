@@ -44,6 +44,16 @@ namespace thuvu.Tools
             if (!string.IsNullOrWhiteSpace(filter)) { args.Add("--filter"); args.Add(filter!); }
             return RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(new { cmd = "dotnet", args = args.ToArray() }));
         }
+        public static Task<string> DotnetNewTool(string rawArgs)
+        {
+            using var doc = JsonDocument.Parse(rawArgs);
+            var path = ExtractPath(rawArgs);
+            var template = doc.RootElement.TryGetProperty("template", out var t) ? t.GetString() : null;
+
+            var args = new List<string> { "new",  template};
+            Directory.CreateDirectory(path);
+            return RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(new { cmd = "dotnet", args = args.ToArray() }));
+        }
         public static string ExtractPath(string rawArgs)
         {
             using var doc = JsonDocument.Parse(rawArgs);
