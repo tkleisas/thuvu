@@ -17,45 +17,75 @@
   </ItemGroup>
 	<PropertyGroup>
 		<DQ>"</DQ>
+		<!-- literal double-quote -->
 	</PropertyGroup>
 
-	<!-- Compute Git values BEFORE the SDK writes assembly attributes -->
+	<!-- Compute tag & sha BEFORE the SDK writes assembly attributes -->
 	<Target Name="ComputeGitVersion" BeforeTargets="GenerateAssemblyInfo">
-		<Exec Command="git describe --tags --always --dirty" ConsoleToMSBuild="true" IgnoreExitCode="true">
-			<Output TaskParameter="ConsoleOutput" PropertyName="GitTagRaw" />
+		<!-- Last tag reachable from HEAD (i.e., what you created via `git tag <version>`) -->
+		<Exec Command="git describe --tags --abbrev=0"
+			  ConsoleToMSBuild="true"
+			  IgnoreExitCode="true">
+			<Output TaskParameter="ConsoleOutput" PropertyName="LastTagRaw" />
 		</Exec>
-		<Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true">
+
+		<!-- Abbreviated SHA -->
+		<Exec Command="git rev-parse --short HEAD"
+			  ConsoleToMSBuild="true"
+			  IgnoreExitCode="true">
 			<Output TaskParameter="ConsoleOutput" PropertyName="GitShaShortRaw" />
 		</Exec>
 
 		<PropertyGroup>
-			<GitTag>$([System.String]::Copy('$(GitTagRaw)').Trim())</GitTag>
+			<!-- Trim outputs -->
+			<LastTag>$([System.String]::Copy('$(LastTagRaw)').Trim())</LastTag>
 			<GitShaShort>$([System.String]::Copy('$(GitShaShortRaw)').Trim())</GitShaShort>
 
-			<!-- Fallbacks for non-git builds -->
-			<GitTagSafe Condition="'$(GitTag)' == ''">unknown</GitTagSafe>
-			<GitTagSafe Condition="'$(GitTag)' != ''">$(GitTag)</GitTagSafe>
+			<!-- Fallbacks if not in a Git repo -->
+			<LastTagSafe Condition="'$(LastTag)' == ''">0.0.0</LastTagSafe>
+			<LastTagSafe Condition="'$(LastTag)' != ''">$(LastTag)</LastTagSafe>
 			<GitShaShort Condition="'$(GitShaShort)' == ''">0000000</GitShaShort>
 
-			<!-- Let the SDK emit [assembly: AssemblyInformationalVersion(...)] -->
-			<InformationalVersion>$(GitTagSafe)</InformationalVersion>
+			<!-- Strip leading 'v' (common tag style like v1.2.3) -->
+			<LastTagTrimmed>$([System.Text.RegularExpressions.Regex]::Replace('$(LastTagSafe)', '^[vV]', ''))</LastTagTrimmed>
+
+			<!-- Extract numeric SemVer core for VersionPrefix (1, 1.2, 1.2.3, or 1.2.3.4) -->
+			<NumericVersion>$([System.Text.RegularExpressions.Regex]::Match('$(LastTagTrimmed)', '^\d+(\.\d+){0,3}').Value)</NumericVersion>
+
+			<!-- Stamp informational version (free-form; great for display) -->
+			<InformationalVersion>$(LastTagSafe)+sha.$(GitShaShort)</InformationalVersion>
+
+			<!-- OPTIONAL: if the tag is numeric, set VersionPrefix so assembly/package versions follow the tag -->
+			<VersionPrefix Condition="'$(NumericVersion)' != ''">$(NumericVersion)</VersionPrefix>
+
+			<!-- OPTIONAL: derive a 4-part FileVersion from VersionPrefix (fills with .0s) -->
+			<FileVersion Condition="'$(NumericVersion)' != ''">
+				$([System.Text.RegularExpressions.Regex]::Match('$(NumericVersion).0.0.0', '^\d+(?:\.\d+){0,3}').Value)
+			</FileVersion>
 		</PropertyGroup>
 	</Target>
 
-	<!-- Generate ONLY the helper class with constants -->
+	<!-- Generate a tiny helper class (constants) -->
 	<Target Name="GenerateGitInfo" BeforeTargets="CoreCompile" DependsOnTargets="ComputeGitVersion">
 		<ItemGroup>
 			<_GitInfoLines Include="// &lt;auto-generated/&gt;" />
-			<!-- Use a block namespace to avoid a semicolon; escape %3B for semicolons in items -->
+
+			<!-- Put inside your root namespace (no semicolons in items; use block namespace) -->
 			<_GitInfoLines Include="namespace $(RootNamespace) {" Condition="'$(RootNamespace)' != ''" />
+
 			<_GitInfoLines Include="internal static class ThisBuild {" />
-			<_GitInfoLines Include="    public const string GitTag = $(DQ)$(GitTagSafe)$(DQ)%3B" />
+			<!-- MSBuild item text uses ';' as a separator; escape it as %3B -->
+			<_GitInfoLines Include="    public const string VersionTag = $(DQ)$(LastTagSafe)$(DQ)%3B" />
 			<_GitInfoLines Include="    public const string GitSha = $(DQ)$(GitShaShort)$(DQ)%3B" />
 			<_GitInfoLines Include="}" />
+
 			<_GitInfoLines Include="}" Condition="'$(RootNamespace)' != ''" />
 		</ItemGroup>
 
-		<WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs" Lines="@(_GitInfoLines)" Overwrite="true" Encoding="UTF-8" />
+		<WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs"
+						  Lines="@(_GitInfoLines)"
+						  Overwrite="true"
+						  Encoding="UTF-8" />
 		<ItemGroup>
 			<Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
 		</ItemGroup>

@@ -97,9 +97,11 @@ namespace thuvu.Tools
 
         public static string GetCurrentGitTag()
         {
-            var info = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion ?? "unknown";
+            //var info = Assembly.GetExecutingAssembly()
+            //.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            //?.InformationalVersion ?? "unknown";
+            var info = ThisBuild.VersionTag + "-" + ThisBuild.GitSha;
+
             return info;
         }
 
