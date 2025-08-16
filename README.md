@@ -2,7 +2,7 @@
 <img src="images/thuvu.png" width="300" alt="T.H.U.V.U. Logo">
 
 ## Why this exists
-I vibe-coded this agent in a few hours in order to better understand the mechanics of AI agents and see 
+I vibe-coded this agent in a few hours using mainly ChatGPT 5 in order to better understand the mechanics of AI agents and see 
 how far can I go by using local LLMs. I did this because I was disappointed by the current state of the cli tools
 that use local LLMs and I wanted to create a simple agent that can use tools and chat with the user. Obviously,
 the inspiration for this project is Claude Code and Gemini CLI. But I want to be able to run it locally,
