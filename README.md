@@ -1,5 +1,5 @@
 ﻿# T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage
-<img src="images/thuvu.svg" alt="T.H.U.V.U. Logo" width="400">
+<img src="images/thuvu.png" alt="T.H.U.V.U. Logo">
 
 ## Why this exists
 I vibe-coded this agent in a few hours in order to better understand the mechanics of AI agents and see 
