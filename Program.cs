@@ -60,6 +60,9 @@ namespace thuvu
             Console.WriteLine($"Config file: {AgentConfig.GetConfigPath()}");
             Console.WriteLine($"Model: {AgentConfig.Config.Model}");
             Console.WriteLine($"Host:  {AgentConfig.Config.HostUrl}");
+            var streamingStatus = AgentConfig.Config.Stream ? "ON" : "OFF";
+            Console.WriteLine($"Streaming responses: {streamingStatus}");
+
             Console.WriteLine();
 
             while (true)
@@ -1391,7 +1394,7 @@ namespace thuvu
             Console.WriteLine("         /pull");
             Console.WriteLine("         /pull --clean-working-tree --stash-untracked");
             Console.WriteLine("         /pull --merge --ff-only");
-            Console.WriteLine("  / config[show | path | reload | save]   Inspect or manage config file");
+            Console.WriteLine("  /config[show | path | reload | save]   Inspect or manage config file");
             Console.WriteLine("  /set model<id> Change model id and persist");
             Console.WriteLine("  /set host<url> Change LM Studio host URL and persist");
             Console.WriteLine("  /set stream on| off                Toggle streaming and persist");
