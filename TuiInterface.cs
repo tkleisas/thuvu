@@ -132,16 +132,21 @@ namespace thuvu
 
         private void AppendActionText(string text, bool isError = false)
         {
-            var coloredText = text;
-            if (isError)
-            {
-                // For error messages, we'll prefix with [ERROR] for visual distinction
-                coloredText = $"[ERROR] {text}";
-            }
-
             Application.MainLoop.Invoke(() =>
             {
-                var currentText = _actionView.Text.ToString();
+                var currentText = _actionView!.Text.ToString();
+                
+                // Add color coding for the text
+                string coloredText;
+                if (isError)
+                {
+                    coloredText = $"[ERROR] {text}";
+                }
+                else
+                {
+                    coloredText = text;
+                }
+
                 _actionView.Text = currentText + coloredText + "\n";
                 
                 // Scroll to bottom
@@ -154,8 +159,34 @@ namespace thuvu
         {
             Application.MainLoop.Invoke(() =>
             {
-                var currentText = _actionView.Text.ToString();
+                var currentText = _actionView!.Text.ToString();
                 _actionView.Text = currentText + $"[SUCCESS] {text}\n";
+                
+                // Scroll to bottom
+                _actionView.MoveEnd();
+                _actionView.SetNeedsDisplay();
+            });
+        }
+
+        private void AppendToolText(string text)
+        {
+            Application.MainLoop.Invoke(() =>
+            {
+                var currentText = _actionView!.Text.ToString();
+                _actionView.Text = currentText + $"[TOOL] {text}\n";
+                
+                // Scroll to bottom
+                _actionView.MoveEnd();
+                _actionView.SetNeedsDisplay();
+            });
+        }
+
+        private void AppendTokenText(string text)
+        {
+            Application.MainLoop.Invoke(() =>
+            {
+                var currentText = _actionView!.Text.ToString();
+                _actionView.Text = currentText + $"[TOKENS] {text}\n";
                 
                 // Scroll to bottom
                 _actionView.MoveEnd();
@@ -261,20 +292,59 @@ namespace thuvu
             // we'll need to handle them here or delegate to the original implementation
             if (command.StartsWith("/diff", StringComparison.OrdinalIgnoreCase))
             {
-                // Delegate to original implementation
-                await Program.HandleDiffCommandAsync(command, _cancellationTokenSource.Token, AppendActionText);
+                try
+                {
+                    // Delegate to original implementation
+                    await Program.HandleDiffCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    {
+                        if (isError)
+                            AppendActionText(text, true);
+                        else
+                            AppendActionText(text);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppendActionText($"Error executing diff command: {ex.Message}", true);
+                }
                 return;
             }
 
             if (command.StartsWith("/test", StringComparison.OrdinalIgnoreCase))
             {
-                await Program.HandleTestCommandAsync(command, _cancellationTokenSource.Token, AppendActionText);
+                try
+                {
+                    await Program.HandleTestCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    {
+                        if (isError)
+                            AppendActionText(text, true);
+                        else
+                            AppendActionText(text);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppendActionText($"Error executing test command: {ex.Message}", true);
+                }
                 return;
             }
 
             if (command.StartsWith("/run", StringComparison.OrdinalIgnoreCase))
             {
-                await Program.HandleRunCommandAsync(command, _cancellationTokenSource.Token, AppendActionText);
+                try
+                {
+                    await Program.HandleRunCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    {
+                        if (isError)
+                            AppendActionText(text, true);
+                        else
+                            AppendActionText(text);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    AppendActionText($"Error executing run command: {ex.Message}", true);
+                }
                 return;
             }
 
@@ -285,47 +355,54 @@ namespace thuvu
 
                 AppendActionText("Processing...");
 
-                string? final;
-                if (AgentConfig.Config.StreamConfig)
+                try
                 {
-                    final = await Program.CompleteWithToolsStreamingAsync(
-                        _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
-                        onToken: token => Application.MainLoop.Invoke(() =>
-                        {
-                            var currentText = _actionView.Text.ToString();
-                            _actionView.Text = currentText + token;
-                            _actionView.MoveEnd();
-                            _actionView.SetNeedsDisplay();
-                        }),
-                        onToolResult: (name, result) =>
-                        {
-                            AppendActionText($"[TOOL] {name} => {result}");
-                        },
-                        onUsage: usage =>
-                        {
-                            AppendActionText($"[TOKENS] prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
-                        }
-                    );
-                }
-                else
-                {
-                    final = await Program.CompleteWithToolsAsync(
-                        _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
-                        onToolResult: (name, result) =>
-                        {
-                            AppendActionText($"[TOOL] {name} => {result}");
-                        }
-                    );
-                }
+                    string? final;
+                    if (AgentConfig.Config.StreamConfig)
+                    {
+                        final = await Program.CompleteWithToolsStreamingAsync(
+                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
+                            onToken: token => Application.MainLoop.Invoke(() =>
+                            {
+                                var currentText = _actionView!.Text.ToString();
+                                _actionView.Text = currentText + token;
+                                _actionView.MoveEnd();
+                                _actionView.SetNeedsDisplay();
+                            }),
+                            onToolResult: (name, result) =>
+                            {
+                                AppendToolText($"{name} => {result}");
+                            },
+                            onUsage: usage =>
+                            {
+                                AppendTokenText($"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
+                            }
+                        );
+                    }
+                    else
+                    {
+                        final = await Program.CompleteWithToolsAsync(
+                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
+                            onToolResult: (name, result) =>
+                            {
+                                AppendToolText($"{name} => {result}");
+                            }
+                        );
+                    }
 
-                if (!string.IsNullOrEmpty(final))
-                {
-                    AppendActionText($"\n{final}\n");
-                    _messages.Add(new ChatMessage("assistant", final));
+                    if (!string.IsNullOrEmpty(final))
+                    {
+                        AppendActionText($"\n{final}\n");
+                        _messages.Add(new ChatMessage("assistant", final));
+                    }
+                    else
+                    {
+                        AppendActionText("(no content)");
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    AppendActionText("(no content)");
+                    AppendActionText($"Error processing message: {ex.Message}", true);
                 }
             }
         }
