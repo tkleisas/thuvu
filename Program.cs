@@ -24,11 +24,12 @@ namespace thuvu
             WriteIndented = false
         };
         public static string anim = "/-\\|";
-        public static int anim_idx=0;
+        //public static int anim_idx=0;
         //private static readonly Uri BaseUri = new("http://127.0.0.1:1234"); // LM Studio default
         private const string DefaultModel = "qwen/qwen3-4b-2507";
         //private static bool _streamResponses = true; // default: streaming on
         private static int _currentContextLength = 0;
+        public static HttpClient? HttpClient;
         public static async Task Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
@@ -38,11 +39,12 @@ namespace thuvu
 
             // Check if TUI mode is requested
             bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
-
+            useTui = false;
             // Initialize permission manager with current directory
             Models.PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
 
             using var http = new HttpClient();
+            HttpClient = http;
             AgentConfig.ApplyConfig(http);
             try
             {
@@ -325,8 +327,8 @@ namespace thuvu
                 };
 
                 var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken);
-                Console.WriteLine("\r" + anim.Substring(anim_idx++,1));
-                anim_idx = anim_idx % anim.Length;
+                //Console.WriteLine("\r" + anim.Substring(anim_idx++,1));
+                //anim_idx = anim_idx % anim.Length;
                 if (result.ToolCalls is { Count: > 0 })
                 {
                     messages.Add(new ChatMessage
@@ -551,7 +553,7 @@ namespace thuvu
             return false;
         }
         // Split a command line into tokens, respecting quotes.
-        private static List<string> TokenizeArgs(string text)
+        public static List<string> TokenizeArgs(string text)
         {
             var res = new List<string>();
             if (string.IsNullOrWhiteSpace(text)) return res;
@@ -659,7 +661,8 @@ namespace thuvu
             if (!string.IsNullOrWhiteSpace(stderr)) Console.Error.WriteLine(stderr);
         }
 
-        // /run CMD [ARGS ...] [--cwd PATH] [--timeout MS]
+
+
         public static async Task HandleRunCommandAsync(string line, CancellationToken ct, Action<string, bool>? outputCallback = null)
         {
             var parts = TokenizeArgs(line);
@@ -1354,7 +1357,7 @@ namespace thuvu
         }
 
         // /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms> | /set httptimeout <minutes>
-        private static Task HandleSetCommandAsync(string line, HttpClient http, CancellationToken ct)
+        public static Task HandleSetCommandAsync(string line, HttpClient http, CancellationToken ct)
         {
             var args = TokenizeArgs(line); // you already have this helper
             if (args.Count < 3)

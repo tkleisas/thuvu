@@ -83,6 +83,8 @@ namespace thuvu.Tools
                     var subdirs = dir.EnumerateDirectories();
                     foreach(var subdir in subdirs)
                     {
+                        if (subdir.Name == "." || subdir.Name == "..")
+                            continue;
                         return DetectProjectRoot(subdir.FullName);
                     }
                     //dir = dir.Parent;

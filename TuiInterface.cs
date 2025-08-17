@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
@@ -25,17 +25,23 @@ namespace thuvu
 
         // UI Components
         private Label? _statusLabel;
+        private Label? _workLabel;
+        private Label? _commandLabel;
         private TextView? _actionView;
         private TextField? _commandField;
         private Button? _sendButton;
-
+        private string workanim = "-\\|/";
+        private int workanimIdx = 0;
         public TuiInterface(HttpClient http, List<Tool> tools, List<ChatMessage> initialMessages)
         {
             _http = http;
             _tools = tools;
             _messages = initialMessages;
         }
-
+        public void Animate()
+        {
+            _workLabel.Text = workanim.Substring((++workanimIdx)%4,1);
+        }
         public void Run()
         {
             Application.Init();
@@ -64,10 +70,16 @@ namespace thuvu
                 Text = GetStatusText(),
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.White, Color.Blue)
+                    Normal = new Terminal.Gui.Attribute(Color.Green, Color.Black)
                 }
             };
-
+            string banner = "                                         \n"+
+                            "███████ █     █ █      █ █     █ █      █\n"+
+                            "   █    █     █ █      █ █     █ █      █\n"+
+                            "   █    ███████ █      █  █   █  █      █\n"+
+                            "   █    █     █ █      █   █ █   █      █\n"+
+                            "   █    █     █  ██████     █     ██████ \n"+
+                            "                                         \n";
             // Action area (middle) - scrollable text view  
             _actionView = new TextView
             {
@@ -77,29 +89,49 @@ namespace thuvu
                 Height = Dim.Fill() - 4,
                 ReadOnly = true,
                 WordWrap = true,
-                Text = "Welcome to T.H.U.V.U. Type commands or chat with the AI assistant.\nType /help for available commands.\n\n"
+                ColorScheme = new ColorScheme
+                {
+                    Normal = new Terminal.Gui.Attribute(Color.White, Color.Black),
+                    Focus = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black)
+                },
+                Text = banner+"Welcome to T.H.U.V.U. Type commands or chat with the AI assistant.\nType /help for available commands.\n\n"
             };
 
             // Command area (bottom)
-            var commandLabel = new Label("Command: ")
+            _commandLabel = new Label("Command: ")
             {
                 X = 0,
                 Y = Pos.Bottom(_actionView)
             };
-
+            _workLabel = new Label(" ")
+            {
+                X = Pos.Right(_commandLabel),
+                Y = Pos.Bottom(_actionView),
+                Width = 1,
+                Height = 1,
+                ColorScheme = new ColorScheme
+                {
+                    Normal = new Terminal.Gui.Attribute(Color.Gray, Color.Black)
+                }
+            };
             _commandField = new TextField
             {
-                X = Pos.Right(commandLabel),
+                X = Pos.Right(_workLabel),
                 Y = Pos.Bottom(_actionView),
                 Width = Dim.Fill() - 20,
-                Height = 1
+                Height = 1,
+                ColorScheme = new ColorScheme
+                {
+                    Normal = new Terminal.Gui.Attribute(Color.BrightYellow,Color.Black),
+                    Focus = new Terminal.Gui.Attribute(Color.BrightYellow,Color.Red)
+                }
             };
 
             _sendButton = new Button("Send")
             {
                 X = Pos.Right(_commandField) + 1,
                 Y = Pos.Bottom(_actionView),
-                IsDefault = true
+                IsDefault = false
             };
 
             // Event handlers
@@ -109,7 +141,8 @@ namespace thuvu
             // Add components to Application.Top
             Application.Top.Add(_statusLabel);
             Application.Top.Add(_actionView);
-            Application.Top.Add(commandLabel);
+            Application.Top.Add(_commandLabel);
+            Application.Top.Add(_workLabel);
             Application.Top.Add(_commandField);
             Application.Top.Add(_sendButton);
 
@@ -285,6 +318,7 @@ namespace thuvu
                     return;
                 }
                 AppendSuccessText($"Streaming is now {(AgentConfig.Config.StreamConfig ? "ON" : "OFF")}.");
+                UpdateStatus();
                 return;
             }
 
@@ -309,7 +343,98 @@ namespace thuvu
                 }
                 return;
             }
+            if(command.StartsWith("/set", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var args = Program.TokenizeArgs(command); // you already have this helper
+                    if (args.Count < 3)
+                    {
+                        AppendSuccessText("Usage: /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms> | /set httptimeout <minutes>");
+                        return;
+                    }
 
+                    var key = args[1].ToLowerInvariant();
+                    switch (key)
+                    {
+                        case "model":
+                            {
+                                var id = string.Join(' ', args.Skip(2));
+                                if (string.IsNullOrWhiteSpace(id)) { AppendSuccessText("Model id required."); break; }
+                                AgentConfig.Config.Model = id.Trim();
+                                AgentConfig.SaveConfig();
+                                AppendSuccessText($"Model set to: {AgentConfig.Config.Model}");
+                                UpdateStatus();
+                                return;
+                            }
+                        case "host":
+                            {
+                                var url = string.Join(' ', args.Skip(2));
+                                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+                                    (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                                {
+                                    AppendActionText("Please provide a valid http(s) URL, e.g. http://127.0.0.1:1234");
+                                    return;
+                                }
+                                AgentConfig.Config.HostUrl = uri.ToString().TrimEnd('/'); // normalize (optional)
+                                AgentConfig.SaveConfig();
+                                AppendActionText($"Host set to: {AgentConfig.Config.HostUrl}");
+                                AppendActionText("Note: Restart the application for the host change to take effect.");
+                                UpdateStatus();
+                                return;
+                            }
+                        case "stream":
+                            {
+                                var v = args[2].ToLowerInvariant();
+                                if (v is "on" or "off")
+                                {
+                                    AgentConfig.Config.Stream = v == "on";
+
+                                    AgentConfig.SaveConfig();
+                                    AppendActionText($"Streaming is now {(AgentConfig.Config.Stream ? "ON" : "OFF")}.");
+                                }
+                                else AppendActionText("Usage: /set stream on|off");
+                                UpdateStatus();
+                                return;
+                            }
+                        case "timeout":
+                            {
+                                if (!int.TryParse(args[2], out var ms) || ms < 1000 || ms > 600_000)
+                                {
+                                    AppendActionText("Timeout must be 1000..600000 ms.");
+                                    return;
+                                }
+                                AgentConfig.Config.TimeoutMs = ms;
+                                AgentConfig.SaveConfig();
+                                AppendActionText($"Default process timeout set to {AgentConfig.Config.TimeoutMs} ms.");
+                                UpdateStatus();
+                                return;
+                            }
+                        case "httptimeout":
+                            {
+                                if (!int.TryParse(args[2], out var minutes) || minutes < 1 || minutes > 120)
+                                {
+                                    AppendActionText("HTTP timeout must be 1..120 minutes.");
+                                    return;
+                                }
+                                AgentConfig.Config.HttpRequestTimeout = minutes;
+                                AgentConfig.SaveConfig();
+                                AppendActionText($"HTTP request timeout set to {AgentConfig.Config.HttpRequestTimeout} minutes.");
+                                AppendActionText("Note: Restart the application for the timeout change to take effect.");
+                                UpdateStatus();
+                                return;
+                            }
+                        default:
+                            AppendActionText("Supported keys: model, host, stream, timeout, httptimeout");
+                            break;
+
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppendActionText($"Error executing set command: {ex.Message}", true);
+                }
+            }
             if (command.StartsWith("/test", StringComparison.OrdinalIgnoreCase))
             {
                 try
@@ -368,14 +493,17 @@ namespace thuvu
                                 _actionView.Text = currentText + token;
                                 _actionView.MoveEnd();
                                 _actionView.SetNeedsDisplay();
+                                Animate();
                             }),
                             onToolResult: (name, result) =>
                             {
                                 AppendToolText($"{name} => {result}");
+                                Animate();
                             },
                             onUsage: usage =>
                             {
                                 AppendTokenText($"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
+                                Animate();
                             }
                         );
                     }
@@ -386,6 +514,7 @@ namespace thuvu
                             onToolResult: (name, result) =>
                             {
                                 AppendToolText($"{name} => {result}");
+                                Animate();
                             }
                         );
                     }
@@ -394,6 +523,7 @@ namespace thuvu
                     {
                         AppendActionText($"\n{final}\n");
                         _messages.Add(new ChatMessage("assistant", final));
+                        Animate();
                     }
                     else
                     {
