@@ -100,7 +100,7 @@ namespace thuvu.Tools
             //var info = Assembly.GetExecutingAssembly()
             //.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             //?.InformationalVersion ?? "unknown";
-            var info = ThisBuild.VersionTag + "-" + ThisBuild.GitSha;
+            var info = ThisBuild.GitTag;
 
             return info;
         }
