@@ -11,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
+    <PackageReference Include="Terminal.Gui" Version="1.19.0" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="images\" />
@@ -23,16 +24,12 @@
 	<!-- Compute tag & sha BEFORE the SDK writes assembly attributes -->
 	<Target Name="ComputeGitVersion" BeforeTargets="GenerateAssemblyInfo">
 		<!-- Last tag reachable from HEAD (i.e., what you created via `git tag <version>`) -->
-		<Exec Command="git describe --tags --abbrev=0"
-			  ConsoleToMSBuild="true"
-			  IgnoreExitCode="true">
+		<Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" IgnoreExitCode="true">
 			<Output TaskParameter="ConsoleOutput" PropertyName="LastTagRaw" />
 		</Exec>
 
 		<!-- Abbreviated SHA -->
-		<Exec Command="git rev-parse --short HEAD"
-			  ConsoleToMSBuild="true"
-			  IgnoreExitCode="true">
+		<Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true">
 			<Output TaskParameter="ConsoleOutput" PropertyName="GitShaShortRaw" />
 		</Exec>
 
@@ -82,10 +79,7 @@
 			<_GitInfoLines Include="}" Condition="'$(RootNamespace)' != ''" />
 		</ItemGroup>
 
-		<WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs"
-						  Lines="@(_GitInfoLines)"
-						  Overwrite="true"
-						  Encoding="UTF-8" />
+		<WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs" Lines="@(_GitInfoLines)" Overwrite="true" Encoding="UTF-8" />
 		<ItemGroup>
 			<Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
 		</ItemGroup>

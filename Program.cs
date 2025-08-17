@@ -36,6 +36,9 @@ namespace thuvu
             var model = DefaultModel;
             Models.AgentConfig.LoadConfig();
 
+            // Check if TUI mode is requested
+            bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
+
             // Initialize permission manager with current directory
             Models.PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
 
@@ -67,8 +70,18 @@ namespace thuvu
 
             // Tools you expose to the model
             var tools = BuildTools.GetBuildTools();
+            
+            if (useTui)
+            {
+                // Use Terminal.GUI interface
+                var tuiInterface = new TuiInterface(http, tools, messages);
+                tuiInterface.Run();
+                return;
+            }
+
+            // Original console interface
             Console.WriteLine("T.H.U.V.U. coding agent (C) 2025 "+Helpers.GetCurrentGitTag());
-            Console.WriteLine("type /exit to quit, /help for full list of commands");
+            Console.WriteLine("type /exit to quit, /help for full list of commands, or --tui for Terminal UI");
             Console.WriteLine($"Config file: {AgentConfig.GetConfigPath()}");
             Console.WriteLine($"Model: {AgentConfig.Config.Model}");
             Console.WriteLine($"Host:  {AgentConfig.Config.HostUrl}");
@@ -134,19 +147,19 @@ namespace thuvu
 
                 if (user.StartsWith("/diff", StringComparison.OrdinalIgnoreCase))
                 {
-                    await HandleDiffCommandAsync(user, CancellationToken.None);
+                    await HandleDiffCommandAsync(user, CancellationToken.None, null);
                     continue;
                 }
 
                 if (user.StartsWith("/test", StringComparison.OrdinalIgnoreCase))
                 {
-                    await HandleTestCommandAsync(user, CancellationToken.None);
+                    await HandleTestCommandAsync(user, CancellationToken.None, null);
                     continue;
                 }
 
                 if (user.StartsWith("/run", StringComparison.OrdinalIgnoreCase))
                 {
-                    await HandleRunCommandAsync(user, CancellationToken.None);
+                    await HandleRunCommandAsync(user, CancellationToken.None, null);
                     continue;
                 }
 
@@ -228,7 +241,7 @@ namespace thuvu
         /// executes them, appends tool results, and repeats until a final answer is produced.
         /// Returns the assistant's final content.
         /// </summary>
-        private static async Task<string?> CompleteWithToolsAsync(
+        public static async Task<string?> CompleteWithToolsAsync(
             HttpClient http,
             string model,
             List<ChatMessage> messages,
@@ -287,7 +300,7 @@ namespace thuvu
 
         /// Like your CompleteWithToolsAsync, but streams tokens for final answers.
         /// Prints tokens as they arrive via onToken (e.g., Console.Write).
-        private static async Task<string?> CompleteWithToolsStreamingAsync(
+        public static async Task<string?> CompleteWithToolsStreamingAsync(
             HttpClient http,
             string model,
             List<ChatMessage> messages,
@@ -556,7 +569,7 @@ namespace thuvu
             return res;
         }
         // /diff [--staged] [--context N] [--root PATH] [PATH ...]
-        private static async Task HandleDiffCommandAsync(string line, CancellationToken ct)
+        public static async Task HandleDiffCommandAsync(string line, CancellationToken ct, Action<string, bool>? outputCallback = null)
         {
             var parts = TokenizeArgs(line);
             // parts[0] == "/diff"
@@ -573,7 +586,14 @@ namespace thuvu
                 { context = Math.Clamp(c, 0, 100); i++; continue; }
                 if (p.Equals("--root", StringComparison.OrdinalIgnoreCase) && i + 1 < parts.Count)
                 { root = parts[++i]; continue; }
-                if (p.StartsWith("--")) { Console.WriteLine($"Unknown option: {p}"); continue; }
+                if (p.StartsWith("--")) { 
+                    var msg = $"Unknown option: {p}";
+                    if (outputCallback != null) 
+                        outputCallback(msg, true);
+                    else 
+                        Console.WriteLine(msg);
+                    continue; 
+                }
                 paths.Add(p);
             }
 
@@ -586,13 +606,25 @@ namespace thuvu
             // Also print raw stdout/stderr if present
             using var doc = JsonDocument.Parse(toolResult);
             if (doc.RootElement.TryGetProperty("stdout", out var so) && !string.IsNullOrEmpty(so.GetString()))
-                Console.WriteLine(so.GetString());
+            {
+                var stdout = so.GetString()!;
+                if (outputCallback != null) 
+                    outputCallback(stdout, false);
+                else 
+                    Console.WriteLine(stdout);
+            }
             if (doc.RootElement.TryGetProperty("stderr", out var se) && !string.IsNullOrEmpty(se.GetString()))
-                Console.Error.WriteLine(se.GetString());
+            {
+                var stderr = se.GetString()!;
+                if (outputCallback != null) 
+                    outputCallback(stderr, true);
+                else 
+                    Console.Error.WriteLine(stderr);
+            }
         }
 
         // /test [SOLUTION_OR_PROJECT] [--filter EXP] [--logger trx|console]
-        private static async Task HandleTestCommandAsync(string line, CancellationToken ct)
+        public static async Task HandleTestCommandAsync(string line, CancellationToken ct, Action<string, bool>? outputCallback = null)
         {
             var parts = TokenizeArgs(line);
             // parts[0] == "/test"
@@ -625,7 +657,7 @@ namespace thuvu
         }
 
         // /run CMD [ARGS ...] [--cwd PATH] [--timeout MS]
-        private static async Task HandleRunCommandAsync(string line, CancellationToken ct)
+        public static async Task HandleRunCommandAsync(string line, CancellationToken ct, Action<string, bool>? outputCallback = null)
         {
             var parts = TokenizeArgs(line);
             // parts[0] == "/run"
