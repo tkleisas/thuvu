@@ -52,6 +52,7 @@ namespace thuvu.Tools
 
             var args = new List<string> { "new",  template};
             Directory.CreateDirectory(path);
+            Directory.SetCurrentDirectory(path);
             return RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(new { cmd = "dotnet", args = args.ToArray() }));
         }
         public static string ExtractPath(string rawArgs)

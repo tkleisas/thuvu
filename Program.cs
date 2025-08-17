@@ -23,7 +23,8 @@ namespace thuvu
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false
         };
-
+        public static string anim = "/-\\|";
+        public static int anim_idx=0;
         //private static readonly Uri BaseUri = new("http://127.0.0.1:1234"); // LM Studio default
         private const string DefaultModel = "qwen/qwen3-4b-2507";
         //private static bool _streamResponses = true; // default: streaming on
@@ -35,7 +36,7 @@ namespace thuvu
             var model = DefaultModel;
             Models.AgentConfig.LoadConfig();
 
-            using var http = new HttpClient { BaseAddress = new Uri(AgentConfig.Config.HostUrl), Timeout = TimeSpan.FromMinutes(10) };
+            using var http = new HttpClient { BaseAddress = new Uri(AgentConfig.Config.HostUrl), Timeout = TimeSpan.FromMinutes(30) };
             _currentContextLength = (int)await GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None);
             // Conversation state
             var messages = new List<ChatMessage>
@@ -286,7 +287,8 @@ namespace thuvu
                 };
 
                 var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken);
-
+                Console.WriteLine("\r" + anim.Substring(anim_idx++,1));
+                anim_idx = anim_idx % anim.Length;
                 if (result.ToolCalls is { Count: > 0 })
                 {
                     messages.Add(new ChatMessage

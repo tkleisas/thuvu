@@ -80,8 +80,12 @@ namespace thuvu.Tools
                     if (Directory.EnumerateFiles(dir.FullName, "*.sln", SearchOption.TopDirectoryOnly).Any()) return dir.FullName;
                     if (File.Exists(Path.Combine(dir.FullName, "package.json"))) return dir.FullName;
                     if (Directory.Exists(Path.Combine(dir.FullName, "src"))) return dir.FullName;
-
-                    dir = dir.Parent;
+                    var subdirs = dir.EnumerateDirectories();
+                    foreach(var subdir in subdirs)
+                    {
+                        return DetectProjectRoot(subdir.FullName);
+                    }
+                    //dir = dir.Parent;
                 }
             }
             catch { /* ignore */ }
