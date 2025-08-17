@@ -36,8 +36,19 @@ namespace thuvu
             var model = DefaultModel;
             Models.AgentConfig.LoadConfig();
 
+            // Initialize permission manager with current directory
+            Models.PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
+
             using var http = new HttpClient { BaseAddress = new Uri(AgentConfig.Config.HostUrl), Timeout = TimeSpan.FromMinutes(30) };
-            _currentContextLength = (int)await GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None);
+            try
+            {
+                _currentContextLength = (int)(await GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None) ?? 4096);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Warning: Could not connect to LLM service ({ex.Message}). Using default context length.");
+                _currentContextLength = 4096;
+            }
             // Conversation state
             var messages = new List<ChatMessage>
             {
@@ -72,7 +83,17 @@ namespace thuvu
                 if (user == null) continue;
 
                 // Commands
-                if (user.Equals("/exit", StringComparison.OrdinalIgnoreCase)) break;
+                if (user.Equals("/exit", StringComparison.OrdinalIgnoreCase)) 
+                {
+                    Models.PermissionManager.ClearSessionPermissions();
+                    break;
+                }
+
+                if (user.Equals("/test-permissions", StringComparison.OrdinalIgnoreCase))
+                {
+                    PermissionSystemDemo.RunDemo();
+                    continue;
+                }
 
                 if (user.StartsWith("/clear", StringComparison.OrdinalIgnoreCase))
                 {
@@ -379,6 +400,11 @@ namespace thuvu
         {
             try
             {
+                // Check permissions before executing
+                if (!Models.PermissionManager.CheckPermission(name, argsJson))
+                {
+                    return JsonSerializer.Serialize(new { error = "Permission denied by user" });
+                }
                 switch (name)
                 {
                     // Navigation / IO
@@ -1399,6 +1425,15 @@ namespace thuvu
             Console.WriteLine("  /set host<url> Change LM Studio host URL and persist");
             Console.WriteLine("  /set stream on| off                Toggle streaming and persist");
             Console.WriteLine("  /set timeout<ms> Default timeout for / run & dotnet / git tools");
+            Console.WriteLine("  /test-permissions                Test permission system functionality");
+            Console.WriteLine();
+            Console.WriteLine("Permission System:");
+            Console.WriteLine("  Read-only tools (search_files, read_file, git_status, git_diff, nuget_search) are always allowed.");
+            Console.WriteLine("  Write tools require user permission. You'll be prompted to allow:");
+            Console.WriteLine("    [A] Always for this repo (persistent)");
+            Console.WriteLine("    [S] For this session (temporary)");
+            Console.WriteLine("    [O] Once (this time only)");
+            Console.WriteLine("    [N] No (cancel operation)");
 
         }
 
