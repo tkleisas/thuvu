@@ -14,6 +14,7 @@ namespace thuvu.Models
         public string Model { get; set; } = "lmstudio-community/qwen2.5-7b-instruct";
         public bool Stream { get; set; } = true;       // default: stream tokens
         public int TimeoutMs { get; set; } = 120_000;  // default process timeout
+        public int HttpRequestTimeout { get; set; } = 30; // HttpClient request timeout in minutes
 
         public bool StreamConfig { get; set; } = true; // whether to stream config updates
         
@@ -68,6 +69,7 @@ namespace thuvu.Models
         {
             // Update HttpClient and runtime flags from config
             http.BaseAddress = new Uri(Config.HostUrl);
+            http.Timeout = TimeSpan.FromMinutes(Config.HttpRequestTimeout);
                                               // Optional: adjust any other defaults that reference timeout/model, etc.
         }
 
