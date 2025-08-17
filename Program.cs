@@ -39,7 +39,8 @@ namespace thuvu
             // Initialize permission manager with current directory
             Models.PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
 
-            using var http = new HttpClient { BaseAddress = new Uri(AgentConfig.Config.HostUrl), Timeout = TimeSpan.FromMinutes(30) };
+            using var http = new HttpClient();
+            AgentConfig.ApplyConfig(http);
             try
             {
                 _currentContextLength = (int)(await GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None) ?? 4096);
@@ -1300,6 +1301,7 @@ namespace thuvu
                     Console.WriteLine($"Model     : {AgentConfig.Config.Model}");
                     Console.WriteLine($"Stream    : {AgentConfig.Config.Stream}");
                     Console.WriteLine($"TimeoutMs : {AgentConfig.Config.TimeoutMs}");
+                    Console.WriteLine($"HttpRequestTimeout : {AgentConfig.Config.HttpRequestTimeout} minutes");
                     break;
                 case "reload":
                     AgentConfig.LoadConfig();
@@ -1316,13 +1318,13 @@ namespace thuvu
             return Task.CompletedTask;
         }
 
-        // /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms>
+        // /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms> | /set httptimeout <minutes>
         private static Task HandleSetCommandAsync(string line, HttpClient http, CancellationToken ct)
         {
             var args = TokenizeArgs(line); // you already have this helper
             if (args.Count < 3)
             {
-                Console.WriteLine("Usage: /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms>");
+                Console.WriteLine("Usage: /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms> | /set httptimeout <minutes>");
                 return Task.CompletedTask;
             }
 
@@ -1348,9 +1350,9 @@ namespace thuvu
                             break;
                         }
                         AgentConfig.Config.HostUrl = uri.ToString().TrimEnd('/'); // normalize (optional)
-                        AgentConfig.ApplyConfig(http); // update live client
                         AgentConfig.SaveConfig();
                         Console.WriteLine($"Host set to: {AgentConfig.Config.HostUrl}");
+                        Console.WriteLine("Note: Restart the application for the host change to take effect.");
                         break;
                     }
                 case "stream":
@@ -1378,8 +1380,21 @@ namespace thuvu
                         Console.WriteLine($"Default process timeout set to {AgentConfig.Config.TimeoutMs} ms.");
                         break;
                     }
+                case "httptimeout":
+                    {
+                        if (!int.TryParse(args[2], out var minutes) || minutes < 1 || minutes > 120)
+                        {
+                            Console.WriteLine("HTTP timeout must be 1..120 minutes.");
+                            break;
+                        }
+                        AgentConfig.Config.HttpRequestTimeout = minutes;
+                        AgentConfig.SaveConfig();
+                        Console.WriteLine($"HTTP request timeout set to {AgentConfig.Config.HttpRequestTimeout} minutes.");
+                        Console.WriteLine("Note: Restart the application for the timeout change to take effect.");
+                        break;
+                    }
                 default:
-                    Console.WriteLine("Supported keys: model, host, stream, timeout");
+                    Console.WriteLine("Supported keys: model, host, stream, timeout, httptimeout");
                     break;
             }
             return Task.CompletedTask;
