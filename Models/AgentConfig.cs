@@ -16,6 +16,9 @@ namespace thuvu.Models
         public int TimeoutMs { get; set; } = 120_000;  // default process timeout
 
         public bool StreamConfig { get; set; } = true; // whether to stream config updates
+        
+        // Tool permissions: key is "repoPath:toolName", value indicates if always allowed
+        public Dictionary<string, bool> ToolPermissions { get; set; } = new();
         public static AgentConfig Config = new();
         public static string GetConfigPath()
         {
