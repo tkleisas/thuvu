@@ -29,7 +29,7 @@ namespace thuvu
         private const string DefaultModel = "qwen/qwen3-4b-2507";
         //private static bool _streamResponses = true; // default: streaming on
         private static int _currentContextLength = 0;
-        public static HttpClient? HttpClient;
+
         public static async Task Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
@@ -44,7 +44,6 @@ namespace thuvu
             Models.PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
 
             using var http = new HttpClient();
-            HttpClient = http;
             AgentConfig.ApplyConfig(http);
             try
             {

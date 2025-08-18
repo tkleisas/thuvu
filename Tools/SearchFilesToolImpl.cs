@@ -71,23 +71,25 @@ namespace thuvu.Tools
         {
             try
             {
+                Queue<string> dirs = new Queue<string>();
                 var dir = new DirectoryInfo(startDir);
-                while (dir != null)
+                dirs.Enqueue(dir.FullName);
+                while(dirs.Count > 0)
                 {
+                    dir = new DirectoryInfo(dirs.Dequeue());
+                    Console.WriteLine($"Checking directory [{dir.FullName}]");
+                    if (dir.Parent != null && dir.Parent.FullName == dir.FullName) break; // Avoid infinite loop on root
+                    if (dir.Name.StartsWith('.') || dir.Name.StartsWith("bin", StringComparison.OrdinalIgnoreCase) || dir.Name.StartsWith("obj", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    Console.WriteLine($"Searching in directory [{dir.Name}]");
                     if (File.Exists("PROJECT.md")) return dir.FullName;
                     // Heuristics for a repo/project root
                     if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
                     if (Directory.EnumerateFiles(dir.FullName, "*.sln", SearchOption.TopDirectoryOnly).Any()) return dir.FullName;
                     if (File.Exists(Path.Combine(dir.FullName, "package.json"))) return dir.FullName;
                     if (Directory.Exists(Path.Combine(dir.FullName, "src"))) return dir.FullName;
-                    var subdirs = dir.EnumerateDirectories();
-                    foreach(var subdir in subdirs)
-                    {
-                        if (subdir.Name == "." || subdir.Name == "..")
-                            continue;
-                        return DetectProjectRoot(subdir.FullName);
-                    }
-                    //dir = dir.Parent;
+                    foreach(var subdir in dir.EnumerateDirectories())
+                        dirs.Enqueue(subdir.FullName);
                 }
             }
             catch { /* ignore */ }
