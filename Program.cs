@@ -39,7 +39,7 @@ namespace thuvu
 
             // Check if TUI mode is requested
             bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
-            useTui = false;
+            useTui = true;
             // Initialize permission manager with current directory
             Models.PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
 
