@@ -40,7 +40,12 @@ namespace thuvu
         }
         public void Animate()
         {
-            _workLabel.Text = workanim.Substring((++workanimIdx)%4,1);
+            if(workanimIdx< workanim.Length-1)
+
+                workanimIdx++;
+            else
+                workanimIdx = 0;
+            _workLabel.Text = workanim.Substring(workanimIdx,1);
         }
         public void Run()
         {
@@ -479,55 +484,65 @@ namespace thuvu
                 _messages.Add(new ChatMessage("user", command));
 
                 AppendActionText("Processing...");
-
+                bool finished = false;
                 try
                 {
-                    string? final;
-                    if (AgentConfig.Config.StreamConfig)
+                    while (!finished)
                     {
-                        final = await Program.CompleteWithToolsStreamingAsync(
-                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
-                            onToken: token => Application.MainLoop.Invoke(() =>
-                            {
-                                var currentText = _actionView!.Text.ToString();
-                                _actionView.Text = currentText + token;
-                                _actionView.MoveEnd();
-                                _actionView.SetNeedsDisplay();
-                                Animate();
-                            }),
-                            onToolResult: (name, result) =>
-                            {
-                                AppendToolText($"{name} => {result}");
-                                Animate();
-                            },
-                            onUsage: usage =>
-                            {
-                                AppendTokenText($"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
-                                Animate();
-                            }
-                        );
-                    }
-                    else
-                    {
-                        final = await Program.CompleteWithToolsAsync(
-                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
-                            onToolResult: (name, result) =>
-                            {
-                                AppendToolText($"{name} => {result}");
-                                Animate();
-                            }
-                        );
-                    }
 
-                    if (!string.IsNullOrEmpty(final))
-                    {
-                        AppendActionText($"\n{final}\n");
-                        _messages.Add(new ChatMessage("assistant", final));
-                        Animate();
-                    }
-                    else
-                    {
-                        AppendActionText("(no content)");
+                        string? final;
+                        if (AgentConfig.Config.StreamConfig)
+                        {
+                            final = await Program.CompleteWithToolsStreamingAsync(
+                                _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
+                                onToken: token => Application.MainLoop.Invoke(() =>
+                                {
+                                    var currentText = _actionView!.Text.ToString();
+                                    _actionView.Text = currentText + token;
+                                    _actionView.MoveEnd();
+                                    _actionView.SetNeedsDisplay();
+                                    Animate();
+                                }),
+                                onToolResult: (name, result) =>
+                                {
+                                    AppendToolText($"{name} => {result}");
+                                    Animate();
+                                },
+                                onUsage: usage =>
+                                {
+                                    AppendTokenText($"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
+                                    Animate();
+                                }
+                            );
+                        }
+                        else
+                        {
+                            final = await Program.CompleteWithToolsAsync(
+                                _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
+                                onToolResult: (name, result) =>
+                                {
+                                    AppendToolText($"{name} => {result}");
+                                    Animate();
+                                }
+                            );
+                        }
+
+                        if (!string.IsNullOrEmpty(final))
+                        {
+                            AppendActionText($"\n{final}\n");
+                            _messages.Add(new ChatMessage("assistant", final));
+                            Animate();
+                            if(final.IndexOf("Finished Tasks.")>=0)
+                            {
+                                finished = true;
+                            }
+
+                        }
+                        else
+                        {
+                            AppendActionText("(no content)");
+                            
+                        }
                     }
                 }
                 catch (Exception ex)

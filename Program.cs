@@ -66,7 +66,8 @@ namespace thuvu
                     "(3) run dotnet_build and dotnet_test, "+
                     "(4) if green, you may git_commit with a concise message. " +
                     "If write_file returns checksum_mismatch, re-read the file and rebase your patch."+
-                    "Use search_files before claiming a symbol/file doesn’t exist.")
+                    "Use search_files before claiming a symbol/file doesn’t exist." +
+                    "Emit 'thuvu Finished Tasks' when you have completed all your tasks.")
             };
 
             // Tools you expose to the model
