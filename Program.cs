@@ -133,15 +133,15 @@ namespace thuvu
                 if (user.StartsWith("/stream", StringComparison.OrdinalIgnoreCase))
                 {
                     var arg = user.Length > 7 ? user[7..].Trim() : "";
-                    if (string.Equals(arg, "on", StringComparison.OrdinalIgnoreCase)) AgentConfig.Config.StreamConfig = true;
-                    else if (string.Equals(arg, "off", StringComparison.OrdinalIgnoreCase)) AgentConfig.Config.StreamConfig = false;
+                    if (string.Equals(arg, "on", StringComparison.OrdinalIgnoreCase)) AgentConfig.Config.Stream = true;
+                    else if (string.Equals(arg, "off", StringComparison.OrdinalIgnoreCase)) AgentConfig.Config.Stream = false;
                     else
                     {
                         Console.WriteLine("Usage: /stream on|off");
                         continue;
                     }
 
-                    Console.WriteLine($"Streaming is now {(AgentConfig.Config.StreamConfig ? "ON" : "OFF")}.");
+                    Console.WriteLine($"Streaming is now {(AgentConfig.Config.Stream ? "ON" : "OFF")}.");
                     continue;
                 }
                 if (user.Equals("/help", StringComparison.OrdinalIgnoreCase))
@@ -205,7 +205,7 @@ namespace thuvu
                 // Send to LM Studio and run tool loop until final answer
                 string? final;
 
-                if (AgentConfig.Config.StreamConfig)
+                if (AgentConfig.Config.Stream)
                 {
                     final = await CompleteWithToolsStreamingAsync(
                         http, AgentConfig.Config.Model, messages, tools, CancellationToken.None,

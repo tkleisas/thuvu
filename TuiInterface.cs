@@ -158,7 +158,7 @@ namespace thuvu
         private string GetStatusText()
         {
             return $"Model: {AgentConfig.Config.Model} | Host: {AgentConfig.Config.HostUrl} | " +
-                   $"Stream: {(AgentConfig.Config.StreamConfig ? "ON" : "OFF")} | " +
+                   $"Stream: {(AgentConfig.Config.Stream ? "ON" : "OFF")} | " +
                    $"Messages: {_messages.Count}";
         }
 
@@ -314,15 +314,15 @@ namespace thuvu
             {
                 var arg = command.Length > 7 ? command[7..].Trim() : "";
                 if (string.Equals(arg, "on", StringComparison.OrdinalIgnoreCase))
-                    AgentConfig.Config.StreamConfig = true;
+                    AgentConfig.Config.Stream = true;
                 else if (string.Equals(arg, "off", StringComparison.OrdinalIgnoreCase))
-                    AgentConfig.Config.StreamConfig = false;
+                    AgentConfig.Config.Stream = false;
                 else
                 {
                     AppendActionText("Usage: /stream on|off", isError: true);
                     return;
                 }
-                AppendSuccessText($"Streaming is now {(AgentConfig.Config.StreamConfig ? "ON" : "OFF")}.");
+                AppendSuccessText($"Streaming is now {(AgentConfig.Config.Stream ? "ON" : "OFF")}.");
                 UpdateStatus();
                 return;
             }
@@ -526,6 +526,42 @@ namespace thuvu
                                 }
                             );
                         }
+                    string? final;
+                    if (AgentConfig.Config.Stream)
+                    {
+                        final = await Program.CompleteWithToolsStreamingAsync(
+                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
+                            onToken: token => Application.MainLoop.Invoke(() =>
+                            {
+                                var currentText = _actionView!.Text.ToString();
+                                _actionView.Text = currentText + token;
+                                _actionView.MoveEnd();
+                                _actionView.SetNeedsDisplay();
+                                Animate();
+                            }),
+                            onToolResult: (name, result) =>
+                            {
+                                AppendToolText($"{name} => {result}");
+                                Animate();
+                            },
+                            onUsage: usage =>
+                            {
+                                AppendTokenText($"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
+                                Animate();
+                            }
+                        );
+                    }
+                    else
+                    {
+                        final = await Program.CompleteWithToolsAsync(
+                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
+                            onToolResult: (name, result) =>
+                            {
+                                AppendToolText($"{name} => {result}");
+                                Animate();
+                            }
+                        );
+                    }
 
                         if (!string.IsNullOrEmpty(final))
                         {
