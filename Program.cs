@@ -35,23 +35,32 @@ namespace thuvu
             Console.OutputEncoding = Encoding.UTF8;
             Console.WriteLine(AppContext.BaseDirectory);
             var model = DefaultModel;
+            
+            // Initialize logging
+            AgentLogger.Initialize();
+            AgentLogger.LogInfo("THUVU starting...");
+            
             Models.AgentConfig.LoadConfig();
+            Models.RagConfig.LoadConfig();
 
             // Check if TUI mode is requested
             bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
-            useTui = true;
             // Initialize permission manager with current directory
             Models.PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
 
             using var http = new HttpClient();
             AgentConfig.ApplyConfig(http);
+            
+            // Initialize RAG service
+            RagToolImpl.Initialize(http);
+            
             try
             {
                 _currentContextLength = (int)(await GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None) ?? 4096);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Warning: Could not connect to LLM service ({ex.Message}). Using default context length.");
+                AgentLogger.LogWarning("Could not connect to LLM service: {Message}. Using default context length.", ex.Message);
                 _currentContextLength = 4096;
             }
             // Conversation state
@@ -196,7 +205,11 @@ namespace thuvu
                     continue;
                 }
 
-
+                if (user.StartsWith("/rag", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleRagCommandAsync(user, CancellationToken.None);
+                    continue;
+                }
 
                 if (string.IsNullOrWhiteSpace(user)) continue;
 
@@ -226,9 +239,13 @@ namespace thuvu
 
                 if (!string.IsNullOrEmpty(final))
                 {
-                    Console.WriteLine();
-                    Console.WriteLine(final);
-                    Console.WriteLine();
+                    // Only print final content if not streaming (already printed via onToken)
+                    if (!AgentConfig.Config.Stream)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine(final);
+                        Console.WriteLine();
+                    }
                     messages.Add(new ChatMessage("assistant", final));
                 }
                 else
@@ -326,7 +343,7 @@ namespace thuvu
                     Temperature = 0.2
                 };
 
-                var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken);
+                var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken, onUsage);
                 //Console.WriteLine("\r" + anim.Substring(anim_idx++,1));
                 //anim_idx = anim_idx % anim.Length;
                 if (result.ToolCalls is { Count: > 0 })
@@ -470,6 +487,19 @@ namespace thuvu
 
                     case "nuget_add":
                         return await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildNugetAddArgs(argsJson)));
+
+                    // RAG tools
+                    case "rag_index":
+                        return await RagToolImpl.RagIndexTool(argsJson, ct);
+
+                    case "rag_search":
+                        return await RagToolImpl.RagSearchTool(argsJson, ct);
+
+                    case "rag_clear":
+                        return await RagToolImpl.RagClearTool(argsJson, ct);
+
+                    case "rag_stats":
+                        return await RagToolImpl.RagStatsTool(argsJson, ct);
 
                     default:
                         return JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" });
@@ -1437,6 +1467,208 @@ namespace thuvu
             }
             return Task.CompletedTask;
         }
+
+        // /rag config|enable|disable|stats|index|search|clear
+        private static async Task HandleRagCommandAsync(string line, CancellationToken ct)
+        {
+            var parts = TokenizeArgs(line);
+            if (parts.Count < 2)
+            {
+                Console.WriteLine("Usage: /rag config|enable|disable|stats|index|search|clear");
+                return;
+            }
+
+            var subCommand = parts[1].ToLowerInvariant();
+
+            switch (subCommand)
+            {
+                case "config":
+                    Console.WriteLine($"RAG Configuration:");
+                    Console.WriteLine($"  Enabled: {RagConfig.Instance.Enabled}");
+                    Console.WriteLine($"  Connection: {RagConfig.Instance.ConnectionString}");
+                    Console.WriteLine($"  Embedding Dimension: {RagConfig.Instance.EmbeddingDimension}");
+                    Console.WriteLine($"  Max Chunk Size: {RagConfig.Instance.MaxChunkSize}");
+                    Console.WriteLine($"  Chunk Overlap: {RagConfig.Instance.ChunkOverlap}");
+                    Console.WriteLine($"  Top K Results: {RagConfig.Instance.TopK}");
+                    Console.WriteLine($"  Similarity Threshold: {RagConfig.Instance.SimilarityThreshold}");
+                    Console.WriteLine($"  Config path: {RagConfig.GetConfigPath()}");
+                    break;
+
+                case "enable":
+                    RagConfig.Instance.Enabled = true;
+                    RagConfig.SaveConfig();
+                    Console.WriteLine("RAG enabled. Ensure PostgreSQL with pgvector extension is running.");
+                    break;
+
+                case "disable":
+                    RagConfig.Instance.Enabled = false;
+                    RagConfig.SaveConfig();
+                    Console.WriteLine("RAG disabled.");
+                    break;
+
+                case "stats":
+                    try
+                    {
+                        var statsResult = await RagToolImpl.RagStatsTool("{}", ct);
+                        using var statsDoc = JsonDocument.Parse(statsResult);
+                        var root = statsDoc.RootElement;
+                        if (root.TryGetProperty("enabled", out var enabledEl) && enabledEl.GetBoolean())
+                        {
+                            Console.WriteLine("RAG Index Statistics:");
+                            Console.WriteLine($"  Total Chunks: {root.GetProperty("total_chunks").GetInt64()}");
+                            Console.WriteLine($"  Total Sources: {root.GetProperty("total_sources").GetInt64()}");
+                            Console.WriteLine($"  Total Characters: {root.GetProperty("total_characters").GetInt64()}");
+                        }
+                        else
+                        {
+                            Console.WriteLine("RAG is not enabled. Use '/rag enable' first.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error getting stats: {ex.Message}");
+                    }
+                    break;
+
+                case "index":
+                    if (parts.Count < 3)
+                    {
+                        Console.WriteLine("Usage: /rag index PATH [--recursive] [--pattern GLOB]");
+                        return;
+                    }
+
+                    var indexPath = parts[2];
+                    bool recursive = false;
+                    string pattern = "*.cs";
+
+                    for (int i = 3; i < parts.Count; i++)
+                    {
+                        if (parts[i].Equals("--recursive", StringComparison.OrdinalIgnoreCase))
+                            recursive = true;
+                        else if (parts[i].Equals("--pattern", StringComparison.OrdinalIgnoreCase) && i + 1 < parts.Count)
+                            pattern = parts[++i];
+                    }
+
+                    try
+                    {
+                        var indexArgs = JsonSerializer.Serialize(new { path = indexPath, recursive, pattern });
+                        var indexResult = await RagToolImpl.RagIndexTool(indexArgs, ct);
+                        using var indexDoc = JsonDocument.Parse(indexResult);
+                        var indexRoot = indexDoc.RootElement;
+                        
+                        if (indexRoot.TryGetProperty("success", out var successEl) && successEl.GetBoolean())
+                        {
+                            Console.WriteLine($"✅ Indexed {indexRoot.GetProperty("indexed_chunks").GetInt32()} chunks from {indexRoot.GetProperty("indexed_files").GetInt32()} files");
+                        }
+                        else if (indexRoot.TryGetProperty("error", out var errorEl))
+                        {
+                            Console.WriteLine($"❌ Error: {errorEl.GetString()}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error indexing: {ex.Message}");
+                    }
+                    break;
+
+                case "search":
+                    if (parts.Count < 3)
+                    {
+                        Console.WriteLine("Usage: /rag search QUERY [--top N]");
+                        return;
+                    }
+
+                    var queryParts = new List<string>();
+                    int? topK = null;
+
+                    for (int i = 2; i < parts.Count; i++)
+                    {
+                        if (parts[i].Equals("--top", StringComparison.OrdinalIgnoreCase) && i + 1 < parts.Count)
+                        {
+                            if (int.TryParse(parts[++i], out var k))
+                                topK = k;
+                        }
+                        else
+                        {
+                            queryParts.Add(parts[i]);
+                        }
+                    }
+
+                    var query = string.Join(" ", queryParts);
+
+                    try
+                    {
+                        var searchArgs = topK.HasValue
+                            ? JsonSerializer.Serialize(new { query, top_k = topK.Value })
+                            : JsonSerializer.Serialize(new { query });
+                        var searchResult = await RagToolImpl.RagSearchTool(searchArgs, ct);
+                        using var searchDoc = JsonDocument.Parse(searchResult);
+                        var searchRoot = searchDoc.RootElement;
+
+                        if (searchRoot.TryGetProperty("results", out var resultsEl))
+                        {
+                            Console.WriteLine($"Found {searchRoot.GetProperty("count").GetInt32()} results:");
+                            Console.WriteLine();
+                            
+                            foreach (var result in resultsEl.EnumerateArray())
+                            {
+                                var similarity = result.GetProperty("similarity").GetSingle();
+                                var source = result.GetProperty("source").GetString();
+                                var content = result.GetProperty("content").GetString();
+                                
+                                Console.ForegroundColor = ConsoleColor.Cyan;
+                                Console.WriteLine($"[{similarity:P1}] {source}");
+                                Console.ResetColor();
+                                Console.WriteLine(content?.Length > 200 ? content[..200] + "..." : content);
+                                Console.WriteLine();
+                            }
+                        }
+                        else if (searchRoot.TryGetProperty("error", out var errorEl))
+                        {
+                            Console.WriteLine($"❌ Error: {errorEl.GetString()}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error searching: {ex.Message}");
+                    }
+                    break;
+
+                case "clear":
+                    string? clearPath = parts.Count > 2 ? parts[2] : null;
+
+                    try
+                    {
+                        var clearArgs = clearPath != null
+                            ? JsonSerializer.Serialize(new { source_path = clearPath })
+                            : "{}";
+                        var clearResult = await RagToolImpl.RagClearTool(clearArgs, ct);
+                        using var clearDoc = JsonDocument.Parse(clearResult);
+                        var clearRoot = clearDoc.RootElement;
+
+                        if (clearRoot.TryGetProperty("success", out var successClearEl) && successClearEl.GetBoolean())
+                        {
+                            var deleted = clearRoot.GetProperty("deleted_chunks").GetInt32();
+                            var scope = clearRoot.GetProperty("scope").GetString();
+                            Console.WriteLine($"✅ Cleared {deleted} chunks (scope: {scope})");
+                        }
+                        else if (clearRoot.TryGetProperty("error", out var errorEl))
+                        {
+                            Console.WriteLine($"❌ Error: {errorEl.GetString()}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error clearing: {ex.Message}");
+                    }
+                    break;
+
+                default:
+                    Console.WriteLine("Unknown RAG command. Available: config, enable, disable, stats, index, search, clear");
+                    break;
+            }
+        }
+
         private static void PrintHelp()
         {
             Console.WriteLine("(T)ool for (H)eurustic (U)niversal (V)ersatile (U)sage (THUVU)");
@@ -1477,8 +1709,18 @@ namespace thuvu
             Console.WriteLine("  /set timeout<ms> Default timeout for / run & dotnet / git tools");
             Console.WriteLine("  /test-permissions                Test permission system functionality");
             Console.WriteLine();
+            Console.WriteLine("RAG (Retrieval-Augmented Generation):");
+            Console.WriteLine("  /rag config                    Show RAG configuration");
+            Console.WriteLine("  /rag enable                    Enable RAG (requires PostgreSQL with pgvector)");
+            Console.WriteLine("  /rag disable                   Disable RAG");
+            Console.WriteLine("  /rag stats                     Show RAG index statistics");
+            Console.WriteLine("  /rag index PATH [--recursive] [--pattern GLOB]");
+            Console.WriteLine("       Index files for semantic search. Example: /rag index src/ --recursive --pattern *.cs");
+            Console.WriteLine("  /rag search QUERY [--top N]    Search indexed content semantically");
+            Console.WriteLine("  /rag clear [PATH]              Clear RAG index (all or specific source)");
+            Console.WriteLine();
             Console.WriteLine("Permission System:");
-            Console.WriteLine("  Read-only tools (search_files, read_file, git_status, git_diff, nuget_search) are always allowed.");
+            Console.WriteLine("  Read-only tools (search_files, read_file, git_status, git_diff, nuget_search, rag_search, rag_stats) are always allowed.");
             Console.WriteLine("  Write tools require user permission. You'll be prompted to allow:");
             Console.WriteLine("    [A] Always for this repo (persistent)");
             Console.WriteLine("    [S] For this session (temporary)");

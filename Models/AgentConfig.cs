@@ -13,11 +13,9 @@ namespace thuvu.Models
         public string HostUrl { get; set; } = "http://127.0.0.1:1234";
         public string Model { get; set; } = "lmstudio-community/qwen2.5-7b-instruct";
         public bool Stream { get; set; } = true;       // default: stream tokens
-        public int TimeoutMs { get; set; } = 120_000;  // default process timeout
-        public int HttpRequestTimeout { get; set; } = 30; // HttpClient request timeout in minutes
+        public int TimeoutMs { get; set; } = 1_800_000;  // default process timeout (30 min)
+        public int HttpRequestTimeout { get; set; } = 60; // HttpClient request timeout in minutes (1 hour for large models)
 
-        public bool StreamConfig { get; set; } = true; // whether to stream config updates
-        
         // Tool permissions: key is "repoPath:toolName", value indicates if always allowed
         public Dictionary<string, bool> ToolPermissions { get; set; } = new();
         public static AgentConfig Config = new();

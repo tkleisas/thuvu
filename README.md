@@ -42,12 +42,69 @@ The name is a reference to the late and great Greek comedian Thanassis Veggos wh
 where the main character (ΘΒ) Θου Βου (Thou Vou) was an aspiring secret agent, studying at the
 secret agent school and messing up all the tasks he was assigned.
 
+## Features
+
+### Core Features
+- **LLM Integration**: Connect to local LLMs via LM Studio's OpenAI-compatible REST API
+- **Tool System**: Extensible tool system for file operations, dotnet commands, git operations, and NuGet
+- **Permission System**: Granular permission control for read-only vs write operations
+- **TUI Interface**: Terminal.GUI-based interface for better user experience
+
+### RAG (Retrieval-Augmented Generation)
+The agent supports RAG for semantic search across your codebase using PostgreSQL with pgvector:
+
+```bash
+# Enable RAG (requires PostgreSQL with pgvector)
+/rag enable
+
+# Index your source code
+/rag index src/ --recursive --pattern *.cs
+
+# Search semantically
+/rag search "how to handle HTTP requests"
+
+# View stats
+/rag stats
+
+# Clear index
+/rag clear
+```
+
+**RAG Setup Requirements:**
+1. PostgreSQL 15+ with pgvector extension installed
+2. Create a database: `CREATE DATABASE thuvu_rag;`
+3. Configure connection in `%APPDATA%\thuvu\rag_config.json`
+
+### Logging
+Structured logging is available via Microsoft.Extensions.Logging, providing better visibility into agent operations.
+
+## Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/exit` | Quit the agent |
+| `/clear` | Reset conversation |
+| `/system <text>` | Set system prompt |
+| `/stream on\|off` | Toggle streaming |
+| `/diff [options]` | Show git diff |
+| `/test [options]` | Run dotnet tests |
+| `/run CMD [args]` | Run whitelisted command |
+| `/commit "msg"` | Commit with test gate |
+| `/push [options]` | Safe push with checks |
+| `/pull [options]` | Safe pull with autostash |
+| `/config` | View/manage configuration |
+| `/set key value` | Change settings |
+| `/rag subcommand` | RAG operations |
+
 ## Next steps
 - Try to make the agent safer by implementing a sandbox for the tools.
 - Add more tools and commands.
 - Try to compress the context to fit more information.
 - Fine-tune the system prompt for better results. Right now it is too basic.
-- Improve the UI by using a TUI console library.
+- ~~Improve the UI by using a TUI console library.~~ ✅ Done
 - Try to support more programming languages and frameworks.
 - Switch between different models (for example thinking and non thinking models and use thinking models
   for planning and non thinking models for code generation).
+- ~~Add RAG support with PostgreSQL/pgvector.~~ ✅ Done
+- Add MCP (Model Context Protocol) support for external tool integration.

@@ -1,3 +1,27 @@
-T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage Changelog
+T.H.U.V.U. â€” Tool for Heuristic Universal Versatile Usage Changelog
+
+13 Dec 2025. thuvu version 0.0.4
+- Added appsettings.json for centralized configuration
+- Updated default PostgreSQL connection string for Docker container:
+  - Host: localhost:5432
+  - Database: thuvu_rag
+  - User: thuvu / Password: thuvu123
+- Docker setup: pgvector/pgvector:pg16 with pgvector extension enabled
+- Fixed hardcoded TUI mode override (removed `useTui = true;` line)
+- Fixed duplicate output bug in streaming mode (content was printed twice)
+- Fixed missing onUsage callback in streaming tool loop
+- Increased default timeouts for large models (30 min process, 60 min HTTP)
+- Added MCP implementation plan (docs/MCP_IMPLEMENTATION_PLAN.md)
+
+13 Dec 2025. thuvu version 0.0.3
+- Added RAG (Retrieval-Augmented Generation) support with PostgreSQL/pgvector
+  - New tools: rag_index, rag_search, rag_clear, rag_stats
+  - New /rag command with subcommands: config, enable, disable, stats, index, search, clear
+  - Semantic search across indexed codebase
+- Added structured logging with Microsoft.Extensions.Logging
+- Fixed duplicate code block bug in TuiInterface.cs
+- Removed unused StreamConfig property from AgentConfig
+- Updated help text with RAG documentation
+- Updated README with new features documentation
 
 16 Aug 2025. thuvu version 0.0.2

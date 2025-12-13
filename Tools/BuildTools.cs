@@ -290,6 +290,79 @@ namespace thuvu.Tools
                     }
                     """).RootElement
                 }
+            },
+
+            // --- RAG tools ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "rag_index",
+                    Description = "Index a file or directory for RAG (Retrieval-Augmented Generation) search. Chunks content and stores embeddings in PostgreSQL.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "path":{"type":"string","description":"Path to file or directory to index"},
+                        "recursive":{"type":"boolean","default":false,"description":"If path is a directory, index recursively"},
+                        "pattern":{"type":"string","default":"*.cs","description":"File pattern for directory indexing"}
+                      },
+                      "required":["path"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "rag_search",
+                    Description = "Search the RAG index for content semantically similar to the query.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "query":{"type":"string","description":"Search query text"},
+                        "top_k":{"type":"integer","minimum":1,"maximum":50,"default":5,"description":"Number of results to return"}
+                      },
+                      "required":["query"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "rag_clear",
+                    Description = "Clear the RAG index. Can clear all documents or just documents from a specific source.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "source_path":{"type":"string","description":"Optional: only clear documents from this source path"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "rag_stats",
+                    Description = "Get statistics about the RAG index (total chunks, sources, characters).",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{}
+                    }
+                    """).RootElement
+                }
             }
         };
 

@@ -25,13 +25,15 @@ namespace thuvu.Models
         // Tool categorization by risk level
         private static readonly HashSet<string> ReadOnlyTools = new(StringComparer.OrdinalIgnoreCase)
         {
-            "search_files", "read_file", "git_status", "git_diff", "nuget_search"
+            "search_files", "read_file", "git_status", "git_diff", "nuget_search",
+            "rag_search", "rag_stats"
         };
 
         private static readonly HashSet<string> WriteTools = new(StringComparer.OrdinalIgnoreCase)
         {
             "write_file", "apply_patch", "run_process", "dotnet_restore", "dotnet_build",
-            "dotnet_test", "dotnet_run", "dotnet_new", "nuget_add"
+            "dotnet_test", "dotnet_run", "dotnet_new", "nuget_add",
+            "rag_index", "rag_clear"
         };
 
         public static void SetCurrentRepoPath(string repoPath)

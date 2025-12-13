@@ -491,7 +491,7 @@ namespace thuvu
                     {
 
                         string? final;
-                        if (AgentConfig.Config.StreamConfig)
+                        if (AgentConfig.Config.Stream)
                         {
                             final = await Program.CompleteWithToolsStreamingAsync(
                                 _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
@@ -526,42 +526,6 @@ namespace thuvu
                                 }
                             );
                         }
-                    string? final;
-                    if (AgentConfig.Config.Stream)
-                    {
-                        final = await Program.CompleteWithToolsStreamingAsync(
-                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
-                            onToken: token => Application.MainLoop.Invoke(() =>
-                            {
-                                var currentText = _actionView!.Text.ToString();
-                                _actionView.Text = currentText + token;
-                                _actionView.MoveEnd();
-                                _actionView.SetNeedsDisplay();
-                                Animate();
-                            }),
-                            onToolResult: (name, result) =>
-                            {
-                                AppendToolText($"{name} => {result}");
-                                Animate();
-                            },
-                            onUsage: usage =>
-                            {
-                                AppendTokenText($"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
-                                Animate();
-                            }
-                        );
-                    }
-                    else
-                    {
-                        final = await Program.CompleteWithToolsAsync(
-                            _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
-                            onToolResult: (name, result) =>
-                            {
-                                AppendToolText($"{name} => {result}");
-                                Animate();
-                            }
-                        );
-                    }
 
                         if (!string.IsNullOrEmpty(final))
                         {
