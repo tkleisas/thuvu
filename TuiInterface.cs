@@ -334,7 +334,7 @@ namespace thuvu
                 try
                 {
                     // Delegate to original implementation
-                    await Program.HandleDiffCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    await CommandHandlers.HandleDiffCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
                     {
                         if (isError)
                             AppendActionText(text, true);
@@ -352,7 +352,7 @@ namespace thuvu
             {
                 try
                 {
-                    var args = Program.TokenizeArgs(command); // you already have this helper
+                    var args = ConsoleHelpers.TokenizeArgs(command); // you already have this helper
                     if (args.Count < 3)
                     {
                         AppendSuccessText("Usage: /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms> | /set httptimeout <minutes>");
@@ -444,7 +444,7 @@ namespace thuvu
             {
                 try
                 {
-                    await Program.HandleTestCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    await CommandHandlers.HandleTestCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
                     {
                         if (isError)
                             AppendActionText(text, true);
@@ -463,7 +463,7 @@ namespace thuvu
             {
                 try
                 {
-                    await Program.HandleRunCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    await CommandHandlers.HandleRunCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
                     {
                         if (isError)
                             AppendActionText(text, true);
@@ -493,7 +493,7 @@ namespace thuvu
                         string? final;
                         if (AgentConfig.Config.Stream)
                         {
-                            final = await Program.CompleteWithToolsStreamingAsync(
+                            final = await AgentLoop.CompleteWithToolsStreamingAsync(
                                 _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
                                 onToken: token => Application.MainLoop.Invoke(() =>
                                 {
@@ -517,7 +517,7 @@ namespace thuvu
                         }
                         else
                         {
-                            final = await Program.CompleteWithToolsAsync(
+                            final = await AgentLoop.CompleteWithToolsAsync(
                                 _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
                                 onToolResult: (name, result) =>
                                 {

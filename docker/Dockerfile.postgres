@@ -1,0 +1,25 @@
+# PostgreSQL with pgvector extension for RAG (Retrieval-Augmented Generation)
+FROM postgres:16-alpine
+
+# Install pgvector extension for vector similarity search
+RUN apk add --no-cache \
+    git \
+    build-base \
+    clang15 \
+    llvm15-dev \
+    postgresql-dev \
+    && cd /tmp \
+    && git clone --branch v0.7.4 https://github.com/pgvector/pgvector.git \
+    && cd pgvector \
+    && make OPTFLAGS="" \
+    && make install \
+    && cd / \
+    && rm -rf /tmp/pgvector \
+    && apk del git build-base clang15 llvm15-dev
+
+# Set default environment variables
+ENV POSTGRES_USER=thuvu
+ENV POSTGRES_PASSWORD=thuvu_secret
+ENV POSTGRES_DB=thuvu_rag
+
+EXPOSE 5432

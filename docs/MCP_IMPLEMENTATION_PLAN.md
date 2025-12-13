@@ -68,18 +68,18 @@ export async function readFile(path: string): Promise<ReadFileResult> {
 ```
 
 ### Tasks
-1. [ ] Create `mcp/` directory structure
-2. [ ] Define TypeScript interfaces for all tool inputs/outputs (`types/tools.d.ts`)
-3. [ ] Create wrapper modules for each existing tool:
-   - [ ] `filesystem/readFile.ts` - wraps ReadFileToolImpl
-   - [ ] `filesystem/writeFile.ts` - wraps WriteFileToolImpl
-   - [ ] `filesystem/searchFiles.ts` - wraps SearchFilesToolImpl
-   - [ ] `filesystem/applyPatch.ts` - wraps ApplyPatchToolImpl
-   - [ ] `git/status.ts`, `git/commit.ts`, `git/diff.ts`
-   - [ ] `dotnet/build.ts`, `dotnet/test.ts`, `dotnet/new.ts`
-   - [ ] `rag/search.ts`, `rag/index.ts`, `rag/stats.ts`
-   - [ ] `process/run.ts` - wraps RunProcessToolImpl
-4. [ ] Create barrel exports (`index.ts`) for each server
+1. [x] Create `mcp/` directory structure
+2. [x] Define TypeScript interfaces for all tool inputs/outputs (`types/tools.d.ts`)
+3. [x] Create wrapper modules for each existing tool:
+   - [x] `filesystem/readFile.ts` - wraps ReadFileToolImpl
+   - [x] `filesystem/writeFile.ts` - wraps WriteFileToolImpl
+   - [x] `filesystem/searchFiles.ts` - wraps SearchFilesToolImpl
+   - [x] `filesystem/applyPatch.ts` - wraps ApplyPatchToolImpl
+   - [x] `git/status.ts`, `git/commit.ts`, `git/diff.ts`
+   - [x] `dotnet/build.ts`, `dotnet/test.ts`, `dotnet/new.ts`
+   - [x] `rag/search.ts`, `rag/index.ts`, `rag/stats.ts`
+   - [x] `process/run.ts` - wraps RunProcessToolImpl
+4. [x] Create barrel exports (`index.ts`) for each server
 
 ---
 
@@ -139,21 +139,21 @@ Create a secure sandbox environment to execute agent-generated TypeScript code.
 ```
 
 ### Tasks
-1. [ ] Create `McpCodeExecutor.cs` class
-   - [ ] Spawn Deno subprocess with restricted permissions
-   - [ ] Implement JSON-RPC IPC protocol over stdin/stdout
-   - [ ] Handle timeouts and cancellation
-   - [ ] Capture and return execution results
-2. [ ] Create `mcp/runtime/sandbox.ts`
-   - [ ] Bootstrap script that loads agent code
-   - [ ] Expose `__thuvu_bridge__` global for tool calls
-   - [ ] Handle errors gracefully
-3. [ ] Create `mcp/runtime/bridge.ts`
-   - [ ] JSON-RPC message handling
-   - [ ] Route tool calls to C# and return results
-4. [ ] Create `mcp/runtime/permissions.ts`
-   - [ ] Define allowed operations per tool
-   - [ ] Path sandboxing (restrict to project directory)
+1. [x] Create `McpCodeExecutor.cs` class
+   - [x] Spawn Deno subprocess with restricted permissions
+   - [x] Implement JSON-RPC IPC protocol over stdin/stdout
+   - [x] Handle timeouts and cancellation
+   - [x] Capture and return execution results
+2. [x] Create `mcp/runtime/sandbox.ts`
+   - [x] Bootstrap script that loads agent code
+   - [x] Expose `__thuvu_bridge__` global for tool calls
+   - [x] Handle errors gracefully
+3. [x] Create `mcp/runtime/bridge.ts`
+   - [x] JSON-RPC message handling
+   - [x] Route tool calls to C# and return results
+4. [x] Create `mcp/runtime/permissions.ts`
+   - [x] Define allowed operations per tool
+   - [x] Path sandboxing (restrict to project directory)
 
 ---
 
@@ -192,18 +192,18 @@ public class McpExecutionResult
 ```
 
 ### Tasks
-1. [ ] Create `Models/McpBridge.cs`
-   - [ ] Register all existing tools
-   - [ ] Handle JSON-RPC requests
-   - [ ] Return results or errors
-2. [ ] Create `Models/McpCodeExecutor.cs`
-   - [ ] Process spawning with Deno
-   - [ ] Bidirectional IPC communication
-   - [ ] Timeout handling
-   - [ ] Resource cleanup
-3. [ ] Create `Models/McpExecutionResult.cs`
-4. [ ] Integrate with existing tool implementations
-   - [ ] Refactor tools to be callable from both JSON schema and MCP bridge
+1. [x] Create `Models/McpBridge.cs`
+   - [x] Register all existing tools
+   - [x] Handle JSON-RPC requests
+   - [x] Return results or errors
+2. [x] Create `Models/McpCodeExecutor.cs`
+   - [x] Process spawning with Deno
+   - [x] Bidirectional IPC communication
+   - [x] Timeout handling
+   - [x] Resource cleanup
+3. [x] Create `Models/McpExecutionResult.cs`
+4. [x] Integrate with existing tool implementations
+   - [x] Refactor tools to be callable from both JSON schema and MCP bridge
 
 ---
 
@@ -251,12 +251,12 @@ Write code to accomplish the task, then I'll execute it and show you the results
 - **User preference**: `/mcp on|off` command to toggle
 
 ### Tasks
-1. [ ] Add `/mcp` command to toggle code execution mode
-2. [ ] Create new system prompt for code execution mode
-3. [ ] Modify `CompleteWithToolsStreamingAsync` to detect and route to MCP executor
-4. [ ] Implement result parsing and display
-5. [ ] Add tool discovery endpoint (`searchTools`)
-6. [ ] Update help text and documentation
+1. [x] Add `/mcp` command to toggle code execution mode (`/mcp on|off`)
+2. [x] Create new system prompt for code execution mode (`McpSystemPrompts.cs`)
+3. [x] Modify agent loop to detect TypeScript code blocks and route to MCP executor
+4. [x] Implement result parsing and display
+5. [x] Add tool discovery endpoint (`/mcp tools`)
+6. [x] Update help text and documentation
 
 ---
 
@@ -285,11 +285,11 @@ export async function getToolSchema(server: string, tool: string): Promise<objec
 ```
 
 ### Tasks
-1. [ ] Create `mcp/catalog.ts` with tool metadata
-2. [ ] Implement `searchTools` function
-3. [ ] Implement `getToolSchema` function
-4. [ ] Update system prompt to use progressive discovery
-5. [ ] Cache loaded tool schemas in session
+1. [x] Create `mcp/catalog.ts` with tool metadata
+2. [x] Implement `searchTools` function
+3. [x] Implement `getToolSchema` function
+4. [x] Update system prompt to use progressive discovery
+5. [x] Add catalog tools to MCP bridge (catalog_list, catalog_search, catalog_schema)
 
 ---
 
@@ -323,12 +323,13 @@ export async function execute(params: { depth?: number }) {
 ```
 
 ### Tasks
-1. [ ] Create skills directory structure
-2. [ ] Implement skill registry (`index.json`)
-3. [ ] Add `/skill save <name>` command
-4. [ ] Add `/skill run <name>` command
-5. [ ] Add `/skill list` command
-6. [ ] Allow LLM to invoke skills by name
+1. [x] Create skills directory structure
+2. [x] Implement skill registry (`index.json`)
+3. [x] Add `/mcp skill save <name>` command
+4. [x] Add `/mcp skill run <name>` command
+5. [x] Add `/mcp skill list` command
+6. [x] Add `/mcp skill delete <name>` command
+7. [x] Create example skills (analyze-codebase, run-tests-and-fix)
 
 ---
 
@@ -356,26 +357,27 @@ export enum PermissionLevel {
 ```
 
 ### Tasks
-1. [ ] Implement path validation in bridge
-2. [ ] Add Deno permission flags based on permission level
-3. [ ] Implement resource limits (timeout, memory)
-4. [ ] Add code preview and approval flow
-5. [ ] Create audit log for MCP executions
-6. [ ] Add `/mcp permissions` command
+1. [x] Implement path validation in bridge (ValidatePaths, IsPathSafe methods)
+2. [x] Add Deno permission flags based on permission level (in McpCodeExecutor)
+3. [x] Implement resource limits (timeout, memory in McpConfig)
+4. [x] Add code preview and approval flow (TryExecuteMcpCodeBlockAsync)
+5. [x] Create audit log for MCP executions (LogToolCall in McpBridge)
+6. [x] Add `/mcp permissions` command
+7. [x] Add `/mcp audit` command
 
 ---
 
 ## Implementation Timeline
 
-| Week | Phase | Deliverables |
-|------|-------|--------------|
-| 1-2 | TypeScript Wrappers | All tool wrappers, type definitions |
-| 2-3 | Sandbox | Deno integration, IPC protocol |
-| 3-4 | C# Bridge | McpBridge, McpCodeExecutor |
-| 4-5 | Agent Integration | Hybrid mode, new prompts |
-| 5-6 | Tool Discovery | Catalog, searchTools |
-| 6-7 | Skills | Save/load workflows |
-| 7-8 | Security | Permissions, audit, hardening |
+| Week | Phase | Deliverables | Status |
+|------|-------|--------------|--------|
+| 1-2 | TypeScript Wrappers | All tool wrappers, type definitions | ✅ Complete |
+| 2-3 | Sandbox | Deno integration, IPC protocol | ✅ Complete |
+| 3-4 | C# Bridge | McpBridge, McpCodeExecutor | ✅ Complete |
+| 4-5 | Agent Integration | Hybrid mode, new prompts | ✅ Complete |
+| 5-6 | Tool Discovery | Catalog, searchTools | ✅ Complete |
+| 6-7 | Skills | Save/load workflows | ✅ Complete |
+| 7-8 | Security | Permissions, audit, hardening | ✅ Complete |
 
 ---
 

@@ -71,9 +71,25 @@ The agent supports RAG for semantic search across your codebase using PostgreSQL
 ```
 
 **RAG Setup Requirements:**
+
+**Option 1: Using Docker (Recommended)**
+```bash
+cd docker
+docker-compose up -d
+```
+This starts PostgreSQL 16 with pgvector pre-installed. Connection details:
+- Host: `localhost`
+- Port: `5432`
+- Database: `thuvu_rag`
+- User: `thuvu`
+- Password: `thuvu_secret`
+
+**Option 2: Manual Setup**
 1. PostgreSQL 15+ with pgvector extension installed
 2. Create a database: `CREATE DATABASE thuvu_rag;`
-3. Configure connection in `%APPDATA%\thuvu\rag_config.json`
+3. Run the schema: `docker/init/01-init-rag.sql`
+
+Configure connection in `%APPDATA%\thuvu\rag_config.json` or `appsettings.json`
 
 ### Logging
 Structured logging is available via Microsoft.Extensions.Logging, providing better visibility into agent operations.
@@ -96,9 +112,39 @@ Structured logging is available via Microsoft.Extensions.Logging, providing bett
 | `/config` | View/manage configuration |
 | `/set key value` | Change settings |
 | `/rag subcommand` | RAG operations |
+| `/mcp subcommand` | MCP code execution |
+
+### MCP (Model Context Protocol) Code Execution
+
+Execute TypeScript code in a secure Deno sandbox with access to all THUVU tools. Based on [Anthropic's MCP paper](https://www.anthropic.com/engineering/code-execution-with-mcp).
+
+**Requirements:** [Deno](https://deno.land) runtime installed.
+
+```bash
+# Check MCP environment
+/mcp check
+
+# Enable MCP
+/mcp enable
+
+# Run TypeScript code
+/mcp run "const files = await searchFiles('**/*.cs'); return files.length;"
+
+# List available tools
+/mcp tools
+
+# View configuration
+/mcp config
+```
+
+**Benefits:**
+- Execute multiple tool calls in a single request
+- Process data locally in the sandbox
+- Return only relevant results (token reduction)
+- Full TypeScript/JavaScript capabilities
 
 ## Next steps
-- Try to make the agent safer by implementing a sandbox for the tools.
+- ~~Try to make the agent safer by implementing a sandbox for the tools.~~ ✅ Done (MCP with Deno sandbox)
 - Add more tools and commands.
 - Try to compress the context to fit more information.
 - Fine-tune the system prompt for better results. Right now it is too basic.
@@ -107,4 +153,4 @@ Structured logging is available via Microsoft.Extensions.Logging, providing bett
 - Switch between different models (for example thinking and non thinking models and use thinking models
   for planning and non thinking models for code generation).
 - ~~Add RAG support with PostgreSQL/pgvector.~~ ✅ Done
-- Add MCP (Model Context Protocol) support for external tool integration.
+- ~~Add MCP (Model Context Protocol) support for external tool integration.~~ ✅ Done (Phase 1-3)
