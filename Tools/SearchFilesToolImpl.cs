@@ -15,9 +15,9 @@ namespace thuvu.Tools
             var glob = doc.RootElement.TryGetProperty("glob", out var gEl) ? (gEl.GetString() ?? "**/*") : "**/*";
             var query = doc.RootElement.TryGetProperty("query", out var qEl) ? (qEl.GetString() ?? "") : "";
 
-            // Detect a friendlier root than bin/Debug if possible
-            var cwd = Directory.GetCurrentDirectory();
-            var projectRoot = DetectProjectRoot(cwd) ?? cwd;
+            // Use work directory as the base for all file operations
+            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
+            var projectRoot = DetectProjectRoot(workDir) ?? workDir;
 
             // Split the glob into (rootDir, relative-pattern)
             var (rootDir, relPattern) = GetRootFromGlob(projectRoot, glob);

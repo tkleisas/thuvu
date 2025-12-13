@@ -86,9 +86,9 @@ namespace thuvu.Models
                     };
                 }
 
-                // Get permission flags
-                var projectRoot = Directory.GetCurrentDirectory();
-                var permissionFlags = GetPermissionFlags(projectRoot);
+                // Get permission flags - use work directory
+                var workDir = AgentConfig.GetWorkDirectory();
+                var permissionFlags = GetPermissionFlags(workDir);
 
                 // Build command arguments
                 var sandboxPath = Path.Combine(_mcpPath, "runtime", "sandbox.ts");
@@ -98,7 +98,7 @@ namespace thuvu.Models
                 {
                     FileName = McpConfig.Instance.DenoPath,
                     Arguments = args,
-                    WorkingDirectory = projectRoot,
+                    WorkingDirectory = workDir,
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,

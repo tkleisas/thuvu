@@ -24,12 +24,13 @@ namespace thuvu.Tools
             if (doc.RootElement.TryGetProperty("args", out var a) && a.ValueKind == JsonValueKind.Array)
                 foreach (var it in a.EnumerateArray()) args.Add(it.GetString() ?? "");
 
+            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
             var cwd = doc.RootElement.TryGetProperty("cwd", out var cwdEl) ? cwdEl.GetString() : null;
             var timeoutMs = doc.RootElement.TryGetProperty("timeout_ms", out var tEl) ? Math.Clamp(tEl.GetInt32(), 1000, 600_000) : 120_000;
 
             var psi = new System.Diagnostics.ProcessStartInfo(cmd)
             {
-                WorkingDirectory = string.IsNullOrWhiteSpace(cwd) ? Directory.GetCurrentDirectory() : cwd,
+                WorkingDirectory = string.IsNullOrWhiteSpace(cwd) ? workDir : cwd,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false

@@ -357,7 +357,7 @@ namespace thuvu.Models
         }
 
         /// <summary>
-        /// Check if a path is within the project directory
+        /// Check if a path is within the work directory
         /// </summary>
         private static bool IsPathSafe(string? path)
         {
@@ -366,14 +366,14 @@ namespace thuvu.Models
 
             try
             {
-                var projectRoot = Directory.GetCurrentDirectory();
-                var fullPath = Path.GetFullPath(path, projectRoot);
+                var workDir = AgentConfig.GetWorkDirectory();
+                var fullPath = Path.GetFullPath(path, workDir);
                 
                 // Normalize paths for comparison
-                var normalizedRoot = Path.GetFullPath(projectRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var normalizedRoot = Path.GetFullPath(workDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 var normalizedPath = fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-                // Check if path starts with project root
+                // Check if path starts with work directory
                 return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
             }
             catch

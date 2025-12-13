@@ -299,14 +299,14 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "rag_index",
-                    Description = "Index a file or directory for RAG (Retrieval-Augmented Generation) search. Chunks content and stores embeddings in PostgreSQL.",
+                    Description = "Index EXISTING files or directories for RAG search. Only use on files that already exist. For creating new files, use write_file instead.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
                       "properties":{
-                        "path":{"type":"string","description":"Path to file or directory to index"},
+                        "path":{"type":"string","description":"Path to existing file or directory to index"},
                         "recursive":{"type":"boolean","default":false,"description":"If path is a directory, index recursively"},
-                        "pattern":{"type":"string","default":"*.cs","description":"File pattern for directory indexing"}
+                        "pattern":{"type":"string","default":"*.cs","description":"Simple file pattern like *.cs (not glob patterns like **/*.cs)"}
                       },
                       "required":["path"]
                     }

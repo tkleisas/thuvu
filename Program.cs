@@ -35,8 +35,8 @@ namespace thuvu
             // Check if TUI mode is requested
             bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
 
-            // Initialize permission manager with current directory
-            PermissionManager.SetCurrentRepoPath(Directory.GetCurrentDirectory());
+            // Initialize permission manager with work directory
+            PermissionManager.SetCurrentRepoPath(AgentConfig.GetWorkDirectory());
 
             using var http = new HttpClient();
             AgentConfig.ApplyConfig(http);
@@ -77,6 +77,7 @@ namespace thuvu
             Console.WriteLine($"Config file: {AgentConfig.GetConfigPath()}");
             Console.WriteLine($"Model: {AgentConfig.Config.Model}");
             Console.WriteLine($"Host:  {AgentConfig.Config.HostUrl}");
+            Console.WriteLine($"Work directory: {AgentConfig.GetWorkDirectory()}");
             Console.WriteLine($"Streaming responses: {(AgentConfig.Config.Stream ? "ON" : "OFF")}");
             Console.WriteLine();
 

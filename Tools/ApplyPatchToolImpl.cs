@@ -13,7 +13,8 @@ namespace thuvu.Tools
         {
             using var doc = JsonDocument.Parse(rawArgs);
             var patch = doc.RootElement.GetProperty("patch").GetString()!;
-            var root = doc.RootElement.TryGetProperty("root", out var r) ? (r.GetString() ?? Directory.GetCurrentDirectory()) : Directory.GetCurrentDirectory();
+            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
+            var root = doc.RootElement.TryGetProperty("root", out var r) ? (r.GetString() ?? workDir) : workDir;
 
             try
             {

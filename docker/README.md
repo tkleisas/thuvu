@@ -14,15 +14,17 @@ docker-compose up -d
 | Property | Value |
 |----------|-------|
 | Host | localhost |
-| Port | 5432 |
+| Port | 5433 |
 | Database | thuvu_rag |
 | User | thuvu |
 | Password | thuvu_secret |
 
 **Connection string:**
 ```
-Host=localhost;Port=5432;Database=thuvu_rag;Username=thuvu;Password=thuvu_secret
+Host=localhost;Port=5433;Database=thuvu_rag;Username=thuvu;Password=thuvu_secret
 ```
+
+> **Note:** Port 5433 is used to avoid conflicts with other PostgreSQL instances.
 
 ## Schema
 

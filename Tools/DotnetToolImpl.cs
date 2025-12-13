@@ -47,13 +47,14 @@ namespace thuvu.Tools
         public static Task<string> DotnetNewTool(string rawArgs)
         {
             using var doc = JsonDocument.Parse(rawArgs);
+            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
             var path = ExtractPath(rawArgs);
             var template = doc.RootElement.TryGetProperty("template", out var t) ? t.GetString() : null;
 
             var args = new List<string> { "new",  template};
-            Directory.CreateDirectory(path);
-            Directory.SetCurrentDirectory(path);
-            return RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(new { cmd = "dotnet", args = args.ToArray() }));
+            var targetPath = Path.IsPathRooted(path) ? path : Path.Combine(workDir, path);
+            Directory.CreateDirectory(targetPath);
+            return RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(new { cmd = "dotnet", args = args.ToArray(), cwd = targetPath }));
         }
         public static string ExtractPath(string rawArgs)
         {

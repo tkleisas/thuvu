@@ -50,7 +50,13 @@ namespace thuvu.Tools
                 if (Directory.Exists(fullPath))
                 {
                     var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                    var files = Directory.GetFiles(fullPath, pattern ?? "*", searchOption);
+                    // Directory.GetFiles doesn't support glob patterns like **/*.cs, only simple patterns like *.cs
+                    var simplePattern = pattern ?? "*";
+                    if (simplePattern.StartsWith("**/"))
+                        simplePattern = simplePattern.Substring(3);
+                    if (simplePattern.Contains("/") || simplePattern.Contains("\\"))
+                        simplePattern = Path.GetFileName(simplePattern); // Get just the filename pattern
+                    var files = Directory.GetFiles(fullPath, simplePattern, searchOption);
 
                     foreach (var file in files)
                     {

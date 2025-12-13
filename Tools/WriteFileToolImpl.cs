@@ -14,8 +14,11 @@ namespace thuvu.Tools
         {
             using var doc = JsonDocument.Parse(rawArgs);
             var root = doc.RootElement;
+            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
 
             var path = root.GetProperty("path").GetString()!;
+            // Resolve relative paths against work directory
+            var fullPath = Path.IsPathRooted(path) ? path : Path.Combine(workDir, path);
             var content = root.GetProperty("content").GetString()!;
             var expected = root.TryGetProperty("expected_sha256", out var e) && e.ValueKind == JsonValueKind.String
                            ? e.GetString() : null;
@@ -23,13 +26,13 @@ namespace thuvu.Tools
 
             if (createDirs)
             {
-                var dir = Path.GetDirectoryName(path);
+                var dir = Path.GetDirectoryName(fullPath);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
             }
 
-            if (File.Exists(path) && expected != null)
+            if (File.Exists(fullPath) && expected != null)
             {
-                var current = ReadFileToolImpl.ReadAllTextSafe(path);
+                var current = ReadFileToolImpl.ReadAllTextSafe(fullPath);
                 var currentHash = ReadFileToolImpl.Sha256(current);
                 if (!string.Equals(currentHash, expected, StringComparison.OrdinalIgnoreCase))
                 {
@@ -37,7 +40,11 @@ namespace thuvu.Tools
                 }
             }
 
-            File.WriteAllText(path, content);
+            // Ensure parent directory exists
+            var parentDir = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(parentDir)) Directory.CreateDirectory(parentDir);
+            
+            File.WriteAllText(fullPath, content);
             return JsonSerializer.Serialize(new { wrote = true });
         }
     }

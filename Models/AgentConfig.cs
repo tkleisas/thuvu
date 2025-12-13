@@ -11,14 +11,35 @@ namespace thuvu.Models
     public sealed class AgentConfig
     {
         public string HostUrl { get; set; } = "http://127.0.0.1:1234";
-        public string Model { get; set; } = "lmstudio-community/qwen2.5-7b-instruct";
+        public string Model { get; set; } = "devstral-small-2-2512";
         public bool Stream { get; set; } = true;       // default: stream tokens
         public int TimeoutMs { get; set; } = 1_800_000;  // default process timeout (30 min)
         public int HttpRequestTimeout { get; set; } = 60; // HttpClient request timeout in minutes (1 hour for large models)
+        
+        /// <summary>
+        /// Working directory for agent operations. All file operations happen relative to this.
+        /// Defaults to "./work" subdirectory of the application directory.
+        /// </summary>
+        public string WorkDirectory { get; set; } = @"C:\Users\tasos\Documents\projects\mandelbrot";
 
         // Tool permissions: key is "repoPath:toolName", value indicates if always allowed
         public Dictionary<string, bool> ToolPermissions { get; set; } = new();
         public static AgentConfig Config = new();
+        
+        /// <summary>
+        /// Gets the absolute path to the work directory, creating it if needed.
+        /// </summary>
+        public static string GetWorkDirectory()
+        {
+            var workDir = Config.WorkDirectory;
+            if (!Path.IsPathRooted(workDir))
+            {
+                workDir = Path.Combine(Directory.GetCurrentDirectory(), workDir);
+            }
+            workDir = Path.GetFullPath(workDir);
+            Directory.CreateDirectory(workDir);
+            return workDir;
+        }
         public static string GetConfigPath()
         {
             // Allow override via env var

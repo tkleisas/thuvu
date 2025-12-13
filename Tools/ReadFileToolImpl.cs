@@ -23,8 +23,11 @@ namespace thuvu.Tools
         public static string ReadFileTool(string rawArgs)
         {
             using var doc = JsonDocument.Parse(rawArgs);
+            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
             var path = doc.RootElement.GetProperty("path").GetString()!;
-            var content = ReadAllTextSafe(path);
+            // Resolve relative paths against work directory
+            var fullPath = Path.IsPathRooted(path) ? path : Path.Combine(workDir, path);
+            var content = ReadAllTextSafe(fullPath);
             return JsonSerializer.Serialize(new
             {
                 content,

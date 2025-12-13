@@ -35,9 +35,17 @@ public static class UnifiedDiff
 
             foreach (var hunk in file.Hunks)
             {
-                // Copy untouched lines before this hunk's start
+                // Try to find the actual start position using fuzzy matching
                 int wantStart = Math.Max(0, hunk.OldStart - 1);
-                if (wantStart < cursor)
+                int actualStart = FindHunkStart(oldLines, hunk, wantStart, cursor);
+                
+                if (actualStart < 0)
+                {
+                    rejects.AppendLine($"Reject: could not find hunk context in {file.DisplayPath} at {hunk.Header}");
+                    fileOk = false; break;
+                }
+                
+                if (actualStart < cursor)
                 {
                     // Overlap means context mismatch—reject
                     rejects.AppendLine($"Reject: overlap before hunk in {file.DisplayPath} at {hunk.Header}");
@@ -45,7 +53,7 @@ public static class UnifiedDiff
                 }
 
                 // Copy lines up to hunk start
-                while (cursor < wantStart && cursor < oldLines.Count)
+                while (cursor < actualStart && cursor < oldLines.Count)
                 {
                     output.Add(oldLines[cursor++]);
                 }
@@ -115,6 +123,72 @@ public static class UnifiedDiff
     }
 
     // ----- helpers -----
+
+    /// <summary>
+    /// Find the actual start position for a hunk using fuzzy matching.
+    /// Searches within a range around the expected position for matching context lines.
+    /// </summary>
+    private static int FindHunkStart(List<string> oldLines, Hunk hunk, int expectedStart, int minStart)
+    {
+        // Get the first context or delete lines from the hunk to use as anchor
+        var anchorLines = new List<string>();
+        foreach (var hl in hunk.Lines)
+        {
+            if (hl.Prefix == ' ' || hl.Prefix == '-')
+                anchorLines.Add(hl.Text);
+            else if (hl.Prefix == '+')
+                continue; // Skip additions
+            
+            if (anchorLines.Count >= 3) break; // Use up to 3 lines for matching
+        }
+        
+        if (anchorLines.Count == 0)
+        {
+            // No context lines, just use the expected start if valid
+            return expectedStart < oldLines.Count ? expectedStart : -1;
+        }
+        
+        // Search range: 50 lines before and after expected position
+        const int searchRange = 50;
+        int searchStart = Math.Max(minStart, expectedStart - searchRange);
+        int searchEnd = Math.Min(oldLines.Count - anchorLines.Count, expectedStart + searchRange);
+        
+        // First try exact match at expected position
+        if (expectedStart >= minStart && expectedStart <= oldLines.Count - anchorLines.Count)
+        {
+            if (MatchesAt(oldLines, anchorLines, expectedStart))
+                return expectedStart;
+        }
+        
+        // Search outward from expected position
+        for (int offset = 1; offset <= searchRange; offset++)
+        {
+            // Try before
+            int tryPos = expectedStart - offset;
+            if (tryPos >= searchStart && MatchesAt(oldLines, anchorLines, tryPos))
+                return tryPos;
+            
+            // Try after
+            tryPos = expectedStart + offset;
+            if (tryPos <= searchEnd && MatchesAt(oldLines, anchorLines, tryPos))
+                return tryPos;
+        }
+        
+        return -1; // Not found
+    }
+    
+    private static bool MatchesAt(List<string> oldLines, List<string> anchorLines, int position)
+    {
+        if (position < 0 || position + anchorLines.Count > oldLines.Count)
+            return false;
+            
+        for (int i = 0; i < anchorLines.Count; i++)
+        {
+            if (!LineEq(oldLines[position + i], anchorLines[i]))
+                return false;
+        }
+        return true;
+    }
 
     private static string NormalizePath(string root, string p)
     {
