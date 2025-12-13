@@ -124,8 +124,7 @@ namespace thuvu.Models
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(effectiveTimeout);
 
-                // Start reading stdout/stderr
-                var stdoutTask = ReadOutputAsync(_denoProcess.StandardOutput, cts.Token);
+                // Start reading stderr in background
                 var stderrTask = ReadOutputAsync(_denoProcess.StandardError, cts.Token);
 
                 // Send execution request
@@ -138,13 +137,57 @@ namespace thuvu.Models
                 await _denoProcess.StandardInput.WriteAsync(requestLine);
                 await _denoProcess.StandardInput.FlushAsync();
 
-                // Process JSON-RPC requests from sandbox
-                var processTask = ProcessJsonRpcAsync(_denoProcess, cts.Token);
-
-                // Wait for process to exit
+                // Process stdout: handle both JSON-RPC requests and collect output
+                // Use single unified reader to avoid stream conflicts
+                string? resultLine = null;
+                var stdoutLines = new List<string>();
+                
                 try
                 {
-                    await _denoProcess.WaitForExitAsync(cts.Token);
+                    while (!_denoProcess.HasExited || !_denoProcess.StandardOutput.EndOfStream)
+                    {
+                        cts.Token.ThrowIfCancellationRequested();
+                        
+                        var line = await _denoProcess.StandardOutput.ReadLineAsync(cts.Token);
+                        if (line == null) break;
+                        
+                        stdoutLines.Add(line);
+                        
+                        // Check if it's the result
+                        if (line.StartsWith("RESULT:"))
+                        {
+                            resultLine = line;
+                            continue;
+                        }
+                        
+                        // Check if it's a JSON-RPC request from sandbox
+                        if (line.StartsWith("{"))
+                        {
+                            try
+                            {
+                                var request = JsonSerializer.Deserialize<JsonRpcRequest>(line, new JsonSerializerOptions
+                                {
+                                    PropertyNameCaseInsensitive = true
+                                });
+
+                                if (request != null)
+                                {
+                                    var response = await _bridge.HandleRequestAsync(request, cts.Token);
+                                    var responseLine = JsonSerializer.Serialize(response, new JsonSerializerOptions
+                                    {
+                                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                                    }) + "\n";
+
+                                    await _denoProcess.StandardInput.WriteAsync(responseLine);
+                                    await _denoProcess.StandardInput.FlushAsync();
+                                }
+                            }
+                            catch (JsonException)
+                            {
+                                // Not a JSON-RPC request, ignore
+                            }
+                        }
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -158,12 +201,9 @@ namespace thuvu.Models
                     };
                 }
 
-                var stdout = await stdoutTask;
+                // Wait for process to fully exit
+                await _denoProcess.WaitForExitAsync();
                 var stderr = await stderrTask;
-
-                // Parse result
-                var resultLine = stdout.Split('\n')
-                    .FirstOrDefault(l => l.StartsWith("RESULT:"));
 
                 if (resultLine != null)
                 {
@@ -194,7 +234,7 @@ namespace thuvu.Models
                 return new McpExecutionResult
                 {
                     Success = _denoProcess.ExitCode == 0,
-                    Result = stdout,
+                    Result = string.Join("\n", stdoutLines),
                     Error = stderr.Length > 0 ? stderr : null,
                     Duration = sw.Elapsed,
                     ToolCalls = _bridge.GetAndClearLogs()
@@ -215,48 +255,6 @@ namespace thuvu.Models
             {
                 _denoProcess?.Dispose();
                 _denoProcess = null;
-            }
-        }
-
-        /// <summary>
-        /// Process JSON-RPC requests from the sandbox
-        /// </summary>
-        private async Task ProcessJsonRpcAsync(Process process, CancellationToken ct)
-        {
-            var reader = process.StandardOutput;
-            
-            while (!ct.IsCancellationRequested && !process.HasExited)
-            {
-                var line = await reader.ReadLineAsync(ct);
-                if (line == null) break;
-
-                // Skip non-JSON-RPC lines
-                if (!line.StartsWith("{")) continue;
-                if (line.StartsWith("RESULT:")) continue;
-
-                try
-                {
-                    var request = JsonSerializer.Deserialize<JsonRpcRequest>(line, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
-
-                    if (request != null)
-                    {
-                        var response = await _bridge.HandleRequestAsync(request, ct);
-                        var responseLine = JsonSerializer.Serialize(response, new JsonSerializerOptions
-                        {
-                            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                        }) + "\n";
-
-                        await process.StandardInput.WriteAsync(responseLine);
-                        await process.StandardInput.FlushAsync();
-                    }
-                }
-                catch (JsonException)
-                {
-                    // Not a JSON-RPC request, ignore
-                }
             }
         }
 
