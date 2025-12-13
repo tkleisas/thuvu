@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -20,7 +21,7 @@ namespace thuvu.Models
         /// Working directory for agent operations. All file operations happen relative to this.
         /// Defaults to "./work" subdirectory of the application directory.
         /// </summary>
-        public string WorkDirectory { get; set; } = @"C:\Users\tasos\Documents\projects\mandelbrot";
+        public string WorkDirectory { get; set; } = @"./work";
 
         // Tool permissions: key is "repoPath:toolName", value indicates if always allowed
         public Dictionary<string, bool> ToolPermissions { get; set; } = new();
@@ -42,15 +43,18 @@ namespace thuvu.Models
         }
         public static string GetConfigPath()
         {
+            //read from config file in executable dir first
+
+            var localPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
             // Allow override via env var
             var env = Environment.GetEnvironmentVariable("LM_AGENT_CONFIG");
             if (!string.IsNullOrWhiteSpace(env)) return Path.GetFullPath(env);
-
-            var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            if (string.IsNullOrWhiteSpace(baseDir)) baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var dir = Path.Combine(baseDir, "thuvu");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "config.json");
+            return localPath;
+            //var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            //if (string.IsNullOrWhiteSpace(baseDir)) baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            //var dir = Path.Combine(baseDir, "thuvu");
+            //Directory.CreateDirectory(dir);
+            //return Path.Combine(dir, "config.json");
         }
 
         public static void LoadConfig()
@@ -61,14 +65,33 @@ namespace thuvu.Models
                 if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
-                    Config = JsonSerializer.Deserialize<AgentConfig>(json) ?? new AgentConfig();
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+                    // If your config is stored under a named section in the JSON file (for example "AgentConfig"),
+                    // extract that section and pass its raw JSON to the deserializer. Otherwise fall back to deserializing the whole file.
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    // Change "AgentConfig" below to the section name you want to deserialize (e.g. "Agent", "Thuvu:AgentConfig", etc.)
+                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("AgentConfig", out var section))
+                    {
+                        Config = JsonSerializer.Deserialize<AgentConfig>(section.GetRawText(), options) ?? new AgentConfig();
+                    }
+                    else
+                    {
+                        // No section found — try deserializing the whole file
+                        Config = JsonSerializer.Deserialize<AgentConfig>(json, options) ?? new AgentConfig();
+                    }
                 }
                 else
                 {
                     SaveConfig(); // write defaults
                 }
             }
-            catch { Config = new AgentConfig(); }
+            catch
+            {
+                Config = new AgentConfig();
+            }
         }
 
         public static bool SaveConfig()

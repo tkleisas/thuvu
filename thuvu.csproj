@@ -17,6 +17,11 @@
     <PackageReference Include="Pgvector" Version="0.3.0" />
     <PackageReference Include="Terminal.Gui" Version="1.19.0" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 	<PropertyGroup>
 		<DQ>"</DQ>
 	</PropertyGroup>

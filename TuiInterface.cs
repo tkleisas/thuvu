@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading;
@@ -21,7 +21,9 @@ namespace thuvu
         private readonly HttpClient _http;
         private readonly List<Tool> _tools;
         private List<ChatMessage> _messages;
-        private readonly CancellationTokenSource _cancellationTokenSource = new();
+        private readonly CancellationTokenSource _appCancellationTokenSource = new();
+        private CancellationTokenSource? _currentRequestCts;
+        private bool _isProcessing = false;
 
         // UI Components
         private Label? _statusLabel;
@@ -30,6 +32,7 @@ namespace thuvu
         private TextView? _actionView;
         private TextField? _commandField;
         private Button? _sendButton;
+        private Button? _cancelButton;
         private string workanim = "-\\|/";
         private int workanimIdx = 0;
         public TuiInterface(HttpClient http, List<Tool> tools, List<ChatMessage> initialMessages)
@@ -59,7 +62,7 @@ namespace thuvu
             finally
             {
                 Application.Shutdown();
-                _cancellationTokenSource.Cancel();
+                _appCancellationTokenSource.Cancel();
             }
         }
 
@@ -139,9 +142,27 @@ namespace thuvu
                 IsDefault = false
             };
 
+            _cancelButton = new Button("Cancel")
+            {
+                X = Pos.Right(_sendButton) + 1,
+                Y = Pos.Bottom(_actionView),
+                Visible = false // Hidden by default, shown during processing
+            };
+
             // Event handlers
             _sendButton.Clicked += OnSendClicked;
+            _cancelButton.Clicked += OnCancelClicked;
             _commandField.KeyDown += OnCommandKeyDown;
+
+            // Global key handler for ESC to cancel
+            Application.Top.KeyDown += (e) =>
+            {
+                if (e.KeyEvent.Key == Key.Esc && _isProcessing)
+                {
+                    OnCancelClicked();
+                    e.Handled = true;
+                }
+            };
 
             // Add components to Application.Top
             Application.Top.Add(_statusLabel);
@@ -150,16 +171,47 @@ namespace thuvu
             Application.Top.Add(_workLabel);
             Application.Top.Add(_commandField);
             Application.Top.Add(_sendButton);
+            Application.Top.Add(_cancelButton);
 
             // Set focus to command field
             _commandField.SetFocus();
         }
 
+        private void OnCancelClicked()
+        {
+            if (_currentRequestCts != null && !_currentRequestCts.IsCancellationRequested)
+            {
+                _currentRequestCts.Cancel();
+                AppendActionText($"[{DateTime.Now:HH:mm:ss}] Cancelling request...", true);
+            }
+        }
+
+        private void SetProcessingState(bool processing)
+        {
+            _isProcessing = processing;
+            Application.MainLoop.Invoke(() =>
+            {
+                _sendButton!.Visible = !processing;
+                _cancelButton!.Visible = processing;
+                _commandField!.ReadOnly = processing;
+                if (processing)
+                {
+                    _cancelButton.SetFocus();
+                }
+                else
+                {
+                    _commandField.SetFocus();
+                }
+                Application.Refresh();
+            });
+        }
+
         private string GetStatusText()
         {
+            var status = _isProcessing ? " | Status: PROCESSING (ESC to cancel)" : "";
             return $"Model: {AgentConfig.Config.Model} | Host: {AgentConfig.Config.HostUrl} | " +
                    $"Stream: {(AgentConfig.Config.Stream ? "ON" : "OFF")} | " +
-                   $"Messages: {_messages.Count}";
+                   $"Messages: {_messages.Count}{status}";
         }
 
         private void UpdateStatus()
@@ -174,11 +226,11 @@ namespace thuvu
             {
                 var currentText = _actionView!.Text.ToString();
                 
-                // Add color coding for the text
+                // Add color coding and timestamp for the text
                 string coloredText;
                 if (isError)
                 {
-                    coloredText = $"[ERROR] {text}";
+                    coloredText = $"[ERROR {DateTime.Now:HH:mm:ss}] {text}";
                 }
                 else
                 {
@@ -190,6 +242,7 @@ namespace thuvu
                 // Scroll to bottom
                 _actionView.MoveEnd();
                 _actionView.SetNeedsDisplay();
+                Application.Refresh();
             });
         }
 
@@ -334,7 +387,7 @@ namespace thuvu
                 try
                 {
                     // Delegate to original implementation
-                    await CommandHandlers.HandleDiffCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    await CommandHandlers.HandleDiffCommandAsync(command, _appCancellationTokenSource.Token, (text, isError) =>
                     {
                         if (isError)
                             AppendActionText(text, true);
@@ -444,7 +497,7 @@ namespace thuvu
             {
                 try
                 {
-                    await CommandHandlers.HandleTestCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    await CommandHandlers.HandleTestCommandAsync(command, _appCancellationTokenSource.Token, (text, isError) =>
                     {
                         if (isError)
                             AppendActionText(text, true);
@@ -463,7 +516,7 @@ namespace thuvu
             {
                 try
                 {
-                    await CommandHandlers.HandleRunCommandAsync(command, _cancellationTokenSource.Token, (text, isError) =>
+                    await CommandHandlers.HandleRunCommandAsync(command, _appCancellationTokenSource.Token, (text, isError) =>
                     {
                         if (isError)
                             AppendActionText(text, true);
@@ -483,29 +536,81 @@ namespace thuvu
             {
                 _messages.Add(new ChatMessage("user", command));
 
-                AppendActionText("Processing...");
+                // Create cancellation token for this request
+                _currentRequestCts?.Dispose();
+                _currentRequestCts = new CancellationTokenSource();
+                var ct = _currentRequestCts.Token;
+
+                SetProcessingState(true);
+                UpdateStatus();
+
+                AppendActionText($"[{DateTime.Now:HH:mm:ss}] Sending to {AgentConfig.Config.Model}... (Press ESC to cancel)");
                 bool finished = false;
+                int iterationCount = 0;
                 try
                 {
-                    while (!finished)
+                    while (!finished && !ct.IsCancellationRequested)
                     {
-
+                        iterationCount++;
+                        AppendActionText($"[{DateTime.Now:HH:mm:ss}] Agent iteration {iterationCount} - waiting for LLM response...");
+                        
                         string? final;
                         if (AgentConfig.Config.Stream)
                         {
+                            // Add a flag to track if we've received any tokens
+                            bool receivedTokens = false;
+                            var tokenBuffer = new System.Text.StringBuilder();
+                            
                             final = await AgentLoop.CompleteWithToolsStreamingAsync(
-                                _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
-                                onToken: token => Application.MainLoop.Invoke(() =>
+                                _http, AgentConfig.Config.Model, _messages, _tools, ct,
+                                onToken: token => 
                                 {
-                                    var currentText = _actionView!.Text.ToString();
-                                    _actionView.Text = currentText + token;
-                                    _actionView.MoveEnd();
-                                    _actionView.SetNeedsDisplay();
-                                    Animate();
-                                }),
+                                    if (!receivedTokens)
+                                    {
+                                        receivedTokens = true;
+                                        Application.MainLoop.Invoke(() =>
+                                        {
+                                            var currentText = _actionView!.Text.ToString();
+                                            _actionView.Text = currentText + $"[{DateTime.Now:HH:mm:ss}] Streaming response:\n";
+                                            _actionView.MoveEnd();
+                                            _actionView.SetNeedsDisplay();
+                                            Application.Refresh();
+                                        });
+                                    }
+                                    
+                                    // Buffer tokens and flush periodically for better performance
+                                    tokenBuffer.Append(token);
+                                    if (tokenBuffer.Length > 10 || token.Contains('\n'))
+                                    {
+                                        var bufferedText = tokenBuffer.ToString();
+                                        tokenBuffer.Clear();
+                                        Application.MainLoop.Invoke(() =>
+                                        {
+                                            var currentText = _actionView!.Text.ToString();
+                                            _actionView.Text = currentText + bufferedText;
+                                            _actionView.MoveEnd();
+                                            _actionView.SetNeedsDisplay();
+                                            Application.Refresh();
+                                            Animate();
+                                        });
+                                    }
+                                },
                                 onToolResult: (name, result) =>
                                 {
-                                    AppendToolText($"{name} => {result}");
+                                    // Flush any remaining tokens before showing tool result
+                                    if (tokenBuffer.Length > 0)
+                                    {
+                                        var bufferedText = tokenBuffer.ToString();
+                                        tokenBuffer.Clear();
+                                        Application.MainLoop.Invoke(() =>
+                                        {
+                                            var currentText = _actionView!.Text.ToString();
+                                            _actionView.Text = currentText + bufferedText + "\n";
+                                            _actionView.SetNeedsDisplay();
+                                            Application.Refresh();
+                                        });
+                                    }
+                                    AppendToolText($"{name} => {(result.Length > 200 ? result.Substring(0, 200) + "..." : result)}");
                                     Animate();
                                 },
                                 onUsage: usage =>
@@ -514,14 +619,28 @@ namespace thuvu
                                     Animate();
                                 }
                             );
+                            
+                            // Flush any remaining buffered tokens
+                            if (tokenBuffer.Length > 0)
+                            {
+                                var bufferedText = tokenBuffer.ToString();
+                                Application.MainLoop.Invoke(() =>
+                                {
+                                    var currentText = _actionView!.Text.ToString();
+                                    _actionView.Text = currentText + bufferedText;
+                                    _actionView.MoveEnd();
+                                    _actionView.SetNeedsDisplay();
+                                    Application.Refresh();
+                                });
+                            }
                         }
                         else
                         {
                             final = await AgentLoop.CompleteWithToolsAsync(
-                                _http, AgentConfig.Config.Model, _messages, _tools, _cancellationTokenSource.Token,
+                                _http, AgentConfig.Config.Model, _messages, _tools, ct,
                                 onToolResult: (name, result) =>
                                 {
-                                    AppendToolText($"{name} => {result}");
+                                    AppendToolText($"{name} => {(result.Length > 200 ? result.Substring(0, 200) + "..." : result)}");
                                     Animate();
                                 }
                             );
@@ -529,25 +648,57 @@ namespace thuvu
 
                         if (!string.IsNullOrEmpty(final))
                         {
-                            AppendActionText($"\n{final}\n");
+                            if (!AgentConfig.Config.Stream)
+                            {
+                                // Only append final text if not streaming (streaming already shows it)
+                                AppendActionText($"\n{final}\n");
+                            }
+                            else
+                            {
+                                AppendActionText(""); // Just add a newline after streaming
+                            }
                             _messages.Add(new ChatMessage("assistant", final));
                             Animate();
                             if(final.IndexOf("Finished Tasks.")>=0)
                             {
+                                AppendSuccessText("Agent completed all tasks.");
                                 finished = true;
                             }
-
                         }
                         else
                         {
-                            AppendActionText("(no content)");
-                            
+                            AppendActionText($"[{DateTime.Now:HH:mm:ss}] (no content in response)");
                         }
                     }
                 }
+                catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+                {
+                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] Request timed out. Try increasing /set httptimeout", true);
+                }
+                catch (OperationCanceledException)
+                {
+                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] Request cancelled by user.", true);
+                    // Remove the last user message since we cancelled the request
+                    if (_messages.Count > 1 && _messages[^1].Role == "user")
+                    {
+                        _messages.RemoveAt(_messages.Count - 1);
+                    }
+                }
+                catch (HttpRequestException ex)
+                {
+                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] HTTP Error: {ex.Message} - Is the LLM server running at {AgentConfig.Config.HostUrl}?", true);
+                }
                 catch (Exception ex)
                 {
-                    AppendActionText($"Error processing message: {ex.Message}", true);
+                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] Error: {ex.GetType().Name}: {ex.Message}", true);
+                }
+                finally
+                {
+                    // Reset processing state
+                    SetProcessingState(false);
+                    UpdateStatus();
+                    _currentRequestCts?.Dispose();
+                    _currentRequestCts = null;
                 }
             }
         }

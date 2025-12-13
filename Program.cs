@@ -17,9 +17,32 @@ namespace thuvu
     internal class Program
     {
         private static int _currentContextLength = 0;
+        private static CancellationTokenSource? _currentRequestCts;
+        private static readonly object _ctsLock = new();
 
         public static async Task Main(string[] args)
         {
+            // Set up Ctrl+C handler for graceful cancellation
+            Console.CancelKeyPress += (sender, e) =>
+            {
+                lock (_ctsLock)
+                {
+                    if (_currentRequestCts != null && !_currentRequestCts.IsCancellationRequested)
+                    {
+                        e.Cancel = true; // Prevent immediate exit
+                        _currentRequestCts.Cancel();
+                        Console.ForegroundColor = ConsoleColor.Yellow;
+                        Console.WriteLine("\n[Cancelling request... Press Ctrl+C again to force exit]");
+                        Console.ResetColor();
+                    }
+                    else
+                    {
+                        // No active request or already cancelled - allow exit
+                        Console.WriteLine("\nExiting...");
+                        PermissionManager.ClearSessionPermissions();
+                    }
+                }
+            };
             Console.OutputEncoding = Encoding.UTF8;
             Console.WriteLine(AppContext.BaseDirectory);
 
@@ -101,25 +124,88 @@ namespace thuvu
 
                 messages.Add(new ChatMessage("user", user));
 
-                // Send to LM Studio and run tool loop until final answer
-                string? final;
-
-                if (AgentConfig.Config.Stream)
+                // Create cancellation token for this request
+                lock (_ctsLock)
                 {
-                    final = await AgentLoop.CompleteWithToolsStreamingAsync(
-                        http, AgentConfig.Config.Model, messages, tools, CancellationToken.None,
-                        onToken: token => Console.Write(token),
-                        onToolResult: ConsoleHelpers.AutoPrettyPrinterCallback,
-                        onUsage: u => Console.WriteLine($"\n[tokens] prompt={u.PromptTokens}, completion={u.CompletionTokens}, total={u.TotalTokens}")
-                    );
-                    Console.WriteLine();
+                    _currentRequestCts?.Dispose();
+                    _currentRequestCts = new CancellationTokenSource();
                 }
-                else
+                var ct = _currentRequestCts!.Token;
+
+                // Send to LM Studio and run tool loop until final answer
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Sending to {AgentConfig.Config.Model}... (Press Ctrl+C to cancel)");
+                Console.ResetColor();
+                
+                string? final;
+                bool receivedFirstToken = false;
+
+                try
                 {
-                    final = await AgentLoop.CompleteWithToolsAsync(
-                        http, AgentConfig.Config.Model, messages, tools, CancellationToken.None,
-                        onToolResult: ConsoleHelpers.AutoPrettyPrinterCallback
-                    );
+                    if (AgentConfig.Config.Stream)
+                    {
+                        final = await AgentLoop.CompleteWithToolsStreamingAsync(
+                            http, AgentConfig.Config.Model, messages, tools, ct,
+                            onToken: token => 
+                            {
+                                if (!receivedFirstToken)
+                                {
+                                    receivedFirstToken = true;
+                                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Streaming response:");
+                                    Console.ResetColor();
+                                }
+                                Console.Write(token);
+                            },
+                            onToolResult: ConsoleHelpers.AutoPrettyPrinterCallback,
+                            onUsage: u => Console.WriteLine($"\n[tokens] prompt={u.PromptTokens}, completion={u.CompletionTokens}, total={u.TotalTokens}")
+                        );
+                        Console.WriteLine();
+                    }
+                    else
+                    {
+                        final = await AgentLoop.CompleteWithToolsAsync(
+                            http, AgentConfig.Config.Model, messages, tools, ct,
+                            onToolResult: ConsoleHelpers.AutoPrettyPrinterCallback
+                        );
+                    }
+                }
+                catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Request timed out after {AgentConfig.Config.HttpRequestTimeout} minutes.");
+                    Console.WriteLine("Try increasing timeout with: /set httptimeout <minutes>");
+                    Console.ResetColor();
+                    continue;
+                }
+                catch (OperationCanceledException)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"\n[{DateTime.Now:HH:mm:ss}] Request cancelled by user.");
+                    Console.ResetColor();
+                    // Remove the last user message since we cancelled the request
+                    if (messages.Count > 1 && messages[^1].Role == "user")
+                    {
+                        messages.RemoveAt(messages.Count - 1);
+                    }
+                    continue;
+                }
+                catch (HttpRequestException ex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] HTTP Error: {ex.Message}");
+                    Console.WriteLine($"Is the LLM server running at {AgentConfig.Config.HostUrl}?");
+                    Console.ResetColor();
+                    continue;
+                }
+                finally
+                {
+                    // Clear the current request CTS
+                    lock (_ctsLock)
+                    {
+                        _currentRequestCts?.Dispose();
+                        _currentRequestCts = null;
+                    }
                 }
 
                 if (!string.IsNullOrEmpty(final))
@@ -145,7 +231,9 @@ namespace thuvu
                 }
                 else
                 {
-                    Console.WriteLine("(no content)");
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] (no content in response)");
+                    Console.ResetColor();
                 }
             }
         }
