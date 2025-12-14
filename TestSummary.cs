@@ -104,14 +104,60 @@ namespace CodingAgent
             var prev = Console.ForegroundColor;
             try
             {
+                // Determine overall status
+                var isSuccess = s.Failed == 0;
+                var icon = isSuccess ? "✓" : "✗";
+                var statusColor = isSuccess ? ConsoleColor.Green : ConsoleColor.Red;
+                
+                // Print styled header
+                Console.ForegroundColor = statusColor;
+                Console.Write($" {icon} ");
+                Console.ForegroundColor = ConsoleColor.White;
                 Console.Write("Tests: ");
-                if (s.Failed > 0) { Console.ForegroundColor = ConsoleColor.Red; Console.Write($"Failed {s.Failed} "); }
-                if (s.Passed > 0) { Console.ForegroundColor = ConsoleColor.Green; Console.Write($"Passed {s.Passed} "); }
-                if (s.Skipped > 0) { Console.ForegroundColor = ConsoleColor.Yellow; Console.Write($"Skipped {s.Skipped} "); }
-                Console.ForegroundColor = prev;
-                Console.Write($"(Total {s.Total}");
-                if (!string.IsNullOrWhiteSpace(s.Duration)) Console.Write($", Duration {s.Duration}");
-                Console.WriteLine(")");
+                
+                // Results with visual bars
+                if (s.Failed > 0) 
+                { 
+                    Console.ForegroundColor = ConsoleColor.Red; 
+                    Console.Write($"✗ {s.Failed} failed "); 
+                }
+                if (s.Passed > 0) 
+                { 
+                    Console.ForegroundColor = ConsoleColor.Green; 
+                    Console.Write($"✓ {s.Passed} passed "); 
+                }
+                if (s.Skipped > 0) 
+                { 
+                    Console.ForegroundColor = ConsoleColor.Yellow; 
+                    Console.Write($"○ {s.Skipped} skipped "); 
+                }
+                
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write($"│ Total: {s.Total}");
+                if (!string.IsNullOrWhiteSpace(s.Duration)) 
+                {
+                    Console.Write($" │ ⏱ {s.Duration}");
+                }
+                Console.WriteLine();
+                
+                // Print visual progress bar
+                if (s.Total > 0)
+                {
+                    var barWidth = 40;
+                    var passedWidth = (int)((s.Passed / (double)s.Total) * barWidth);
+                    var failedWidth = (int)((s.Failed / (double)s.Total) * barWidth);
+                    var skippedWidth = barWidth - passedWidth - failedWidth;
+                    
+                    Console.Write("   ");
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.Write(new string('█', passedWidth));
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Write(new string('█', failedWidth));
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.Write(new string('░', skippedWidth));
+                    Console.ResetColor();
+                    Console.WriteLine();
+                }
             }
             finally { Console.ForegroundColor = prev; }
         }

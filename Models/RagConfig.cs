@@ -21,12 +21,12 @@ namespace thuvu.Models
 
         public static string GetConfigPath()
         {
-            var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            if (string.IsNullOrWhiteSpace(baseDir)) 
-                baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            var dir = Path.Combine(baseDir, "thuvu");
-            Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "rag_config.json");
+            //read from config file in executable dir first
+            var localPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            // Allow override via env var
+            var env = Environment.GetEnvironmentVariable("LM_AGENT_CONFIG");
+            if (!string.IsNullOrWhiteSpace(env)) return Path.GetFullPath(env);
+            return localPath;
         }
 
         public static void LoadConfig()
@@ -37,16 +37,35 @@ namespace thuvu.Models
                 if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
-                    Instance = JsonSerializer.Deserialize<RagConfig>(json) ?? new RagConfig();
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+                    // If your config is stored under a named section in the JSON file (for example "RagConfig"),
+                    // extract that section and pass its raw JSON to the deserializer. Otherwise fall back to deserializing the whole file.
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    // Try multiple section names: "RagConfig", "Rag"
+                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("RagConfig", out var section))
+                    {
+                        Instance = JsonSerializer.Deserialize<RagConfig>(section.GetRawText(), options) ?? new RagConfig();
+                    }
+                    else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Rag", out var ragSection))
+                    {
+                        Instance = JsonSerializer.Deserialize<RagConfig>(ragSection.GetRawText(), options) ?? new RagConfig();
+                    }
+                    else
+                    {
+                        Instance = JsonSerializer.Deserialize<RagConfig>(json, options) ?? new RagConfig();
+                    }
                 }
                 else
                 {
                     SaveConfig();
                 }
             }
-            catch 
-            { 
-                Instance = new RagConfig(); 
+            catch
+            {
+                Instance = new RagConfig();
             }
         }
 

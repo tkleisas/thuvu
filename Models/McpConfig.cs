@@ -90,10 +90,12 @@ namespace thuvu.Models
         /// </summary>
         public static string GetConfigPath()
         {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var configDir = Path.Combine(appData, "thuvu");
-            Directory.CreateDirectory(configDir);
-            return Path.Combine(configDir, "mcp_config.json");
+            //read from config file in executable dir first
+            var localPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            // Allow override via env var
+            var env = Environment.GetEnvironmentVariable("LM_AGENT_CONFIG");
+            if (!string.IsNullOrWhiteSpace(env)) return Path.GetFullPath(env);
+            return localPath;
         }
 
         /// <summary>
@@ -102,24 +104,57 @@ namespace thuvu.Models
         public static void LoadConfig()
         {
             var path = GetConfigPath();
-            if (File.Exists(path))
+            try
             {
-                try
+                if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
-                    var config = JsonSerializer.Deserialize<McpConfig>(json);
-                    if (config != null)
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+                    // If your config is stored under a named section in the JSON file (for example "McpConfig"),
+                    // extract that section and pass its raw JSON to the deserializer. Otherwise fall back to deserializing the whole file.
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    // Try multiple section names: "McpConfig", "Mcp"
+                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("McpConfig", out var section))
                     {
-                        lock (_lock)
+                        var config = JsonSerializer.Deserialize<McpConfig>(section.GetRawText(), options);
+                        if (config != null)
                         {
-                            _instance = config;
+                            lock (_lock)
+                            {
+                                _instance = config;
+                            }
+                        }
+                    }
+                    else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Mcp", out var mcpSection))
+                    {
+                        var config = JsonSerializer.Deserialize<McpConfig>(mcpSection.GetRawText(), options);
+                        if (config != null)
+                        {
+                            lock (_lock)
+                            {
+                                _instance = config;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var config = JsonSerializer.Deserialize<McpConfig>(json, options);
+                        if (config != null)
+                        {
+                            lock (_lock)
+                            {
+                                _instance = config;
+                            }
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    AgentLogger.LogWarning("Failed to load MCP config: {Message}", ex.Message);
-                }
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogWarning("Failed to load MCP config: {Message}", ex.Message);
             }
         }
 

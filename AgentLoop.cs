@@ -50,7 +50,7 @@ namespace thuvu
                 var body = await resp.Content.ReadFromJsonAsync<ChatResponse>(JsonOpts, ct)
                            ?? throw new InvalidOperationException("Empty response.");
                 if (body?.Usage is { } u)
-                    Console.WriteLine($"[tokens] prompt={u.PromptTokens}, completion={u.CompletionTokens}, total={u.TotalTokens}");
+                    ConsoleHelpers.PrintTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
                 var msg = body.Choices[0].Message;
 
                 if (msg.ToolCalls is { Count: > 0 })
@@ -62,7 +62,7 @@ namespace thuvu
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
                         var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct);
-                        Console.WriteLine($"[tool] {name}({argsJson}) => {toolResult}");
+                        ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
 
                         messages.Add(new ChatMessage(
@@ -121,7 +121,7 @@ namespace thuvu
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
                         var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct);
-                        Console.WriteLine($"[tool] {name}({argsJson}) => {toolResult}");
+                        ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
 
                         messages.Add(new ChatMessage(

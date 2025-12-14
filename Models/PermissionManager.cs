@@ -85,52 +85,118 @@ namespace thuvu.Models
         private static bool PromptForPermission(string toolName, string argsJson, string permissionKey)
         {
             Console.WriteLine();
+            // Draw permission box
+            var boxWidth = 60;
+            var line = new string('═', boxWidth - 2);
+            
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"⚠️  Permission Required");
+            Console.WriteLine($"╔{line}╗");
+            Console.WriteLine($"║  ⚠  PERMISSION REQUIRED{new string(' ', boxWidth - 27)}║");
+            Console.WriteLine($"╠{line}╣");
             Console.ResetColor();
-            Console.WriteLine($"Tool '{toolName}' wants to perform a write operation.");
-            Console.WriteLine($"Arguments: {argsJson}");
-            Console.WriteLine();
-            Console.WriteLine("Allow this operation?");
-            Console.WriteLine("  [A] Always for this repo");
-            Console.WriteLine("  [S] For this session");
-            Console.WriteLine("  [O] Once (this time only)");
-            Console.WriteLine("  [N] No (cancel)");
-            Console.WriteLine();
-            Console.Write("Choice [A/S/O/N]: ");
+            
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.Write("║ ");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.Write($"Tool: ");
+            Console.ForegroundColor = ConsoleColor.White;
+            var toolDisplay = toolName.Length > 45 ? toolName.Substring(0, 42) + "..." : toolName;
+            Console.Write(toolDisplay);
+            Console.WriteLine(new string(' ', boxWidth - 9 - toolDisplay.Length) + "║");
+            
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"╠{line}╣");
+            Console.ResetColor();
+            
+            // Truncate args for display
+            var argsDisplay = argsJson.Length > 50 ? argsJson.Substring(0, 47) + "..." : argsJson;
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("║ ");
+            Console.Write($"Args: {argsDisplay}");
+            Console.WriteLine(new string(' ', Math.Max(0, boxWidth - 9 - argsDisplay.Length)) + "║");
+            
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"╠{line}╣");
+            Console.ResetColor();
+            
+            // Options
+            Console.Write("║ ");
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.Write("[A]");
+            Console.ResetColor();
+            Console.WriteLine($" Always for this repo{new string(' ', boxWidth - 26)}║");
+            
+            Console.Write("║ ");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.Write("[S]");
+            Console.ResetColor();
+            Console.WriteLine($" For this session{new string(' ', boxWidth - 22)}║");
+            
+            Console.Write("║ ");
+            Console.ForegroundColor = ConsoleColor.Blue;
+            Console.Write("[O]");
+            Console.ResetColor();
+            Console.WriteLine($" Once (this time only){new string(' ', boxWidth - 27)}║");
+            
+            Console.Write("║ ");
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Write("[N]");
+            Console.ResetColor();
+            Console.WriteLine($" No (cancel){new string(' ', boxWidth - 17)}║");
+            
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"╚{line}╝");
+            Console.ResetColor();
+            
+            Console.Write("Choice ");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("[A/S/O/N]");
+            Console.ResetColor();
+            Console.Write(": ");
 
             while (true)
             {
                 var key = Console.ReadKey(true);
                 var choice = char.ToUpperInvariant(key.KeyChar);
                 
+                Console.ForegroundColor = ConsoleColor.White;
                 Console.WriteLine(choice);
+                Console.ResetColor();
 
                 switch (choice)
                 {
                     case 'A':
-                        // Store persistent permission
                         AgentConfig.Config.ToolPermissions[permissionKey] = true;
                         AgentConfig.SaveConfig();
-                        Console.WriteLine("✓ Permission granted always for this repo");
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine(" ✓ Permission granted always for this repo");
+                        Console.ResetColor();
                         return true;
 
                     case 'S':
-                        // Store session permission
                         SessionPermissions[permissionKey] = PermissionScope.Session;
-                        Console.WriteLine("✓ Permission granted for this session");
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine(" ✓ Permission granted for this session");
+                        Console.ResetColor();
                         return true;
 
                     case 'O':
-                        Console.WriteLine("✓ Permission granted once");
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine(" ✓ Permission granted once");
+                        Console.ResetColor();
                         return true;
 
                     case 'N':
-                        Console.WriteLine("❌ Operation cancelled");
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine(" ✗ Operation cancelled");
+                        Console.ResetColor();
                         return false;
 
                     default:
-                        Console.Write("Invalid choice. Please enter A, S, O, or N: ");
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.Write("Invalid choice. ");
+                        Console.ResetColor();
+                        Console.Write("Please enter A, S, O, or N: ");
                         continue;
                 }
             }

@@ -16,7 +16,13 @@ namespace thuvu.Models
         public bool Stream { get; set; } = true;       // default: stream tokens
         public int TimeoutMs { get; set; } = 1_800_000;  // default process timeout (30 min)
         public int HttpRequestTimeout { get; set; } = 60; // HttpClient request timeout in minutes (1 hour for large models)
-        
+
+        // Authentication for LLM API: if AuthToken is set, it will be applied to HttpClient requests.
+        // AuthScheme + AuthToken => e.g. "Bearer <token>". If AuthScheme is empty, the raw header value will be used.
+        public string AuthScheme { get; set; } = "Bearer";
+        public string AuthHeaderName { get; set; } = "Authorization";
+        public string AuthToken { get; set; } = string.Empty;
+
         /// <summary>
         /// Working directory for agent operations. All file operations happen relative to this.
         /// Defaults to "./work" subdirectory of the application directory.
@@ -72,24 +78,34 @@ namespace thuvu.Models
                     using var doc = JsonDocument.Parse(json);
                     var root = doc.RootElement;
 
-                    // Change "AgentConfig" below to the section name you want to deserialize (e.g. "Agent", "Thuvu:AgentConfig", etc.)
+                    // Try multiple section names: "AgentConfig", "Agent"
                     if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("AgentConfig", out var section))
                     {
                         Config = JsonSerializer.Deserialize<AgentConfig>(section.GetRawText(), options) ?? new AgentConfig();
+                        AgentLogger.LogDebug("Loaded AgentConfig from section 'AgentConfig' in {Path}", path);
+                    }
+                    else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Agent", out var agentSection))
+                    {
+                        Config = JsonSerializer.Deserialize<AgentConfig>(agentSection.GetRawText(), options) ?? new AgentConfig();
+                        AgentLogger.LogDebug("Loaded AgentConfig from section 'Agent' in {Path}", path);
                     }
                     else
                     {
                         // No section found — try deserializing the whole file
                         Config = JsonSerializer.Deserialize<AgentConfig>(json, options) ?? new AgentConfig();
+                        AgentLogger.LogDebug("Loaded AgentConfig from root in {Path}", path);
                     }
+                    AgentLogger.LogDebug("Loaded Model: {Model}, Host: {Host}", Config.Model, Config.HostUrl);
                 }
                 else
                 {
+                    AgentLogger.LogWarning("Config file not found at {Path}, using defaults", path);
                     SaveConfig(); // write defaults
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AgentLogger.LogError("Failed to load config from {Path}: {Error}", path, ex.Message);
                 Config = new AgentConfig();
             }
         }
@@ -112,7 +128,30 @@ namespace thuvu.Models
             // Update HttpClient and runtime flags from config
             http.BaseAddress = new Uri(Config.HostUrl);
             http.Timeout = TimeSpan.FromMinutes(Config.HttpRequestTimeout);
-                                              // Optional: adjust any other defaults that reference timeout/model, etc.
+
+            // Apply authentication header if a token is configured.
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(Config.AuthToken))
+                {
+                    if (!string.IsNullOrWhiteSpace(Config.AuthScheme))
+                    {
+                        // Use AuthenticationHeaderValue when scheme is provided (e.g. Bearer)
+                        http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(Config.AuthScheme, Config.AuthToken);
+                    }
+                    else
+                    {
+                        // Fallback: add raw header value using the configured header name
+                        http.DefaultRequestHeaders.Remove(Config.AuthHeaderName);
+                        http.DefaultRequestHeaders.TryAddWithoutValidation(Config.AuthHeaderName, Config.AuthToken);
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore header application errors; do not crash the app due to misconfigured header values.
+            }
+            // Optional: adjust any other defaults that reference timeout/model, etc.
         }
 
     }

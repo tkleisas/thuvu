@@ -12,6 +12,339 @@ namespace thuvu
     /// </summary>
     public static class ConsoleHelpers
     {
+        // ═══════════════════════════════════════════════════════════════════════
+        // Box drawing and decorative characters
+        // ═══════════════════════════════════════════════════════════════════════
+        public const string BoxTopLeft = "╔";
+        public const string BoxTopRight = "╗";
+        public const string BoxBottomLeft = "╚";
+        public const string BoxBottomRight = "╝";
+        public const string BoxHorizontal = "═";
+        public const string BoxVertical = "║";
+        public const string BoxTeeLeft = "╠";
+        public const string BoxTeeRight = "╣";
+
+        // Status icons
+        public const string IconSuccess = "✓";
+        public const string IconError = "✗";
+        public const string IconWarning = "⚠";
+        public const string IconInfo = "ℹ";
+        public const string IconTool = "🔧";
+        public const string IconThinking = "💭";
+        public const string IconSend = "➤";
+        public const string IconReceive = "◀";
+        public const string IconUser = "👤";
+        public const string IconBot = "🤖";
+        public const string IconClock = "⏱";
+        public const string IconTokens = "🎫";
+        public const string IconSpinner = "◐◓◑◒";
+
+        /// <summary>
+        /// Print a styled header box
+        /// </summary>
+        public static void PrintHeader(string text, ConsoleColor color = ConsoleColor.Cyan)
+        {
+            var width = Math.Max(text.Length + 4, 40);
+            var line = new string('═', width - 2);
+            var padding = new string(' ', (width - 2 - text.Length) / 2);
+            var paddingRight = new string(' ', width - 2 - text.Length - padding.Length);
+
+            WithColor(color, () =>
+            {
+                Console.WriteLine($"╔{line}╗");
+                Console.WriteLine($"║{padding}{text}{paddingRight}║");
+                Console.WriteLine($"╚{line}╝");
+            });
+        }
+
+        /// <summary>
+        /// Print a styled section divider
+        /// </summary>
+        public static void PrintDivider(string title = "", ConsoleColor color = ConsoleColor.DarkGray)
+        {
+            var width = Console.WindowWidth > 10 ? Console.WindowWidth - 1 : 80;
+            WithColor(color, () =>
+            {
+                if (string.IsNullOrEmpty(title))
+                {
+                    Console.WriteLine(new string('─', width));
+                }
+                else
+                {
+                    var left = "───[ ";
+                    var right = " ]";
+                    var remaining = width - left.Length - title.Length - right.Length;
+                    Console.WriteLine($"{left}{title}{right}{new string('─', Math.Max(0, remaining))}");
+                }
+            });
+        }
+
+        /// <summary>
+        /// Print a success message with icon
+        /// </summary>
+        public static void PrintSuccess(string message)
+        {
+            WithColor(ConsoleColor.Green, () => Console.Write($" {IconSuccess} "));
+            Console.WriteLine(message);
+        }
+
+        /// <summary>
+        /// Print an error message with icon
+        /// </summary>
+        public static void PrintError(string message)
+        {
+            WithColor(ConsoleColor.Red, () => Console.Write($" {IconError} "));
+            WithColor(ConsoleColor.Red, () => Console.WriteLine(message));
+        }
+
+        /// <summary>
+        /// Print a warning message with icon
+        /// </summary>
+        public static void PrintWarning(string message)
+        {
+            WithColor(ConsoleColor.Yellow, () => Console.Write($" {IconWarning} "));
+            WithColor(ConsoleColor.Yellow, () => Console.WriteLine(message));
+        }
+
+        /// <summary>
+        /// Print an info message with icon
+        /// </summary>
+        public static void PrintInfo(string message)
+        {
+            WithColor(ConsoleColor.Cyan, () => Console.Write($" {IconInfo} "));
+            Console.WriteLine(message);
+        }
+
+        /// <summary>
+        /// Print a tool execution message
+        /// </summary>
+        public static void PrintToolCall(string toolName, string args, string? result = null)
+        {
+            WithColor(ConsoleColor.Magenta, () => Console.Write($" {IconTool} "));
+            WithColor(ConsoleColor.White, () => Console.Write(toolName));
+            WithColor(ConsoleColor.DarkGray, () => Console.WriteLine($" ({args})"));
+            if (result != null)
+            {
+                var truncated = result.Length > 200 ? result.Substring(0, 200) + "..." : result;
+                WithColor(ConsoleColor.DarkGray, () => Console.WriteLine($"    └─ {truncated}"));
+            }
+        }
+
+        /// <summary>
+        /// Print a timestamp with icon
+        /// </summary>
+        public static void PrintTimestamp(string message = "")
+        {
+            WithColor(ConsoleColor.DarkGray, () => Console.Write($"[{DateTime.Now:HH:mm:ss}] "));
+            if (!string.IsNullOrEmpty(message))
+                Console.WriteLine(message);
+        }
+
+        /// <summary>
+        /// Print token usage information
+        /// </summary>
+        public static void PrintTokenUsage(int prompt, int completion, int total)
+        {
+            WithColor(ConsoleColor.DarkCyan, () => Console.Write($" {IconTokens} "));
+            WithColor(ConsoleColor.DarkGray, () => Console.Write("tokens: "));
+            WithColor(ConsoleColor.Blue, () => Console.Write($"prompt={prompt}"));
+            WithColor(ConsoleColor.DarkGray, () => Console.Write(", "));
+            WithColor(ConsoleColor.Green, () => Console.Write($"completion={completion}"));
+            WithColor(ConsoleColor.DarkGray, () => Console.Write(", "));
+            WithColor(ConsoleColor.Cyan, () => Console.WriteLine($"total={total}"));
+        }
+
+        /// <summary>
+        /// Print the user prompt indicator
+        /// </summary>
+        public static void PrintPrompt()
+        {
+            WithColor(ConsoleColor.Green, () => Console.Write($"{IconUser} "));
+            WithColor(ConsoleColor.White, () => Console.Write("> "));
+        }
+
+        /// <summary>
+        /// Print bot response indicator
+        /// </summary>
+        public static void PrintBotIndicator()
+        {
+            WithColor(ConsoleColor.Cyan, () => Console.Write($"{IconBot} "));
+        }
+
+        /// <summary>
+        /// Print a status message (sending, receiving, etc.)
+        /// </summary>
+        public static void PrintStatus(string message, ConsoleColor color = ConsoleColor.DarkGray)
+        {
+            WithColor(color, () =>
+            {
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+            });
+        }
+
+        /// <summary>
+        /// Print a styled key-value pair
+        /// </summary>
+        public static void PrintKeyValue(string key, string value, ConsoleColor keyColor = ConsoleColor.Gray, ConsoleColor valueColor = ConsoleColor.White)
+        {
+            WithColor(keyColor, () => Console.Write($"  {key}: "));
+            WithColor(valueColor, () => Console.WriteLine(value));
+        }
+
+        /// <summary>
+        /// Print a styled list item
+        /// </summary>
+        public static void PrintListItem(string text, int indent = 2)
+        {
+            var padding = new string(' ', indent);
+            WithColor(ConsoleColor.DarkGray, () => Console.Write($"{padding}• "));
+            Console.WriteLine(text);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // Streaming animation helpers
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        private static readonly string[] SpinnerFrames = new[] { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
+        private static readonly string[] ThinkingFrames = new[] { "💭", "💬", "💭", "💬" };
+        private static int _spinnerIndex = 0;
+        private static int _thinkingIndex = 0;
+        private static DateTime _streamStartTime;
+        private static int _tokenCount = 0;
+        private static readonly object _spinnerLock = new();
+
+        /// <summary>
+        /// Initialize streaming state
+        /// </summary>
+        public static void StartStreaming()
+        {
+            lock (_spinnerLock)
+            {
+                _streamStartTime = DateTime.Now;
+                _tokenCount = 0;
+                _spinnerIndex = 0;
+                _thinkingIndex = 0;
+            }
+        }
+
+        /// <summary>
+        /// Get elapsed streaming time
+        /// </summary>
+        public static TimeSpan GetStreamingElapsed()
+        {
+            lock (_spinnerLock)
+            {
+                return DateTime.Now - _streamStartTime;
+            }
+        }
+
+        /// <summary>
+        /// Increment token count and return current count
+        /// </summary>
+        public static int IncrementTokenCount(int count = 1)
+        {
+            lock (_spinnerLock)
+            {
+                _tokenCount += count;
+                return _tokenCount;
+            }
+        }
+
+        /// <summary>
+        /// Get current token count
+        /// </summary>
+        public static int GetTokenCount()
+        {
+            lock (_spinnerLock)
+            {
+                return _tokenCount;
+            }
+        }
+
+        /// <summary>
+        /// Print a "thinking" indicator (waiting for first token)
+        /// </summary>
+        public static void PrintThinkingIndicator()
+        {
+            lock (_spinnerLock)
+            {
+                _thinkingIndex = (_thinkingIndex + 1) % ThinkingFrames.Length;
+            }
+            var elapsed = GetStreamingElapsed();
+            
+            // Save cursor position, print indicator, restore position
+            var frame = ThinkingFrames[_thinkingIndex];
+            WithColor(ConsoleColor.Yellow, () => Console.Write($"\r {frame} Thinking... ({elapsed.TotalSeconds:F1}s) "));
+        }
+
+        /// <summary>
+        /// Clear the thinking indicator line
+        /// </summary>
+        public static void ClearThinkingIndicator()
+        {
+            Console.Write("\r" + new string(' ', 40) + "\r");
+        }
+
+        /// <summary>
+        /// Print streaming progress indicator
+        /// </summary>
+        public static void PrintStreamingProgress()
+        {
+            lock (_spinnerLock)
+            {
+                _spinnerIndex = (_spinnerIndex + 1) % SpinnerFrames.Length;
+            }
+            var elapsed = GetStreamingElapsed();
+            var tokens = GetTokenCount();
+            var tokensPerSec = elapsed.TotalSeconds > 0 ? tokens / elapsed.TotalSeconds : 0;
+            
+            // Move to status line and print progress
+            WithColor(ConsoleColor.DarkGray, () => 
+            {
+                Console.Write($" {SpinnerFrames[_spinnerIndex]} {tokens} tokens ({tokensPerSec:F1} t/s) ");
+            });
+        }
+
+        /// <summary>
+        /// Print streaming header with animation
+        /// </summary>
+        public static void PrintStreamingHeader(string modelName)
+        {
+            StartStreaming();
+            Console.WriteLine();
+            WithColor(ConsoleColor.Cyan, () => Console.Write("╭─── "));
+            WithColor(ConsoleColor.White, () => Console.Write($"🤖 {modelName}"));
+            WithColor(ConsoleColor.Cyan, () => Console.WriteLine(" ───────────────────────────────────────"));
+            WithColor(ConsoleColor.Cyan, () => Console.Write("│ "));
+        }
+
+        /// <summary>
+        /// Print streaming footer with stats
+        /// </summary>
+        public static void PrintStreamingFooter()
+        {
+            var elapsed = GetStreamingElapsed();
+            var tokens = GetTokenCount();
+            var tokensPerSec = elapsed.TotalSeconds > 0 ? tokens / elapsed.TotalSeconds : 0;
+            
+            Console.WriteLine();
+            WithColor(ConsoleColor.Cyan, () => Console.Write("╰─── "));
+            WithColor(ConsoleColor.DarkGray, () => Console.Write($"⏱ {elapsed.TotalSeconds:F1}s │ "));
+            WithColor(ConsoleColor.DarkGray, () => Console.Write($"📝 ~{tokens} tokens │ "));
+            WithColor(ConsoleColor.DarkGray, () => Console.Write($"⚡ {tokensPerSec:F1} t/s"));
+            WithColor(ConsoleColor.Cyan, () => Console.WriteLine(" ───"));
+        }
+
+        /// <summary>
+        /// Print a single streaming token with visual feedback
+        /// </summary>
+        public static void PrintStreamingToken(string token)
+        {
+            IncrementTokenCount(1);
+            Console.Write(token);
+        }
+
+
         /// <summary>
         /// Print a unified diff with syntax highlighting
         /// </summary>
@@ -172,85 +505,85 @@ namespace thuvu
         /// </summary>
         public static void PrintHelp()
         {
-            Console.WriteLine("(T)ool for (H)eurustic (U)niversal (V)ersatile (U)sage (THUVU)");
-            Console.WriteLine("Commands:");
-            Console.WriteLine("  /help                         Show this help");
-            Console.WriteLine("  /exit                         Quit");
-            Console.WriteLine("  /clear                        Reset conversation (keeps current system prompt)");
-            Console.WriteLine("  /system <text>                Set system prompt");
-            Console.WriteLine("  /stream on|off                Toggle token-by-token streaming");
-            Console.WriteLine("  /diff [--staged] [--context N] [--root PATH] [PATH ...]");
-            Console.WriteLine("       Show a git unified diff. Example: /diff --staged --context 5 src/");
-            Console.WriteLine("  /test [SOLUTION_OR_PROJECT] [--filter EXP] [--logger trx|console]");
-            Console.WriteLine("       Run dotnet tests and print a summary. Example: /test tests/MyTests.csproj --filter \"FullyQualifiedName~MySuite\"");
-            Console.WriteLine("  /run CMD [ARGS ...] [--cwd PATH] [--timeout MS]");
-            Console.WriteLine("       Run a whitelisted command (dotnet, git, bash, powershell). Example:");
-            Console.WriteLine("       /run dotnet build MyApp.sln -c Release");
-            Console.WriteLine("  /commit \"message\" [--all] [--staged] [--no-test] [--allow-empty] [--root PATH]");
-            Console.WriteLine("       Gate on green tests (unless --no-test). --all stages all changes; --staged uses staged only.");
-            Console.WriteLine("       Example: /commit \"Fix HttpClient wrapper\" --all");
-            Console.WriteLine("  /push [--remote NAME] [--branch NAME] [--set-upstream] [--force-with-lease] [--tags] [--dry-run] [--allow-behind] [--root PATH]");
-            Console.WriteLine("       Safe push: confirms branch/upstream and blocks non-fast-forward unless --force-with-lease.");
-            Console.WriteLine("       Examples:");
-            Console.WriteLine("         /push");
-            Console.WriteLine("         /push --set-upstream --remote origin");
-            Console.WriteLine("         /push --branch feature/foo --force-with-lease");
-            Console.WriteLine("  /pull [--remote NAME] [--branch NAME] [--set-upstream] [--merge] [--no-autostash] [--ff-only] [--prune]");
-            Console.WriteLine("        [--dry-run] [--allow-behind] [--clean-working-tree] [--stash-untracked] [--no-pop] [--root PATH]");
-            Console.WriteLine("       Safe pull: defaults to --rebase with autostash. With --clean-working-tree,");
-            Console.WriteLine("       the command will stash (including untracked unless you omit --stash-untracked) or abort if dirty.");
-            Console.WriteLine("       Examples:");
-            Console.WriteLine("         /pull");
-            Console.WriteLine("         /pull --clean-working-tree --stash-untracked");
-            Console.WriteLine("         /pull --merge --ff-only");
-            Console.WriteLine("  /config[show | path | reload | save]   Inspect or manage config file");
-            Console.WriteLine("  /set model<id> Change model id and persist");
-            Console.WriteLine("  /set host<url> Change LM Studio host URL and persist");
-            Console.WriteLine("  /set stream on| off                Toggle streaming and persist");
-            Console.WriteLine("  /set timeout<ms> Default timeout for / run & dotnet / git tools");
-            Console.WriteLine("  /test-permissions                Test permission system functionality");
+            PrintHeader("T.H.U.V.U. Help", ConsoleColor.Cyan);
             Console.WriteLine();
-            Console.WriteLine("RAG (Retrieval-Augmented Generation):");
-            Console.WriteLine("  /rag config                    Show RAG configuration");
-            Console.WriteLine("  /rag enable                    Enable RAG (requires PostgreSQL with pgvector)");
-            Console.WriteLine("  /rag disable                   Disable RAG");
-            Console.WriteLine("  /rag stats                     Show RAG index statistics");
-            Console.WriteLine("  /rag index PATH [--recursive] [--pattern GLOB]");
-            Console.WriteLine("       Index files for semantic search. Example: /rag index src/ --recursive --pattern *.cs");
-            Console.WriteLine("  /rag search QUERY [--top N]    Search indexed content semantically");
-            Console.WriteLine("  /rag clear [PATH]              Clear RAG index (all or specific source)");
+            WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("(T)ool for (H)eurustic (U)niversal (V)ersatile (U)sage"));
             Console.WriteLine();
-            Console.WriteLine("Permission System:");
-            Console.WriteLine("  Read-only tools (search_files, read_file, git_status, git_diff, nuget_search, rag_search, rag_stats) are always allowed.");
-            Console.WriteLine("  Write tools require user permission. You'll be prompted to allow:");
-            Console.WriteLine("    [A] Always for this repo (persistent)");
-            Console.WriteLine("    [S] For this session (temporary)");
-            Console.WriteLine("    [O] Once (this time only)");
-            Console.WriteLine("    [N] No (cancel operation)");
+
+            // Basic Commands
+            PrintDivider("Basic Commands", ConsoleColor.Yellow);
+            PrintHelpCommand("/help", "Show this help");
+            PrintHelpCommand("/exit", "Quit");
+            PrintHelpCommand("/clear", "Reset conversation (keeps current system prompt)");
+            PrintHelpCommand("/system <text>", "Set system prompt");
+            PrintHelpCommand("/stream on|off", "Toggle token-by-token streaming");
             Console.WriteLine();
-            Console.WriteLine("MCP (Model Context Protocol) Code Execution:");
-            Console.WriteLine("  /mcp config                    Show MCP configuration");
-            Console.WriteLine("  /mcp enable                    Enable MCP code execution (requires Deno)");
-            Console.WriteLine("  /mcp disable                   Disable MCP code execution");
-            Console.WriteLine("  /mcp on                        Activate MCP mode (agent writes TypeScript)");
-            Console.WriteLine("  /mcp off                       Deactivate MCP mode (traditional tool calling)");
-            Console.WriteLine("  /mcp check                     Check MCP environment (Deno, directories)");
-            Console.WriteLine("  /mcp status                    Show current MCP status");
-            Console.WriteLine("  /mcp tools                     List available MCP tools");
-            Console.WriteLine("  /mcp run \"<code>\"              Execute TypeScript code in sandbox");
-            Console.WriteLine("       Example: /mcp run \"const files = await searchFiles('**/*.cs'); return files.length;\"");
+
+            // Development Commands
+            PrintDivider("Development Commands", ConsoleColor.Yellow);
+            PrintHelpCommand("/diff [--staged] [--context N] [--root PATH] [PATH ...]", "Show a git unified diff");
+            PrintHelpCommand("/test [PROJECT] [--filter EXP] [--logger trx|console]", "Run dotnet tests");
+            PrintHelpCommand("/run CMD [ARGS ...] [--cwd PATH] [--timeout MS]", "Run whitelisted command");
             Console.WriteLine();
-            Console.WriteLine("Skills (Saved TypeScript Workflows):");
-            Console.WriteLine("  /mcp skill list                List all saved skills");
-            Console.WriteLine("  /mcp skill run <name> [params] Run a saved skill");
-            Console.WriteLine("  /mcp skill save <name> \"code\"  Save a new skill");
-            Console.WriteLine("  /mcp skill delete <name>       Delete a skill");
+
+            // Git Commands
+            PrintDivider("Git Commands", ConsoleColor.Yellow);
+            PrintHelpCommand("/commit \"msg\" [--all] [--staged] [--no-test]", "Commit with test gate");
+            PrintHelpCommand("/push [--remote NAME] [--branch NAME] [--force-with-lease]", "Safe push");
+            PrintHelpCommand("/pull [--remote NAME] [--merge] [--ff-only] [--prune]", "Safe pull with autostash");
             Console.WriteLine();
-            Console.WriteLine("Security:");
-            Console.WriteLine("  /mcp permissions               Show/set permission level");
-            Console.WriteLine("  /mcp permissions set <level>   Set level (readonly|readwrite|execute|full)");
-            Console.WriteLine("  /mcp permissions approval on|off  Toggle code execution approval");
-            Console.WriteLine("  /mcp audit on|off              Toggle audit logging");
+
+            // Configuration
+            PrintDivider("Configuration", ConsoleColor.Yellow);
+            PrintHelpCommand("/config [show|path|reload|save]", "Manage config file");
+            PrintHelpCommand("/set model <id>", "Change model");
+            PrintHelpCommand("/set host <url>", "Change LM Studio host URL");
+            PrintHelpCommand("/set stream on|off", "Toggle streaming");
+            PrintHelpCommand("/set timeout <ms>", "Set process timeout");
+            Console.WriteLine();
+
+            // RAG
+            PrintDivider("RAG (Retrieval-Augmented Generation)", ConsoleColor.Magenta);
+            PrintHelpCommand("/rag config", "Show RAG configuration");
+            PrintHelpCommand("/rag enable|disable", "Enable/disable RAG");
+            PrintHelpCommand("/rag index PATH [--recursive] [--pattern GLOB]", "Index files");
+            PrintHelpCommand("/rag search QUERY [--top N]", "Semantic search");
+            PrintHelpCommand("/rag clear [PATH]", "Clear index");
+            Console.WriteLine();
+
+            // MCP
+            PrintDivider("MCP (Model Context Protocol)", ConsoleColor.Magenta);
+            PrintHelpCommand("/mcp config", "Show MCP configuration");
+            PrintHelpCommand("/mcp enable|disable", "Enable/disable MCP");
+            PrintHelpCommand("/mcp on|off", "Activate/deactivate MCP mode");
+            PrintHelpCommand("/mcp check", "Check MCP environment");
+            PrintHelpCommand("/mcp run \"<code>\"", "Execute TypeScript in sandbox");
+            PrintHelpCommand("/mcp skill list|run|save|delete", "Manage saved skills");
+            Console.WriteLine();
+
+            // Permission System
+            PrintDivider("Permission System", ConsoleColor.Green);
+            WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("  Read-only tools are always allowed. Write tools prompt:"));
+            WithColor(ConsoleColor.Green, () => Console.Write("    [A] "));
+            Console.WriteLine("Always for this repo (persistent)");
+            WithColor(ConsoleColor.Yellow, () => Console.Write("    [S] "));
+            Console.WriteLine("For this session (temporary)");
+            WithColor(ConsoleColor.Cyan, () => Console.Write("    [O] "));
+            Console.WriteLine("Once (this time only)");
+            WithColor(ConsoleColor.Red, () => Console.Write("    [N] "));
+            Console.WriteLine("No (cancel operation)");
+            Console.WriteLine();
+        }
+
+        /// <summary>
+        /// Print a formatted help command entry
+        /// </summary>
+        private static void PrintHelpCommand(string command, string description)
+        {
+            WithColor(ConsoleColor.Green, () => Console.Write($"  {command}"));
+            var padding = Math.Max(1, 55 - command.Length);
+            Console.Write(new string(' ', padding));
+            WithColor(ConsoleColor.Gray, () => Console.WriteLine(description));
         }
     }
 }

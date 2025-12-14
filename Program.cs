@@ -94,19 +94,21 @@ namespace thuvu
                 return;
             }
 
-            // Original console interface
-            Console.WriteLine("T.H.U.V.U. coding agent (C) 2025 " + Helpers.GetCurrentGitTag());
-            Console.WriteLine("type /exit to quit, /help for full list of commands, or --tui for Terminal UI");
-            Console.WriteLine($"Config file: {AgentConfig.GetConfigPath()}");
-            Console.WriteLine($"Model: {AgentConfig.Config.Model}");
-            Console.WriteLine($"Host:  {AgentConfig.Config.HostUrl}");
-            Console.WriteLine($"Work directory: {AgentConfig.GetWorkDirectory()}");
-            Console.WriteLine($"Streaming responses: {(AgentConfig.Config.Stream ? "ON" : "OFF")}");
+            // Original console interface - styled banner
+            ConsoleHelpers.PrintHeader($"T.H.U.V.U. v{Helpers.GetCurrentGitTag()}", ConsoleColor.Cyan);
+            Console.WriteLine();
+            ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("Type /exit to quit, /help for commands, or --tui for Terminal UI"));
+            Console.WriteLine();
+            ConsoleHelpers.PrintKeyValue("Config", AgentConfig.GetConfigPath(), ConsoleColor.DarkGray, ConsoleColor.Gray);
+            ConsoleHelpers.PrintKeyValue("Model", AgentConfig.Config.Model, ConsoleColor.DarkGray, ConsoleColor.Green);
+            ConsoleHelpers.PrintKeyValue("Host", AgentConfig.Config.HostUrl, ConsoleColor.DarkGray, ConsoleColor.Cyan);
+            ConsoleHelpers.PrintKeyValue("Work Dir", AgentConfig.GetWorkDirectory(), ConsoleColor.DarkGray, ConsoleColor.Gray);
+            ConsoleHelpers.PrintKeyValue("Streaming", AgentConfig.Config.Stream ? "ON" : "OFF", ConsoleColor.DarkGray, AgentConfig.Config.Stream ? ConsoleColor.Green : ConsoleColor.Yellow);
             Console.WriteLine();
 
             while (true)
             {
-                Console.Write("> ");
+                ConsoleHelpers.PrintPrompt();
                 var user = Console.ReadLine();
                 if (user == null) continue;
 
@@ -133,12 +135,27 @@ namespace thuvu
                 var ct = _currentRequestCts!.Token;
 
                 // Send to LM Studio and run tool loop until final answer
-                Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Sending to {AgentConfig.Config.Model}... (Press Ctrl+C to cancel)");
-                Console.ResetColor();
+                ConsoleHelpers.PrintDivider();
+                ConsoleHelpers.PrintStatus($"{ConsoleHelpers.IconSend} Sending to {AgentConfig.Config.Model}... (Ctrl+C to cancel)");
                 
                 string? final;
                 bool receivedFirstToken = false;
+
+                // Start thinking animation task
+                ConsoleHelpers.StartStreaming();
+                using var thinkingCts = new CancellationTokenSource();
+                var thinkingTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!thinkingCts.Token.IsCancellationRequested && !receivedFirstToken)
+                        {
+                            ConsoleHelpers.PrintThinkingIndicator();
+                            await Task.Delay(250, thinkingCts.Token);
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                }, thinkingCts.Token);
 
                 try
                 {
@@ -151,16 +168,21 @@ namespace thuvu
                                 if (!receivedFirstToken)
                                 {
                                     receivedFirstToken = true;
-                                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Streaming response:");
-                                    Console.ResetColor();
+                                    thinkingCts.Cancel();
+                                    ConsoleHelpers.ClearThinkingIndicator();
+                                    ConsoleHelpers.PrintStreamingHeader(AgentConfig.Config.Model);
                                 }
-                                Console.Write(token);
+                                ConsoleHelpers.PrintStreamingToken(token);
                             },
                             onToolResult: ConsoleHelpers.AutoPrettyPrinterCallback,
-                            onUsage: u => Console.WriteLine($"\n[tokens] prompt={u.PromptTokens}, completion={u.CompletionTokens}, total={u.TotalTokens}")
+                            onUsage: u => { ConsoleHelpers.PrintStreamingFooter(); ConsoleHelpers.PrintTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens); }
                         );
-                        Console.WriteLine();
+                        if (!receivedFirstToken)
+                        {
+                            // No tokens received, cancel thinking
+                            thinkingCts.Cancel();
+                            ConsoleHelpers.ClearThinkingIndicator();
+                        }
                     }
                     else
                     {
@@ -172,17 +194,18 @@ namespace thuvu
                 }
                 catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Request timed out after {AgentConfig.Config.HttpRequestTimeout} minutes.");
-                    Console.WriteLine("Try increasing timeout with: /set httptimeout <minutes>");
-                    Console.ResetColor();
+                    thinkingCts.Cancel();
+                    ConsoleHelpers.ClearThinkingIndicator();
+                    ConsoleHelpers.PrintError($"Request timed out after {AgentConfig.Config.HttpRequestTimeout} minutes.");
+                    ConsoleHelpers.PrintInfo("Try increasing timeout with: /set httptimeout <minutes>");
                     continue;
                 }
                 catch (OperationCanceledException)
                 {
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"\n[{DateTime.Now:HH:mm:ss}] Request cancelled by user.");
-                    Console.ResetColor();
+                    thinkingCts.Cancel();
+                    ConsoleHelpers.ClearThinkingIndicator();
+                    Console.WriteLine();
+                    ConsoleHelpers.PrintWarning("Request cancelled by user.");
                     // Remove the last user message since we cancelled the request
                     if (messages.Count > 1 && messages[^1].Role == "user")
                     {
@@ -192,10 +215,10 @@ namespace thuvu
                 }
                 catch (HttpRequestException ex)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] HTTP Error: {ex.Message}");
-                    Console.WriteLine($"Is the LLM server running at {AgentConfig.Config.HostUrl}?");
-                    Console.ResetColor();
+                    thinkingCts.Cancel();
+                    ConsoleHelpers.ClearThinkingIndicator();
+                    ConsoleHelpers.PrintError($"HTTP Error: {ex.Message}");
+                    ConsoleHelpers.PrintInfo($"Is the LLM server running at {AgentConfig.Config.HostUrl}?");
                     continue;
                 }
                 finally
@@ -231,9 +254,7 @@ namespace thuvu
                 }
                 else
                 {
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] (no content in response)");
-                    Console.ResetColor();
+                    ConsoleHelpers.PrintStatus("(no content in response)");
                 }
             }
         }
