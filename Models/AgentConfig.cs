@@ -31,6 +31,13 @@ namespace thuvu.Models
 
         // Tool permissions: key is "repoPath:toolName", value indicates if always allowed
         public Dictionary<string, bool> ToolPermissions { get; set; } = new();
+        
+        /// <summary>
+        /// If true, automatically approve all tool calls in TUI mode without prompting.
+        /// Default is true for TUI mode usability. Set to false to require manual approval.
+        /// </summary>
+        public bool AutoApproveTuiTools { get; set; } = true;
+        
         public static AgentConfig Config = new();
         
         /// <summary>

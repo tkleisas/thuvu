@@ -6,9 +6,31 @@ namespace thuvu.Models
     public static class McpSystemPrompts
     {
         /// <summary>
+        /// Gets platform information string for system prompts
+        /// </summary>
+        private static string GetPlatformInfo()
+        {
+            var platform = OperatingSystem.IsWindows() ? "Windows" : 
+                           OperatingSystem.IsLinux() ? "Linux" : 
+                           OperatingSystem.IsMacOS() ? "macOS" : "Unknown";
+            var shellHint = OperatingSystem.IsWindows() 
+                ? "Use PowerShell or cmd syntax, NOT bash/shell commands" 
+                : "Use bash/shell commands";
+            
+            return $@"## Platform Information:
+- Operating System: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}
+- Platform: {platform}
+- {shellHint}
+- Path separator: {System.IO.Path.DirectorySeparatorChar}
+- Working directory: {AgentConfig.GetWorkDirectory()}
+";
+        }
+        
+        /// <summary>
         /// Standard system prompt for traditional tool calling
         /// </summary>
-        public const string StandardPrompt = @"You are a helpful coding agent. Prefer tools over guessing; never invent file paths.
+        public static string StandardPrompt => GetPlatformInfo() + @"
+You are a helpful coding agent. Prefer tools over guessing; never invent file paths.
 
 ## Creating new files/projects:
 - Use write_file to create new files (set create_intermediate_dirs=true for new directories)
@@ -29,7 +51,9 @@ Emit 'thuvu Finished Tasks' when you have completed all your tasks.";
         /// <summary>
         /// System prompt for MCP code execution mode
         /// </summary>
-        public const string McpCodeExecutionPrompt = @"You are a coding agent with access to tools via TypeScript code execution.
+        public static string McpCodeExecutionPrompt => GetPlatformInfo() + @"
+
+You are a coding agent with access to tools via TypeScript code execution.
 
 Instead of calling tools one at a time, write TypeScript code that:
 1. Imports needed tools from the servers/ directory

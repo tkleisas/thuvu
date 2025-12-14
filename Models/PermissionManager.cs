@@ -21,6 +21,13 @@ namespace thuvu.Models
     {
         private static readonly Dictionary<string, PermissionScope> SessionPermissions = new();
         private static string? _currentRepoPath;
+        
+        /// <summary>
+        /// Custom permission prompt handler for TUI or other UI modes.
+        /// Returns: 'A' for Always, 'S' for Session, 'O' for Once, 'N' for No/Cancel.
+        /// If null, uses default console prompt.
+        /// </summary>
+        public static Func<string, string, char>? CustomPermissionPrompt { get; set; }
 
         // Tool categorization by risk level
         private static readonly HashSet<string> ReadOnlyTools = new(StringComparer.OrdinalIgnoreCase)
@@ -84,6 +91,13 @@ namespace thuvu.Models
 
         private static bool PromptForPermission(string toolName, string argsJson, string permissionKey)
         {
+            // Use custom handler if available (for TUI mode)
+            if (CustomPermissionPrompt != null)
+            {
+                var choice = CustomPermissionPrompt(toolName, argsJson);
+                return HandlePermissionChoice(choice, permissionKey);
+            }
+            
             Console.WriteLine();
             // Draw permission box
             var boxWidth = 60;
@@ -200,6 +214,40 @@ namespace thuvu.Models
                         continue;
                 }
             }
+        }
+        
+        /// <summary>
+        /// Handles the permission choice and updates permissions accordingly.
+        /// Returns true if permission granted, false if denied.
+        /// </summary>
+        public static bool HandlePermissionChoice(char choice, string permissionKey)
+        {
+            switch (char.ToUpperInvariant(choice))
+            {
+                case 'A':
+                    AgentConfig.Config.ToolPermissions[permissionKey] = true;
+                    AgentConfig.SaveConfig();
+                    return true;
+
+                case 'S':
+                    SessionPermissions[permissionKey] = PermissionScope.Session;
+                    return true;
+
+                case 'O':
+                    return true;
+
+                case 'N':
+                default:
+                    return false;
+            }
+        }
+        
+        /// <summary>
+        /// Gets the permission key for a tool (for use with HandlePermissionChoice)
+        /// </summary>
+        public static string GetPermissionKeyForTool(string toolName)
+        {
+            return GetPermissionKey(toolName);
         }
 
         public static void ClearSessionPermissions()

@@ -17,86 +17,116 @@ namespace thuvu
         /// </summary>
         public static async Task<string> ExecuteToolAsync(string name, string argsJson, CancellationToken ct)
         {
+            var startTime = DateTime.Now;
+            SessionLogger.Instance.LogToolStart(name, argsJson);
+            
             try
             {
                 // Check permissions before executing
                 if (!PermissionManager.CheckPermission(name, argsJson))
                 {
-                    return JsonSerializer.Serialize(new { error = "Permission denied by user" });
+                    var error = "Permission denied by user";
+                    SessionLogger.Instance.LogToolError(name, error);
+                    return JsonSerializer.Serialize(new { error });
                 }
 
+                string result;
                 switch (name)
                 {
                     // Navigation / IO
                     case "search_files":
-                        return JsonSerializer.Serialize(new { matches = SearchFilesToolImpl.SearchFilesTool(argsJson) });
+                        result = JsonSerializer.Serialize(new { matches = SearchFilesToolImpl.SearchFilesTool(argsJson) });
+                        break;
 
                     case "read_file":
-                        return ReadFileToolImpl.ReadFileTool(argsJson);
+                        result = ReadFileToolImpl.ReadFileTool(argsJson);
+                        break;
 
                     case "write_file":
-                        return WriteFileToolImpl.WriteFileTool(argsJson);
+                        result = WriteFileToolImpl.WriteFileTool(argsJson);
+                        break;
 
                     case "apply_patch":
-                        return ApplyPatchToolImpl.ApplyPatchTool(argsJson);
+                        result = ApplyPatchToolImpl.ApplyPatchTool(argsJson);
+                        break;
 
                     // Process runner
                     case "run_process":
-                        return await RunProcessToolImpl.RunProcessToolAsync(argsJson);
+                        result = await RunProcessToolImpl.RunProcessToolAsync(argsJson);
+                        break;
 
                     // dotnet
                     case "dotnet_restore":
-                        return await DotnetToolImpl.DotnetRestoreTool(argsJson);
+                        result = await DotnetToolImpl.DotnetRestoreTool(argsJson);
+                        break;
 
                     case "dotnet_build":
-                        return await DotnetToolImpl.DotnetBuildTool(argsJson);
+                        result = await DotnetToolImpl.DotnetBuildTool(argsJson);
+                        break;
 
                     case "dotnet_test":
-                        return await DotnetToolImpl.DotnetTestTool(argsJson);
+                        result = await DotnetToolImpl.DotnetTestTool(argsJson);
+                        break;
 
                     case "dotnet_run":
-                        return await DotnetToolImpl.DotnetRunTool(argsJson);
+                        result = await DotnetToolImpl.DotnetRunTool(argsJson);
+                        break;
 
                     case "dotnet_new":
-                        return await DotnetToolImpl.DotnetNewTool(argsJson);
+                        result = await DotnetToolImpl.DotnetNewTool(argsJson);
+                        break;
 
                     // git
                     case "git_status":
-                        return await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildGitStatusArgs(argsJson)));
+                        result = await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildGitStatusArgs(argsJson)));
+                        break;
 
                     case "git_diff":
-                        return await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildGitDiffArgs(argsJson)));
+                        result = await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildGitDiffArgs(argsJson)));
+                        break;
 
                     // NuGet
                     case "nuget_search":
-                        return await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(new
+                        result = await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(new
                         {
                             cmd = "dotnet",
                             args = new[] { "nuget", "search", Helpers.ExtractQuery(argsJson) }
                         }));
+                        break;
 
                     case "nuget_add":
-                        return await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildNugetAddArgs(argsJson)));
+                        result = await RunProcessToolImpl.RunProcessToolAsync(JsonSerializer.Serialize(Helpers.BuildNugetAddArgs(argsJson)));
+                        break;
 
                     // RAG tools
                     case "rag_index":
-                        return await RagToolImpl.RagIndexTool(argsJson, ct);
+                        result = await RagToolImpl.RagIndexTool(argsJson, ct);
+                        break;
 
                     case "rag_search":
-                        return await RagToolImpl.RagSearchTool(argsJson, ct);
+                        result = await RagToolImpl.RagSearchTool(argsJson, ct);
+                        break;
 
                     case "rag_clear":
-                        return await RagToolImpl.RagClearTool(argsJson, ct);
+                        result = await RagToolImpl.RagClearTool(argsJson, ct);
+                        break;
 
                     case "rag_stats":
-                        return await RagToolImpl.RagStatsTool(argsJson, ct);
+                        result = await RagToolImpl.RagStatsTool(argsJson, ct);
+                        break;
 
                     default:
-                        return JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" });
+                        result = JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" });
+                        break;
                 }
+                
+                var elapsedMs = (DateTime.Now - startTime).TotalMilliseconds;
+                SessionLogger.Instance.LogToolEnd(name, result, elapsedMs);
+                return result;
             }
             catch (Exception ex)
             {
+                SessionLogger.Instance.LogToolError(name, ex.Message);
                 return JsonSerializer.Serialize(new { error = ex.Message });
             }
         }

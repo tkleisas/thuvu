@@ -19,6 +19,13 @@ namespace thuvu
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false
         };
+        
+        private static void LogAgent(string msg)
+        {
+            var logLine = $"[{DateTime.Now:HH:mm:ss.fff}] [AGENT] {msg}";
+            System.Diagnostics.Debug.WriteLine(logLine);
+            try { File.AppendAllText("stream_debug.log", logLine + Environment.NewLine); } catch { }
+        }
 
         /// <summary>
         /// Sends the current conversation to LM Studio. If the assistant requests tools,
@@ -105,10 +112,13 @@ namespace thuvu
                     Temperature = 0.2
                 };
 
+                LogAgent("Calling StreamChatOnceAsync...");
                 var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken, onUsage);
+                LogAgent($"StreamChatOnceAsync returned, ToolCalls={result.ToolCalls?.Count ?? 0}, Content length={result.Content?.Length ?? 0}");
 
                 if (result.ToolCalls is { Count: > 0 })
                 {
+                    LogAgent($"Processing {result.ToolCalls.Count} tool calls");
                     messages.Add(new ChatMessage
                     {
                         Role = "assistant",
@@ -120,7 +130,9 @@ namespace thuvu
                     {
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
+                        LogAgent($"Executing tool: {name}");
                         var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct);
+                        LogAgent($"Tool {name} completed, result length={toolResult.Length}");
                         ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
 
@@ -132,9 +144,11 @@ namespace thuvu
                         ));
                     }
 
+                    LogAgent("Continuing loop for next LLM response...");
                     continue;
                 }
 
+                LogAgent($"Returning final content, length={result.Content?.Length ?? 0}");
                 return result.Content;
             }
         }

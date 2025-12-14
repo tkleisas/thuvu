@@ -561,6 +561,14 @@ namespace thuvu
             PrintHelpCommand("/mcp skill list|run|save|delete", "Manage saved skills");
             Console.WriteLine();
 
+            // Multi-Model Support
+            PrintDivider("Multi-Model Support", ConsoleColor.Blue);
+            PrintHelpCommand("/models list", "List all configured models");
+            PrintHelpCommand("/models use <id>", "Switch to a specific model");
+            PrintHelpCommand("/models thinking [id]", "Get/set thinking model for planning");
+            PrintHelpCommand("/models coding [id]", "Get/set coding model for simple tasks");
+            Console.WriteLine();
+
             // Permission System
             PrintDivider("Permission System", ConsoleColor.Green);
             WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("  Read-only tools are always allowed. Write tools prompt:"));

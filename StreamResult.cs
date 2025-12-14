@@ -46,12 +46,25 @@ namespace thuvu
                 stream_options = new {include_usage = true}
             };
 
+            void LogStream(string msg) 
+            {
+                var logLine = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
+                System.Diagnostics.Debug.WriteLine(logLine);
+                try { File.AppendAllText("stream_debug.log", logLine + Environment.NewLine); } catch { }
+            }
+            
+            LogStream("Sending HTTP POST request...");
+            
             using var jsonContent = new StringContent(JsonSerializer.Serialize(streamingReq, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }), Encoding.UTF8, "application/json");
             using var resp = await http.PostAsync("/v1/chat/completions", jsonContent, ct);
+            
+            LogStream($"HTTP response received, status={resp.StatusCode}");
             resp.EnsureSuccessStatusCode();
 
+            LogStream("Getting response stream...");
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream, Encoding.UTF8);
+            LogStream("Stream reader created");
 
             var sbContent = new StringBuilder();
             var finishReason = (string?)null;
@@ -61,15 +74,65 @@ namespace thuvu
 
             string? line;
             Usage? usage = null;
-            while ((line = await reader.ReadLineAsync()) is not null)
+            
+            LogStream("Starting stream read loop");
+            
+            while (true)
             {
                 ct.ThrowIfCancellationRequested();
+                
+                // Read with a 5-second idle timeout using Task.WhenAny
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+                
+                try
+                {
+                    var readTask = reader.ReadLineAsync();
+                    var delayTask = Task.Delay(Timeout.Infinite, linkedCts.Token);
+                    
+                    var completed = await Task.WhenAny(readTask, delayTask);
+                    
+                    if (completed == delayTask)
+                    {
+                        // Check if it was user cancellation or timeout
+                        if (ct.IsCancellationRequested)
+                            throw new OperationCanceledException(ct);
+                        
+                        // Timeout - if we've received content, we're done
+                        LogStream($"Timeout after 5s, content length={sbContent.Length}, finishReason={finishReason}");
+                        if (sbContent.Length > 0 || finishReason != null)
+                            break;
+                        throw new TimeoutException("Streaming response timed out waiting for data");
+                    }
+                    
+                    line = await readTask;
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // Read timeout - if we've received content or have a finish reason, we're done
+                    LogStream($"OperationCanceled, content length={sbContent.Length}");
+                    if (sbContent.Length > 0 || finishReason != null)
+                        break;
+                    throw new TimeoutException("Streaming response timed out waiting for data");
+                }
+                
+                if (line is null)
+                {
+                    LogStream("Line is null - end of stream");
+                    break; // End of stream
+                }
 
                 if (line.Length == 0) continue; // SSE event delimiter
                 if (line.StartsWith("data: ") is false) continue;
 
                 var payload = line.AsSpan(6).Trim().ToString();
-                if (payload == "[DONE]") break;
+                LogStream($"Payload: {(payload.Length > 100 ? payload.Substring(0, 100) + "..." : payload)}");
+                
+                if (payload == "[DONE]")
+                {
+                    LogStream("Received [DONE]");
+                    break;
+                }
 
                 using var doc = JsonDocument.Parse(payload);
                 var root = doc.RootElement;
@@ -85,7 +148,12 @@ namespace thuvu
                 }
                 // finish_reason might show up on the last delta
                 if (choice.TryGetProperty("finish_reason", out var fr) && fr.ValueKind == JsonValueKind.String)
+                {
                     finishReason = fr.GetString();
+                    LogStream($"Got finish_reason: {finishReason}");
+                    // If we have a finish reason like "stop" or "tool_calls", we should exit soon
+                    // But first process any remaining delta content in this message
+                }
 
                 // delta
                 if (!choice.TryGetProperty("delta", out var delta)) continue;
@@ -130,7 +198,16 @@ namespace thuvu
                         toolBuilders[index] = builder;
                     }
                 }
+                
+                // If we received a finish_reason, exit the loop after processing this delta
+                if (!string.IsNullOrEmpty(finishReason))
+                {
+                    LogStream($"Breaking due to finish_reason: {finishReason}");
+                    break;
+                }
             }
+            
+            LogStream($"Exited loop, content length={sbContent.Length}, toolBuilders={toolBuilders.Count}");
 
             // Build final ToolCalls if any
             List<ToolCall>? toolCalls = null;

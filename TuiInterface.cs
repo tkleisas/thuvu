@@ -23,6 +23,7 @@ namespace thuvu
         private List<ChatMessage> _messages;
         private readonly CancellationTokenSource _appCancellationTokenSource = new();
         private CancellationTokenSource? _currentRequestCts;
+        private CancellationTokenSource? _thinkingAnimationCts;
         private bool _isProcessing = false;
 
         // UI Components
@@ -59,6 +60,9 @@ namespace thuvu
         {
             Application.Init();
             
+            // Set up TUI permission prompt handler
+            PermissionManager.CustomPermissionPrompt = TuiPermissionPrompt;
+            
             try
             {
                 SetupUi();
@@ -66,9 +70,38 @@ namespace thuvu
             }
             finally
             {
+                // Clear custom handler when TUI exits
+                PermissionManager.CustomPermissionPrompt = null;
                 Application.Shutdown();
                 _appCancellationTokenSource.Cancel();
             }
+        }
+        
+        /// <summary>
+        /// TUI-compatible permission prompt
+        /// In TUI mode, we auto-approve for session and show notification.
+        /// Users can configure always-allowed tools in appsettings.json
+        /// </summary>
+        private char TuiPermissionPrompt(string toolName, string argsJson)
+        {
+            SessionLogger.Instance.LogInfo($"Permission auto-approved (TUI mode) for tool: {toolName}");
+            
+            // Show notification in UI
+            Application.MainLoop.Invoke(() =>
+            {
+                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                var currentText = _actionView?.Text?.ToString() ?? "";
+                if (_actionView != null)
+                {
+                    _actionView.Text = currentText + $"  [{timestamp}] 🔐 Approved: {toolName}\n";
+                    _actionView.MoveEnd();
+                    _actionView.SetNeedsDisplay();
+                }
+            });
+            
+            // Auto-approve for session in TUI mode
+            // For more control, users should use console mode or configure ToolPermissions in appsettings.json
+            return 'S';
         }
 
         private void SetupUi()
@@ -526,16 +559,44 @@ namespace thuvu
             });
         }
 
-        private void AppendToolText(string text)
+        private void AppendToolText(string toolName, string result, double? elapsedMs = null)
         {
             Application.MainLoop.Invoke(() =>
             {
                 var currentText = _actionView!.Text.ToString();
-                _actionView.Text = currentText + $"  🔧 TOOL │ {text}\n";
+                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                var elapsed = elapsedMs.HasValue ? $" ({elapsedMs.Value:F0}ms)" : "";
+                
+                // Parse result to show status
+                var statusIcon = "✓";
+                var preview = result;
+                if (result.Contains("\"error\"") || result.Contains("\"stderr\":\"timeout\""))
+                    statusIcon = "✗";
+                else if (result.Contains("\"timed_out\":true"))
+                    statusIcon = "⏱";
+                    
+                // Truncate preview
+                if (preview.Length > 150)
+                    preview = preview.Substring(0, 147) + "...";
+                
+                _actionView.Text = currentText + $"  [{timestamp}] 🔧 {statusIcon} {toolName}{elapsed} │ {preview}\n";
                 
                 // Scroll to bottom
                 _actionView.MoveEnd();
                 _actionView.SetNeedsDisplay();
+            });
+        }
+        
+        private void AppendToolStart(string toolName)
+        {
+            Application.MainLoop.Invoke(() =>
+            {
+                var currentText = _actionView!.Text.ToString();
+                var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                _actionView.Text = currentText + $"  [{timestamp}] 🔧 ▶ {toolName}...\n";
+                _actionView.MoveEnd();
+                _actionView.SetNeedsDisplay();
+                Application.Refresh();
             });
         }
 
@@ -840,6 +901,12 @@ namespace thuvu
                 return;
             }
 
+            if (command.StartsWith("/models", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleModelsCommand(command);
+                return;
+            }
+
             // Handle regular chat message
             if (!string.IsNullOrWhiteSpace(command))
             {
@@ -872,24 +939,32 @@ namespace thuvu
                             var streamStartTime = DateTime.Now;
                             int tokenCount = 0;
                             
-                            // Start thinking animation
-                            var thinkingCts = new CancellationTokenSource();
+                            // Start thinking animation - use class-level CTS so cancel works
+                            _thinkingAnimationCts?.Cancel();
+                            _thinkingAnimationCts?.Dispose();
+                            _thinkingAnimationCts = new CancellationTokenSource();
+                            var thinkingToken = _thinkingAnimationCts.Token;
                             var thinkingChars = new[] { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
                             int thinkingIdx = 0;
                             _ = Task.Run(async () =>
                             {
-                                while (!thinkingCts.Token.IsCancellationRequested && !receivedTokens)
+                                try
                                 {
-                                    var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
-                                    Application.MainLoop.Invoke(() =>
+                                    while (!thinkingToken.IsCancellationRequested && !receivedTokens)
                                     {
-                                        _workLabel!.Text = $"{thinkingChars[thinkingIdx % thinkingChars.Length]} {elapsed:F0}s";
-                                        _workLabel.SetNeedsDisplay();
-                                    });
-                                    thinkingIdx++;
-                                    await Task.Delay(100, thinkingCts.Token);
+                                        var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
+                                        Application.MainLoop.Invoke(() =>
+                                        {
+                                            _workLabel!.Text = $"{thinkingChars[thinkingIdx % thinkingChars.Length]} Waiting {elapsed:F0}s...";
+                                            _workLabel.SetNeedsDisplay();
+                                            Application.Refresh();
+                                        });
+                                        thinkingIdx++;
+                                        await Task.Delay(100, thinkingToken);
+                                    }
                                 }
-                            }, thinkingCts.Token);
+                                catch (OperationCanceledException) { /* Expected when cancelled */ }
+                            }, thinkingToken);
                             
                             final = await AgentLoop.CompleteWithToolsStreamingAsync(
                                 _http, AgentConfig.Config.Model, _messages, _tools, ct,
@@ -898,7 +973,7 @@ namespace thuvu
                                     if (!receivedTokens)
                                     {
                                         receivedTokens = true;
-                                        thinkingCts.Cancel();
+                                        _thinkingAnimationCts?.Cancel();
                                         Application.MainLoop.Invoke(() =>
                                         {
                                             var currentText = _actionView!.Text.ToString();
@@ -943,7 +1018,7 @@ namespace thuvu
                                 },
                                 onToolResult: (name, result) =>
                                 {
-                                    thinkingCts.Cancel();
+                                    _thinkingAnimationCts?.Cancel();
                                     // Flush any remaining tokens before showing tool result
                                     if (tokenBuffer.Length > 0)
                                     {
@@ -957,7 +1032,7 @@ namespace thuvu
                                             Application.Refresh();
                                         });
                                     }
-                                    AppendToolText($"{name} => {(result.Length > 200 ? result.Substring(0, 200) + "..." : result)}");
+                                    AppendToolText(name, result);
                                     Animate();
                                 },
                                 onUsage: usage =>
@@ -975,7 +1050,15 @@ namespace thuvu
                                 }
                             );
                             
-                            thinkingCts.Cancel();
+                            // Ensure thinking animation is stopped
+                            _thinkingAnimationCts?.Cancel();
+                            
+                            // Reset work label to show completion
+                            Application.MainLoop.Invoke(() =>
+                            {
+                                _workLabel!.Text = "✓ Done";
+                                _workLabel.SetNeedsDisplay();
+                            });
                             
                             // Flush any remaining buffered tokens
                             if (tokenBuffer.Length > 0)
@@ -990,6 +1073,22 @@ namespace thuvu
                                     Application.Refresh();
                                 });
                             }
+                            
+                            // Show completion footer if usage wasn't reported
+                            if (!receivedTokens)
+                            {
+                                AppendActionText("(No tokens received from model)");
+                            }
+                            else
+                            {
+                                var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
+                                var tps = elapsed > 0 ? tokenCount / elapsed : 0;
+                                // Only add footer if onUsage didn't fire
+                                if (tokenCount > 0)
+                                {
+                                    AppendActionText($"\n╰─── ⏱ {elapsed:F1}s │ 📝 ~{tokenCount} chunks ───────────────────────");
+                                }
+                            }
                         }
                         else
                         {
@@ -997,7 +1096,7 @@ namespace thuvu
                                 _http, AgentConfig.Config.Model, _messages, _tools, ct,
                                 onToolResult: (name, result) =>
                                 {
-                                    AppendToolText($"{name} => {(result.Length > 200 ? result.Substring(0, 200) + "..." : result)}");
+                                    AppendToolText(name, result);
                                     Animate();
                                 }
                             );
@@ -1034,6 +1133,14 @@ namespace thuvu
                 }
                 catch (OperationCanceledException)
                 {
+                    // Stop the thinking animation
+                    _thinkingAnimationCts?.Cancel();
+                    Application.MainLoop.Invoke(() =>
+                    {
+                        _workLabel!.Text = " ";
+                        _workLabel.SetNeedsDisplay();
+                    });
+                    
                     AppendActionText($"[{DateTime.Now:HH:mm:ss}] Request cancelled by user.", true);
                     // Remove the last user message since we cancelled the request
                     if (_messages.Count > 1 && _messages[^1].Role == "user")
@@ -1051,7 +1158,17 @@ namespace thuvu
                 }
                 finally
                 {
-                    // Reset processing state
+                    // Stop thinking animation and reset processing state
+                    _thinkingAnimationCts?.Cancel();
+                    _thinkingAnimationCts?.Dispose();
+                    _thinkingAnimationCts = null;
+                    
+                    Application.MainLoop.Invoke(() =>
+                    {
+                        _workLabel!.Text = " ";
+                        _workLabel.SetNeedsDisplay();
+                    });
+                    
                     SetProcessingState(false);
                     UpdateStatus();
                     _currentRequestCts?.Dispose();
@@ -1092,9 +1209,90 @@ namespace thuvu
 ╠══════════════════════════════════════════════════════════════════════════╣
 ║  Read-only tools: always allowed                                         ║
 ║  Write tools prompt: [A]lways │ [S]ession │ [O]nce │ [N]o                ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║  MULTI-MODEL SUPPORT                                                     ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║  /models list             │ List all configured models                   ║
+║  /models use <id>         │ Switch to a specific model                   ║
+║  /models thinking [id]    │ Get/set thinking model for planning          ║
+║  /models coding [id]      │ Get/set coding model for simple tasks        ║
 ╚══════════════════════════════════════════════════════════════════════════╝";
 
             AppendActionText(helpText);
+        }
+
+        private void HandleModelsCommand(string command)
+        {
+            var args = ConsoleHelpers.TokenizeArgs(command);
+            var subCommand = args.Count > 1 ? args[1].ToLowerInvariant() : "list";
+
+            switch (subCommand)
+            {
+                case "list":
+                    AppendActionText("╭─── 🤖 Configured Models ───────────────────────────────────────");
+                    foreach (var m in ModelRegistry.Instance.Models)
+                    {
+                        var status = m.Enabled ? "✓" : "✗";
+                        var local = m.IsLocal ? "local" : "remote";
+                        var thinkingFlag = m.IsThinkingModel ? " [thinking]" : "";
+                        var isDefault = m.ModelId == ModelRegistry.Instance.DefaultModelId ? " ⭐" : "";
+                        AppendActionText($"│ {status} {m.DisplayName ?? m.ModelId} ({local}{thinkingFlag}){isDefault}");
+                        AppendActionText($"│   {m.HostUrl} | Purposes: {string.Join(", ", m.Purposes)}");
+                    }
+                    AppendActionText($"╰─── Default: {ModelRegistry.Instance.DefaultModelId}");
+                    break;
+
+                case "use":
+                    if (args.Count < 3)
+                    {
+                        AppendActionText("Usage: /models use <model-id>", true);
+                        return;
+                    }
+                    var modelId = args[2];
+                    var model = ModelRegistry.Instance.GetModel(modelId);
+                    if (model == null)
+                    {
+                        AppendActionText($"Model '{modelId}' not found", true);
+                        return;
+                    }
+                    ModelRegistry.Instance.DefaultModelId = model.ModelId;
+                    AgentConfig.Config.Model = model.ModelId;
+                    AgentConfig.Config.HostUrl = model.HostUrl;
+                    AgentConfig.Config.Stream = model.Stream;
+                    AppendSuccessText($"Now using: {model.DisplayName ?? model.ModelId}");
+                    UpdateStatus();
+                    break;
+
+                case "thinking":
+                    if (args.Count < 3)
+                    {
+                        var thinking = ModelRegistry.Instance.GetThinkingModel();
+                        AppendActionText($"Thinking model: {thinking?.DisplayName ?? "(not set)"}");
+                    }
+                    else
+                    {
+                        ModelRegistry.Instance.ThinkingModelId = args[2];
+                        AppendSuccessText($"Thinking model set to: {args[2]}");
+                    }
+                    break;
+
+                case "coding":
+                    if (args.Count < 3)
+                    {
+                        var coding = ModelRegistry.Instance.GetCodingModel();
+                        AppendActionText($"Coding model: {coding?.DisplayName ?? "(not set)"}");
+                    }
+                    else
+                    {
+                        ModelRegistry.Instance.CodingModelId = args[2];
+                        AppendSuccessText($"Coding model set to: {args[2]}");
+                    }
+                    break;
+
+                default:
+                    AppendActionText("Usage: /models list | use <id> | thinking [id] | coding [id]");
+                    break;
+            }
         }
     }
 }

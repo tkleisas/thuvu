@@ -54,6 +54,33 @@ namespace thuvu
             AgentConfig.LoadConfig();
             RagConfig.LoadConfig();
             McpConfig.LoadConfig();
+            
+            // Initialize model registry (try to load from config, fall back to AgentConfig)
+            try
+            {
+                var configPath = AgentConfig.GetConfigPath();
+                if (File.Exists(configPath))
+                {
+                    var json = File.ReadAllText(configPath);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("Models", out var modelsSection))
+                    {
+                        ModelRegistry.LoadFromJson(modelsSection);
+                    }
+                    else
+                    {
+                        ModelRegistry.InitializeFromAgentConfig();
+                    }
+                }
+                else
+                {
+                    ModelRegistry.InitializeFromAgentConfig();
+                }
+            }
+            catch
+            {
+                ModelRegistry.InitializeFromAgentConfig();
+            }
 
             // Check if TUI mode is requested
             bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
@@ -391,7 +418,89 @@ namespace thuvu
                 return true;
             }
 
+            if (user.StartsWith("/models", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleModelsCommand(user);
+                return true;
+            }
+
             return false;
+        }
+
+        /// <summary>
+        /// Handle /models command for multi-model management
+        /// </summary>
+        private static void HandleModelsCommand(string command)
+        {
+            var args = ConsoleHelpers.TokenizeArgs(command);
+            var subCommand = args.Count > 1 ? args[1].ToLowerInvariant() : "list";
+
+            switch (subCommand)
+            {
+                case "list":
+                    ModelRegistry.Instance.PrintModels();
+                    break;
+
+                case "use":
+                    if (args.Count < 3)
+                    {
+                        ConsoleHelpers.PrintError("Usage: /models use <model-id>");
+                        return;
+                    }
+                    var modelId = args[2];
+                    var model = ModelRegistry.Instance.GetModel(modelId);
+                    if (model == null)
+                    {
+                        ConsoleHelpers.PrintError($"Model '{modelId}' not found");
+                        return;
+                    }
+                    ModelRegistry.Instance.DefaultModelId = model.ModelId;
+                    AgentConfig.Config.Model = model.ModelId;
+                    AgentConfig.Config.HostUrl = model.HostUrl;
+                    AgentConfig.Config.Stream = model.Stream;
+                    ConsoleHelpers.PrintSuccess($"Now using: {model.DisplayName ?? model.ModelId}");
+                    break;
+
+                case "add":
+                    ConsoleHelpers.PrintInfo("To add models, edit appsettings.json and add to the Models.Models array");
+                    break;
+
+                case "thinking":
+                    if (args.Count < 3)
+                    {
+                        var thinking = ModelRegistry.Instance.GetThinkingModel();
+                        ConsoleHelpers.PrintKeyValue("Thinking model", thinking?.DisplayName ?? "(not set)");
+                    }
+                    else
+                    {
+                        ModelRegistry.Instance.ThinkingModelId = args[2];
+                        ConsoleHelpers.PrintSuccess($"Thinking model set to: {args[2]}");
+                    }
+                    break;
+
+                case "coding":
+                    if (args.Count < 3)
+                    {
+                        var coding = ModelRegistry.Instance.GetCodingModel();
+                        ConsoleHelpers.PrintKeyValue("Coding model", coding?.DisplayName ?? "(not set)");
+                    }
+                    else
+                    {
+                        ModelRegistry.Instance.CodingModelId = args[2];
+                        ConsoleHelpers.PrintSuccess($"Coding model set to: {args[2]}");
+                    }
+                    break;
+
+                default:
+                    ConsoleHelpers.PrintHeader("Models Commands", ConsoleColor.Cyan);
+                    Console.WriteLine();
+                    ConsoleHelpers.PrintKeyValue("/models list", "List all configured models", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/models use <id>", "Switch to a specific model", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/models thinking [id]", "Get/set thinking model", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/models coding [id]", "Get/set coding model", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/models add", "Info on adding models", ConsoleColor.Green);
+                    break;
+            }
         }
     }
 }
