@@ -21,6 +21,20 @@ namespace thuvu.Tools
         {
             _httpClient = http;
             _ragService = new RagService(http);
+            
+            // Initialize database if RAG is enabled
+            if (RagConfig.Instance.Enabled)
+            {
+                try
+                {
+                    _ragService.InitializeDatabaseAsync().GetAwaiter().GetResult();
+                    AgentLogger.LogInfo("RAG database initialized successfully");
+                }
+                catch (Exception ex)
+                {
+                    AgentLogger.LogWarning("Could not initialize RAG database: {Error}. RAG features may not work.", ex.Message);
+                }
+            }
         }
 
         /// <summary>
@@ -193,6 +207,7 @@ namespace thuvu.Tools
             try
             {
                 var stats = await _ragService.GetStatsAsync(ct);
+                AgentLogger.LogInfo("RagStatsTool: stats.Enabled={Enabled}", stats.Enabled);
 
                 return JsonSerializer.Serialize(new
                 {
@@ -204,6 +219,7 @@ namespace thuvu.Tools
             }
             catch (Exception ex)
             {
+                AgentLogger.LogError("RagStatsTool error: {Error}", ex.Message);
                 return JsonSerializer.Serialize(new { error = ex.Message });
             }
         }

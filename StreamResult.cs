@@ -43,7 +43,7 @@ namespace thuvu
                 tool_choice = req.ToolChoice,
                 temperature = req.Temperature,
                 stream = true,
-                stream_options = new {include_usage = true}
+                stream_options = new { include_usage = true }
             };
 
             void LogStream(string msg) 
@@ -59,7 +59,13 @@ namespace thuvu
             using var resp = await http.PostAsync("/v1/chat/completions", jsonContent, ct);
             
             LogStream($"HTTP response received, status={resp.StatusCode}");
-            resp.EnsureSuccessStatusCode();
+            
+            if (!resp.IsSuccessStatusCode)
+            {
+                var errorBody = await resp.Content.ReadAsStringAsync(ct);
+                LogStream($"HTTP error body: {errorBody}");
+                resp.EnsureSuccessStatusCode(); // This will throw with the status code
+            }
 
             LogStream("Getting response stream...");
             await using var stream = await resp.Content.ReadAsStreamAsync(ct);

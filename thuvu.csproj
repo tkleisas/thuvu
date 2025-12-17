@@ -15,7 +15,7 @@
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
     <PackageReference Include="Npgsql" Version="8.0.5" />
     <PackageReference Include="Pgvector" Version="0.3.0" />
-    <PackageReference Include="Terminal.Gui" Version="1.19.0" />
+    <PackageReference Include="Terminal.Gui" Version="2.*" />
   </ItemGroup>
   <ItemGroup>
     <None Update="appsettings.json">

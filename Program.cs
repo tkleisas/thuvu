@@ -2,6 +2,7 @@ using CodingAgent;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -94,14 +95,29 @@ namespace thuvu
             // Initialize RAG service
             RagToolImpl.Initialize(http);
 
+            // Run health checks
+            Console.WriteLine();
+            ConsoleHelpers.PrintStatus("Running health checks...");
+            var healthReport = await HealthCheck.RunAllChecksAsync(http, CancellationToken.None);
+            HealthCheck.PrintReport(healthReport);
+
+            if (!healthReport.CanStart)
+            {
+                ConsoleHelpers.PrintError("Cannot start - fix critical issues above");
+                return;
+            }
+
+            // Initialize token tracker with context length
             try
             {
                 _currentContextLength = (int)(await AgentLoop.GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None) ?? 4096);
+                TokenTracker.Instance.MaxContextLength = _currentContextLength;
             }
             catch (Exception ex)
             {
                 AgentLogger.LogWarning("Could not connect to LLM service: {Message}. Using default context length.", ex.Message);
                 _currentContextLength = 4096;
+                TokenTracker.Instance.MaxContextLength = _currentContextLength;
             }
 
             // Conversation state - use appropriate system prompt
@@ -424,7 +440,198 @@ namespace thuvu
                 return true;
             }
 
+            // New MVP commands
+            if (user.StartsWith("/task", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleTaskCommandAsync(user, ct);
+                return true;
+            }
+
+            if (user.StartsWith("/checkpoint", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleCheckpointCommandAsync(user, ct);
+                return true;
+            }
+
+            if (user.StartsWith("/rollback", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleRollbackCommandAsync(user, ct);
+                return true;
+            }
+
+            if (user.StartsWith("/tokens", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleTokensCommand(user, messages);
+                return true;
+            }
+
+            if (user.Equals("/health", StringComparison.OrdinalIgnoreCase))
+            {
+                var report = await HealthCheck.RunAllChecksAsync(http, ct);
+                HealthCheck.PrintReport(report);
+                return true;
+            }
+
+            if (user.Equals("/status", StringComparison.OrdinalIgnoreCase))
+            {
+                AgentSessionManager.PrintSessionStatus();
+                TokenTracker.Instance.PrintStatus();
+                return true;
+            }
+
             return false;
+        }
+
+        /// <summary>
+        /// Handle /task command for session management
+        /// </summary>
+        private static async Task HandleTaskCommandAsync(string command, CancellationToken ct)
+        {
+            var args = ConsoleHelpers.TokenizeArgs(command);
+            var subCommand = args.Count > 1 ? args[1].ToLowerInvariant() : "status";
+
+            switch (subCommand)
+            {
+                case "start":
+                    if (args.Count < 3)
+                    {
+                        ConsoleHelpers.PrintError("Usage: /task start <description>");
+                        return;
+                    }
+                    var description = string.Join(" ", args.Skip(2));
+                    try
+                    {
+                        var session = await AgentSessionManager.StartSessionAsync(description, null, ct);
+                        ConsoleHelpers.PrintSuccess($"Started task: {session.TaskDescription}");
+                        ConsoleHelpers.PrintKeyValue("Branch", session.BranchName, ConsoleColor.DarkGray, ConsoleColor.Green);
+                        ConsoleHelpers.PrintKeyValue("Agent ID", session.AgentId, ConsoleColor.DarkGray, ConsoleColor.Cyan);
+                    }
+                    catch (Exception ex)
+                    {
+                        ConsoleHelpers.PrintError($"Failed to start task: {ex.Message}");
+                    }
+                    break;
+
+                case "status":
+                    AgentSessionManager.PrintSessionStatus();
+                    break;
+
+                case "complete":
+                    var merge = args.Contains("--merge") || args.Contains("-m");
+                    var delete = args.Contains("--delete") || args.Contains("-d");
+                    if (await AgentSessionManager.CompleteSessionAsync(merge, delete, ct))
+                    {
+                        ConsoleHelpers.PrintSuccess("Task completed" + (merge ? " and merged" : ""));
+                    }
+                    else
+                    {
+                        ConsoleHelpers.PrintError("Failed to complete task");
+                    }
+                    break;
+
+                case "abort":
+                    if (await AgentSessionManager.AbortSessionAsync(true, ct))
+                    {
+                        ConsoleHelpers.PrintWarning("Task aborted");
+                    }
+                    break;
+
+                default:
+                    ConsoleHelpers.PrintHeader("Task Commands", ConsoleColor.Cyan);
+                    Console.WriteLine();
+                    ConsoleHelpers.PrintKeyValue("/task start <desc>", "Start new task with git branch", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/task status", "Show current task status", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/task complete [-m] [-d]", "Complete task (--merge, --delete)", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/task abort", "Abort task and discard changes", ConsoleColor.Green);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Handle /checkpoint command
+        /// </summary>
+        private static async Task HandleCheckpointCommandAsync(string command, CancellationToken ct)
+        {
+            var args = ConsoleHelpers.TokenizeArgs(command);
+            var message = args.Count > 1 ? string.Join(" ", args.Skip(1)) : null;
+            var runTests = args.Contains("--test") || args.Contains("-t");
+
+            var checkpoint = await AgentSessionManager.CreateCheckpointAsync(message, runTests, ct);
+            if (checkpoint != null)
+            {
+                ConsoleHelpers.PrintSuccess($"Checkpoint created: {checkpoint.Tag}");
+                if (runTests)
+                {
+                    ConsoleHelpers.PrintKeyValue("Tests", checkpoint.TestsPassed ? "PASSED" : "FAILED",
+                        ConsoleColor.DarkGray, checkpoint.TestsPassed ? ConsoleColor.Green : ConsoleColor.Red);
+                }
+            }
+            else
+            {
+                ConsoleHelpers.PrintError("Failed to create checkpoint. Is there an active task?");
+            }
+        }
+
+        /// <summary>
+        /// Handle /rollback command
+        /// </summary>
+        private static async Task HandleRollbackCommandAsync(string command, CancellationToken ct)
+        {
+            var args = ConsoleHelpers.TokenizeArgs(command);
+            var target = args.Count > 1 ? args[1] : null;
+
+            if (await AgentSessionManager.RollbackAsync(target, ct))
+            {
+                ConsoleHelpers.PrintSuccess($"Rolled back to {target ?? "last checkpoint"}");
+            }
+            else
+            {
+                ConsoleHelpers.PrintError("Failed to rollback. Check if there are checkpoints available.");
+            }
+        }
+
+        /// <summary>
+        /// Handle /tokens command
+        /// </summary>
+        private static void HandleTokensCommand(string command, List<ChatMessage> messages)
+        {
+            var args = ConsoleHelpers.TokenizeArgs(command);
+            var subCommand = args.Count > 1 ? args[1].ToLowerInvariant() : "status";
+
+            switch (subCommand)
+            {
+                case "status":
+                    TokenTracker.Instance.PrintStatus();
+                    break;
+
+                case "reset":
+                    var systemPrompt = messages[0].Content;
+                    messages.Clear();
+                    messages.Add(new ChatMessage("system", systemPrompt));
+                    TokenTracker.Instance.Reset();
+                    ConsoleHelpers.PrintSuccess("Conversation and token count reset");
+                    break;
+
+                case "budget":
+                    if (args.Count > 2 && int.TryParse(args[2], out var budget))
+                    {
+                        TokenTracker.Instance.MaxContextLength = budget;
+                        ConsoleHelpers.PrintSuccess($"Token budget set to {budget:N0}");
+                    }
+                    else
+                    {
+                        ConsoleHelpers.PrintKeyValue("Current budget", $"{TokenTracker.Instance.MaxContextLength:N0} tokens");
+                    }
+                    break;
+
+                default:
+                    ConsoleHelpers.PrintHeader("Token Commands", ConsoleColor.Cyan);
+                    Console.WriteLine();
+                    ConsoleHelpers.PrintKeyValue("/tokens", "Show current token usage", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/tokens reset", "Reset conversation and tokens", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/tokens budget <n>", "Set max token budget", ConsoleColor.Green);
+                    break;
+            }
         }
 
         /// <summary>

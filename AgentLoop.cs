@@ -27,6 +27,10 @@ namespace thuvu
             try { File.AppendAllText("stream_debug.log", logLine + Environment.NewLine); } catch { }
         }
 
+        // Loop detection settings
+        private const int MaxIterations = 50;
+        private const int MaxConsecutiveFailures = 3;
+        
         /// <summary>
         /// Sends the current conversation to LM Studio. If the assistant requests tools,
         /// executes them, appends tool results, and repeats until a final answer is produced.
@@ -38,10 +42,21 @@ namespace thuvu
             List<ChatMessage> messages,
             List<Tool> tools,
             CancellationToken ct,
-            Action<string, string>? onToolResult = null)
+            Action<string, string>? onToolResult = null,
+            Action<string, string, TimeSpan>? onToolComplete = null,
+            ToolProgressCallback? onToolProgress = null)
         {
+            int iteration = 0;
+            var failureTracker = new Dictionary<string, int>(); // Track consecutive failures per tool
+            
             while (true)
             {
+                iteration++;
+                if (iteration > MaxIterations)
+                {
+                    LogAgent($"Loop limit reached ({MaxIterations} iterations). Stopping.");
+                    return "[Agent stopped: Maximum iteration limit reached. The task may be too complex or the model is stuck in a loop.]";
+                }
                 var req = new ChatRequest
                 {
                     Model = model,
@@ -50,15 +65,47 @@ namespace thuvu
                     ToolChoice = "auto",
                     Temperature = 0.2
                 };
+                
+                // Log message summary for debugging
+                LogAgent($"Sending {messages.Count} messages to API:");
+                foreach (var m in messages)
+                {
+                    var preview = m.Content?.Length > 100 ? m.Content.Substring(0, 100) + "..." : m.Content ?? "(no content)";
+                    LogAgent($"  [{m.Role}]: {preview}");
+                }
 
-                using var resp = await http.PostAsJsonAsync("/v1/chat/completions", req, JsonOpts, ct);
-                resp.EnsureSuccessStatusCode();
+                // Use retry handler for LLM API call
+                var retryResult = await RetryHandler.ExecuteWithRetryAsync(
+                    async (token) =>
+                    {
+                        using var resp = await http.PostAsJsonAsync("/v1/chat/completions", req, JsonOpts, token);
+                        resp.EnsureSuccessStatusCode();
+                        return await resp.Content.ReadFromJsonAsync<ChatResponse>(JsonOpts, token)
+                               ?? throw new InvalidOperationException("Empty response.");
+                    },
+                    ct,
+                    onRetry: (attempt, ex, delay) => RetryHandler.PrintRetryStatus(attempt, RetryHandler.DefaultConfig.MaxRetries, delay, ex.Message)
+                );
 
-                var body = await resp.Content.ReadFromJsonAsync<ChatResponse>(JsonOpts, ct)
-                           ?? throw new InvalidOperationException("Empty response.");
+                if (!retryResult.Success)
+                {
+                    throw retryResult.LastException ?? new InvalidOperationException("LLM request failed after retries");
+                }
+
+                var body = retryResult.Result!;
                 if (body?.Usage is { } u)
+                {
                     ConsoleHelpers.PrintTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
+                    TokenTracker.Instance.UpdateFromUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
+                }
                 var msg = body.Choices[0].Message;
+
+                // Check if the LLM signaled task completion
+                if (msg.Content?.Contains("thuvu Finished", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    LogAgent("Detected 'thuvu Finished' in response. Task complete.");
+                    return msg.Content;
+                }
 
                 if (msg.ToolCalls is { Count: > 0 })
                 {
@@ -68,9 +115,30 @@ namespace thuvu
                     {
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
-                        var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct);
+                        var toolStart = DateTime.Now;
+                        var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct, onToolProgress);
+                        var toolElapsed = DateTime.Now - toolStart;
                         ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
+                        onToolComplete?.Invoke(name, toolResult, toolElapsed);
+                        
+                        // Track failures for loop detection
+                        bool isFailure = toolResult.Contains("\"error\"") || 
+                                        toolResult.Contains("\"timed_out\":true") ||
+                                        toolResult.Contains("\"stderr\":\"timeout\"");
+                        if (isFailure)
+                        {
+                            failureTracker[name] = failureTracker.GetValueOrDefault(name, 0) + 1;
+                            if (failureTracker[name] >= MaxConsecutiveFailures)
+                            {
+                                LogAgent($"Tool {name} failed {MaxConsecutiveFailures} times consecutively. Stopping.");
+                                return $"[Agent stopped: Tool '{name}' failed {MaxConsecutiveFailures} times consecutively. Please check the tool configuration or try a different approach.]";
+                            }
+                        }
+                        else
+                        {
+                            failureTracker[name] = 0; // Reset on success
+                        }
 
                         messages.Add(new ChatMessage(
                             role: "tool",
@@ -99,10 +167,27 @@ namespace thuvu
             CancellationToken ct,
             Action<string>? onToken = null,
             Action<string, string>? onToolResult = null,
-            Action<Usage>? onUsage = null)
+            Action<Usage>? onUsage = null,
+            Action<string, string, TimeSpan>? onToolComplete = null,
+            ToolProgressCallback? onToolProgress = null)
         {
+            int iteration = 0;
+            var failureTracker = new Dictionary<string, int>();
+            var executedToolCalls = new HashSet<string>(); // Track tool call signatures to detect loops
+            int noProgressCount = 0;
+            const int MaxNoProgress = 3;
+            
             while (true)
             {
+                iteration++;
+                if (iteration > MaxIterations)
+                {
+                    LogAgent($"Loop limit reached ({MaxIterations} iterations). Stopping.");
+                    var msg = $"[Agent stopped: Maximum iteration limit ({MaxIterations}) reached. The task may be too complex or the model is stuck in a loop.]";
+                    onToken?.Invoke(msg);
+                    return msg;
+                }
+                
                 var req = new ChatRequest
                 {
                     Model = model,
@@ -111,18 +196,76 @@ namespace thuvu
                     ToolChoice = "auto",
                     Temperature = 0.2
                 };
+                
+                // Log message summary for debugging
+                LogAgent($"Sending {messages.Count} messages to API (iteration {iteration}):");
+                foreach (var m in messages)
+                {
+                    var preview = m.Content?.Length > 100 ? m.Content.Substring(0, 100) + "..." : m.Content ?? "(no content)";
+                    LogAgent($"  [{m.Role}]: {preview}");
+                }
 
-                LogAgent("Calling StreamChatOnceAsync...");
+                LogAgent($"Calling StreamChatOnceAsync... (iteration {iteration})");
                 var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken, onUsage);
                 LogAgent($"StreamChatOnceAsync returned, ToolCalls={result.ToolCalls?.Count ?? 0}, Content length={result.Content?.Length ?? 0}");
 
+                // Check if the LLM signaled task completion (various formats)
+                bool hasFinishSignal = result.Content != null && 
+                    (result.Content.Contains("thuvu Finished", StringComparison.OrdinalIgnoreCase) ||
+                     result.Content.Contains("Finished Tasks", StringComparison.OrdinalIgnoreCase) ||
+                     result.Content.Contains("Task complete", StringComparison.OrdinalIgnoreCase) ||
+                     result.Content.Contains("successfully created", StringComparison.OrdinalIgnoreCase) ||
+                     result.Content.Contains("I have successfully", StringComparison.OrdinalIgnoreCase));
+                
+                // If finish signal detected and no tool calls, we're done
+                if (hasFinishSignal && (result.ToolCalls == null || result.ToolCalls.Count == 0))
+                {
+                    LogAgent("Detected task completion signal with no pending tool calls.");
+                    return result.Content;
+                }
+                
+                // If finish signal detected but there are tool calls, log warning and finish anyway
+                if (hasFinishSignal)
+                {
+                    LogAgent("Detected task completion signal. Ignoring further tool calls and finishing.");
+                    return result.Content;
+                }
+                
                 if (result.ToolCalls is { Count: > 0 })
                 {
                     LogAgent($"Processing {result.ToolCalls.Count} tool calls");
+                    
+                    // Check for repeated tool calls (loop detection)
+                    bool allCallsRepeated = true;
+                    foreach (var call in result.ToolCalls)
+                    {
+                        var callSignature = $"{call.Function.Name}:{call.Function.Arguments}";
+                        if (!executedToolCalls.Contains(callSignature))
+                        {
+                            allCallsRepeated = false;
+                            break;
+                        }
+                    }
+                    
+                    if (allCallsRepeated)
+                    {
+                        noProgressCount++;
+                        LogAgent($"All tool calls are repeats ({noProgressCount}/{MaxNoProgress})");
+                        if (noProgressCount >= MaxNoProgress)
+                        {
+                            LogAgent("Model stuck repeating same tool calls. Stopping.");
+                            return result.Content + "\n\n[Agent stopped: Model stuck in tool call loop.]";
+                        }
+                    }
+                    else
+                    {
+                        noProgressCount = 0;
+                    }
+                    
                     messages.Add(new ChatMessage
                     {
                         Role = "assistant",
-                        Content = null,
+                        Content = result.Content, // Preserve any content along with tool calls
                         ToolCalls = result.ToolCalls
                     });
 
@@ -130,11 +273,37 @@ namespace thuvu
                     {
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
+                        var callSignature = $"{name}:{argsJson}";
+                        executedToolCalls.Add(callSignature);
+                        
                         LogAgent($"Executing tool: {name}");
-                        var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct);
-                        LogAgent($"Tool {name} completed, result length={toolResult.Length}");
+                        var toolStart = DateTime.Now;
+                        var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct, onToolProgress);
+                        var toolElapsed = DateTime.Now - toolStart;
+                        LogAgent($"Tool {name} completed in {toolElapsed.TotalSeconds:F1}s, result length={toolResult.Length}");
                         ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
+                        onToolComplete?.Invoke(name, toolResult, toolElapsed);
+                        
+                        // Track failures for loop detection
+                        bool isFailure = toolResult.Contains("\"error\"") || 
+                                        toolResult.Contains("\"timed_out\":true") ||
+                                        toolResult.Contains("\"stderr\":\"timeout\"");
+                        if (isFailure)
+                        {
+                            failureTracker[name] = failureTracker.GetValueOrDefault(name, 0) + 1;
+                            if (failureTracker[name] >= MaxConsecutiveFailures)
+                            {
+                                LogAgent($"Tool {name} failed {MaxConsecutiveFailures} times consecutively. Stopping.");
+                                var msg = $"[Agent stopped: Tool '{name}' failed {MaxConsecutiveFailures} times consecutively. Please check the tool or try a different approach.]";
+                                onToken?.Invoke(msg);
+                                return msg;
+                            }
+                        }
+                        else
+                        {
+                            failureTracker[name] = 0; // Reset on success
+                        }
 
                         messages.Add(new ChatMessage(
                             role: "tool",

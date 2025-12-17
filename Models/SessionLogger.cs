@@ -111,6 +111,34 @@ namespace thuvu.Models
             }
         }
 
+        public void LogToolProgress(string toolName, ToolStatus status, string elapsed, string? message = null)
+        {
+            lock (_lock)
+            {
+                var statusIcon = status switch
+                {
+                    ToolStatus.Running => "⏳",
+                    ToolStatus.Completed => "✓",
+                    ToolStatus.Failed => "✗",
+                    ToolStatus.TimedOut => "⏱",
+                    ToolStatus.Cancelled => "⊘",
+                    _ => "○"
+                };
+                var msg = message != null ? $" - {message}" : "";
+                _writer.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {statusIcon} TOOL PROGRESS: {toolName} [{status}] {elapsed}{msg}");
+            }
+        }
+
+        public void LogToolTimeout(string toolName, double elapsedMs, double timeoutMs)
+        {
+            lock (_lock)
+            {
+                _writer.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] ⏱ TOOL TIMEOUT: {toolName}");
+                _writer.WriteLine($"    Elapsed: {elapsedMs:F0}ms, Timeout: {timeoutMs:F0}ms");
+                _writer.WriteLine();
+            }
+        }
+
         public void LogError(string message, Exception? ex = null)
         {
             lock (_lock)

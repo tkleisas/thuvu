@@ -125,8 +125,8 @@ namespace thuvu
             WithColor(ConsoleColor.DarkGray, () => Console.WriteLine($" ({args})"));
             if (result != null)
             {
-                var truncated = result.Length > 200 ? result.Substring(0, 200) + "..." : result;
-                WithColor(ConsoleColor.DarkGray, () => Console.WriteLine($"    └─ {truncated}"));
+                // Show full result - let it scroll naturally
+                WithColor(ConsoleColor.DarkGray, () => Console.WriteLine($"    └─ {result}"));
             }
         }
 
@@ -559,6 +559,25 @@ namespace thuvu
             PrintHelpCommand("/mcp check", "Check MCP environment");
             PrintHelpCommand("/mcp run \"<code>\"", "Execute TypeScript in sandbox");
             PrintHelpCommand("/mcp skill list|run|save|delete", "Manage saved skills");
+            Console.WriteLine();
+
+            // Task/Session Management (MVP)
+            PrintDivider("Task Management", ConsoleColor.Magenta);
+            PrintHelpCommand("/task start <description>", "Start new task with git branch isolation");
+            PrintHelpCommand("/task status", "Show current task status");
+            PrintHelpCommand("/task complete [-m] [-d]", "Complete task (--merge, --delete branch)");
+            PrintHelpCommand("/task abort", "Abort task and discard changes");
+            PrintHelpCommand("/checkpoint [msg] [-t]", "Create checkpoint (--test to run tests)");
+            PrintHelpCommand("/rollback [target]", "Rollback to checkpoint or commit");
+            Console.WriteLine();
+
+            // System Status
+            PrintDivider("System Status", ConsoleColor.Cyan);
+            PrintHelpCommand("/health", "Run health checks on all services");
+            PrintHelpCommand("/status", "Show session and token status");
+            PrintHelpCommand("/tokens", "Show token usage breakdown");
+            PrintHelpCommand("/tokens reset", "Reset conversation and tokens");
+            PrintHelpCommand("/tokens budget <n>", "Set max token budget");
             Console.WriteLine();
 
             // Multi-Model Support

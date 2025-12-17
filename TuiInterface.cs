@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,14 +10,12 @@ using Terminal.Gui;
 using thuvu.Models;
 using CodingAgent;
 using thuvu.Tools;
+using TgAttribute = Terminal.Gui.Attribute;
 
 namespace thuvu
 {
     /// <summary>
-    /// Terminal.GUI based interface for THUVU that divides the screen into 3 areas:
-    /// - Status area (top): shows model and parameters
-    /// - Action area (middle): shows requests, tool calls and responses
-    /// - Command area (bottom): user input
+    /// Terminal.GUI v2 based interface for THUVU
     /// </summary>
     public class TuiInterface
     {
@@ -36,26 +37,17 @@ namespace thuvu
         private Button? _cancelButton;
         private ListView? _autocompleteList;
         private FrameView? _autocompleteFrame;
-        private List<string> _autocompleteItems = new();
+        private ObservableCollection<string> _autocompleteItems = new();
         private string _autocompletePrefix = "";
         private int _autocompleteStartPos = 0;
-        private string workanim = "-\\|/";
-        private int workanimIdx = 0;
+        
         public TuiInterface(HttpClient http, List<Tool> tools, List<ChatMessage> initialMessages)
         {
             _http = http;
             _tools = tools;
             _messages = initialMessages;
         }
-        public void Animate()
-        {
-            if(workanimIdx< workanim.Length-1)
-
-                workanimIdx++;
-            else
-                workanimIdx = 0;
-            _workLabel.Text = workanim.Substring(workanimIdx,1);
-        }
+        
         public void Run()
         {
             Application.Init();
@@ -63,49 +55,150 @@ namespace thuvu
             // Set up TUI permission prompt handler
             PermissionManager.CustomPermissionPrompt = TuiPermissionPrompt;
             
+            // Set up Ctrl+C handler as fallback (in case Terminal.Gui doesn't intercept it)
+            Console.CancelKeyPress += OnConsoleCancelKeyPress;
+            
             try
             {
-                SetupUi();
-                Application.Run();
+                var top = new Toplevel();
+                SetupUi(top);
+                Application.Run(top);
             }
             finally
             {
-                // Clear custom handler when TUI exits
+                Console.CancelKeyPress -= OnConsoleCancelKeyPress;
                 PermissionManager.CustomPermissionPrompt = null;
                 Application.Shutdown();
                 _appCancellationTokenSource.Cancel();
             }
         }
         
+        private void OnConsoleCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
+        {
+            if (_isProcessing && _currentRequestCts != null && !_currentRequestCts.IsCancellationRequested)
+            {
+                e.Cancel = true; // Prevent immediate exit
+                _currentRequestCts.Cancel();
+                Application.Invoke(() =>
+                {
+                    AppendActionText("[Ctrl+C: Cancelling...]", true);
+                    Application.Wakeup();
+                });
+            }
+        }
+        
         /// <summary>
-        /// TUI-compatible permission prompt
-        /// In TUI mode, we auto-approve for session and show notification.
-        /// Users can configure always-allowed tools in appsettings.json
+        /// TUI-compatible permission prompt using Dialog
         /// </summary>
         private char TuiPermissionPrompt(string toolName, string argsJson)
         {
-            SessionLogger.Instance.LogInfo($"Permission auto-approved (TUI mode) for tool: {toolName}");
+            char result = 'N'; // Default to deny
             
-            // Show notification in UI
-            Application.MainLoop.Invoke(() =>
+            // Use Invoke to run on UI thread and wait for completion
+            var completionEvent = new ManualResetEventSlim(false);
+            
+            Application.Invoke(() =>
             {
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
-                var currentText = _actionView?.Text?.ToString() ?? "";
-                if (_actionView != null)
+                try
                 {
-                    _actionView.Text = currentText + $"  [{timestamp}] 🔐 Approved: {toolName}\n";
-                    _actionView.MoveEnd();
-                    _actionView.SetNeedsDisplay();
+                    // Create buttons
+                    var alwaysBtn = new Button { Text = "_Always" };
+                    var sessionBtn = new Button { Text = "_Session" };
+                    var onceBtn = new Button { Text = "_Once" };
+                    var noBtn = new Button { Text = "_No" };
+                    
+                    // Create dialog with buttons
+                    var dialog = new Dialog
+                    {
+                        Title = "Permission Required",
+                        Width = 65,
+                        Height = 14,
+                        Buttons = [alwaysBtn, sessionBtn, onceBtn, noBtn]
+                    };
+                    
+                    // Add content labels
+                    var toolLabel = new Label
+                    {
+                        X = 1,
+                        Y = 1,
+                        Text = $"Tool: {toolName}"
+                    };
+                    
+                    var argsDisplay = argsJson.Length > 50 ? argsJson.Substring(0, 47) + "..." : argsJson;
+                    var argsLabel = new Label
+                    {
+                        X = 1,
+                        Y = 3,
+                        Width = Dim.Fill() - 2,
+                        Text = $"Args: {argsDisplay}"
+                    };
+                    
+                    var questionLabel = new Label
+                    {
+                        X = 1,
+                        Y = 5,
+                        Text = "Allow this operation?"
+                    };
+                    
+                    var hintLabel = new Label
+                    {
+                        X = 1,
+                        Y = 7,
+                        ColorScheme = new ColorScheme { Normal = new TgAttribute(Color.DarkGray, Color.Black) },
+                        Text = "[A]lways=persist | [S]ession=temp | [O]nce | [N]o=deny"
+                    };
+                    
+                    dialog.Add(toolLabel, argsLabel, questionLabel, hintLabel);
+                    
+                    // Button handlers
+                    alwaysBtn.Accepting += (s, e) => { result = 'A'; Application.RequestStop(); };
+                    sessionBtn.Accepting += (s, e) => { result = 'S'; Application.RequestStop(); };
+                    onceBtn.Accepting += (s, e) => { result = 'O'; Application.RequestStop(); };
+                    noBtn.Accepting += (s, e) => { result = 'N'; Application.RequestStop(); };
+                    
+                    // Run the dialog modally
+                    Application.Run(dialog);
+                    dialog.Dispose();
+                }
+                finally
+                {
+                    completionEvent.Set();
                 }
             });
             
-            // Auto-approve for session in TUI mode
-            // For more control, users should use console mode or configure ToolPermissions in appsettings.json
-            return 'S';
+            // Wait for dialog to complete
+            completionEvent.Wait();
+            
+            // Log the result
+            var action = result switch
+            {
+                'A' => "Always allowed",
+                'S' => "Session allowed", 
+                'O' => "Once allowed",
+                _ => "Denied"
+            };
+            SessionLogger.Instance.LogInfo($"Permission {action} for tool: {toolName}");
+            
+            // Update action view
+            Application.Invoke(() =>
+            {
+                if (_actionView != null)
+                {
+                    var currentText = _actionView.Text ?? "";
+                    var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                    var icon = result == 'N' ? "[DENY]" : "[PERMIT]";
+                    _actionView.Text = currentText + $"  [{timestamp}] {icon} {toolName}\n";
+                    _actionView.MoveEnd();
+                    _actionView.SetNeedsDraw();
+                }
+            });
+            
+            return result;
         }
 
-        private void SetupUi()
+        private void SetupUi(Toplevel top)
         {
+            
             // Status area (top)
             _statusLabel = new Label
             {
@@ -116,58 +209,58 @@ namespace thuvu
                 Text = GetStatusText(),
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.Green, Color.Black)
+                    Normal = new TgAttribute(Color.Green, Color.Black)
                 }
             };
+            
             string banner = 
                 "╔══════════════════════════════════════════════════════════════╗\n"+
-                "║  ████████╗██╗  ██╗██╗   ██╗██╗   ██╗██╗   ██╗                ║\n"+
-                "║  ╚══██╔══╝██║  ██║██║   ██║██║   ██║██║   ██║                ║\n"+
-                "║     ██║   ███████║██║   ██║██║   ██║██║   ██║                ║\n"+
-                "║     ██║   ██╔══██║██║   ██║╚██╗ ██╔╝██║   ██║                ║\n"+
-                "║     ██║   ██║  ██║╚██████╔╝ ╚████╔╝ ╚██████╔╝                ║\n"+
-                "║     ╚═╝   ╚═╝  ╚═╝ ╚═════╝   ╚═══╝   ╚═════╝                 ║\n"+
+                "║  T.H.U.V.U. - Tool for Heuristic Universal Versatile Usage   ║\n"+
                 "╚══════════════════════════════════════════════════════════════╝\n";
+            
             // Action area (middle) - scrollable text view  
             _actionView = new TextView
             {
                 X = 0,
                 Y = 2,
                 Width = Dim.Fill(),
-                Height = Dim.Fill() - 7, // Make room for 4-line input + labels
+                Height = Dim.Fill() - 7,
                 ReadOnly = true,
                 WordWrap = true,
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.White, Color.Black),
-                    Focus = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black)
+                    Normal = new TgAttribute(Color.White, Color.Black),
+                    Focus = new TgAttribute(Color.BrightYellow, Color.Black)
                 },
-                Text = banner+"╭─── Welcome to T.H.U.V.U. ───────────────────────────────────────╮\n│  Type commands or chat with the AI assistant.                   │\n│  Press Ctrl+Enter to send. Type @ for file autocomplete.        │\n│  Type /help for available commands.                             │\n╰─────────────────────────────────────────────────────────────────╯\n\n"
+                Text = banner + "Welcome! Type commands or chat. Ctrl+Enter to send. /help for commands.\n\n"
             };
 
-            // Command area (bottom)
-            _commandLabel = new Label("Command (Ctrl+Enter to send, @ for files): ")
+            // Command area labels
+            _commandLabel = new Label
             {
                 X = 0,
                 Y = Pos.Bottom(_actionView),
+                Text = "Command (Ctrl+Enter): ",
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.DarkGray, Color.Black)
+                    Normal = new TgAttribute(Color.DarkGray, Color.Black)
                 }
             };
-            _workLabel = new Label(" ")
+            
+            _workLabel = new Label
             {
                 X = Pos.Right(_commandLabel),
                 Y = Pos.Bottom(_actionView),
                 Width = 30,
                 Height = 1,
+                Text = " ",
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.Cyan, Color.Black)
+                    Normal = new TgAttribute(Color.Cyan, Color.Black)
                 }
             };
             
-            // Multi-line command input (4 lines)
+            // Multi-line command input
             _commandField = new TextView
             {
                 X = 0,
@@ -177,37 +270,40 @@ namespace thuvu
                 WordWrap = true,
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.BrightYellow, Color.Black),
-                    Focus = new Terminal.Gui.Attribute(Color.BrightYellow, Color.DarkGray)
+                    Normal = new TgAttribute(Color.BrightYellow, Color.Black),
+                    Focus = new TgAttribute(Color.BrightYellow, Color.DarkGray)
                 }
             };
 
-            _sendButton = new Button("Send")
+            _sendButton = new Button
             {
                 X = Pos.Right(_commandField) + 1,
                 Y = Pos.Bottom(_actionView) + 1,
+                Text = "_Send",
                 IsDefault = false
             };
 
-            _cancelButton = new Button("Cancel")
+            _cancelButton = new Button
             {
                 X = Pos.Right(_commandField) + 1,
                 Y = Pos.Bottom(_actionView) + 2,
-                Visible = false // Hidden by default, shown during processing
+                Text = "_Cancel",
+                Visible = false
             };
             
-            // Autocomplete popup (hidden by default) - use absolute position near middle of screen
-            _autocompleteFrame = new FrameView("📁 Files (Tab=select, ↑↓=navigate, Esc=close)")
+            // Autocomplete popup
+            _autocompleteFrame = new FrameView
             {
                 X = 2,
-                Y = 10,  // Fixed position from top
+                Y = 10,
                 Width = 60,
                 Height = 12,
                 Visible = false,
+                Title = "Files (Tab=select, Esc=close)",
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.Black, Color.Gray),
-                    Focus = new Terminal.Gui.Attribute(Color.Black, Color.Gray)
+                    Normal = new TgAttribute(Color.Black, Color.Gray),
+                    Focus = new TgAttribute(Color.Black, Color.Gray)
                 }
             };
             
@@ -218,10 +314,11 @@ namespace thuvu
                 Width = Dim.Fill(),
                 Height = Dim.Fill(),
                 CanFocus = true,
+                Source = new ListWrapper<string>(_autocompleteItems),
                 ColorScheme = new ColorScheme
                 {
-                    Normal = new Terminal.Gui.Attribute(Color.Black, Color.Gray),
-                    Focus = new Terminal.Gui.Attribute(Color.White, Color.Blue)
+                    Normal = new TgAttribute(Color.Black, Color.Gray),
+                    Focus = new TgAttribute(Color.White, Color.Blue)
                 }
             };
             _autocompleteFrame.Add(_autocompleteList);
@@ -229,35 +326,36 @@ namespace thuvu
             _autocompleteList.OpenSelectedItem += OnAutocompleteSelected;
 
             // Event handlers
-            _sendButton.Clicked += OnSendClicked;
-            _cancelButton.Clicked += OnCancelClicked;
+            _sendButton.Accepting += (s, e) => OnSendClicked();
+            _cancelButton.Accepting += (s, e) => OnCancelClicked();
             _commandField.KeyDown += OnCommandKeyDown;
             
-            // Use KeyPress to detect @ character for autocomplete
-            _commandField.KeyPress += (e) => 
+            // Text change detection for autocomplete
+            _commandField.KeyDown += (s, e) => 
             {
-                // Skip autocomplete refresh for navigation keys when autocomplete is visible
+                // Skip if already handled by OnCommandKeyDown
+                if (e.Handled)
+                    return;
+                    
+                // Skip navigation keys when autocomplete is visible
                 if (_autocompleteFrame!.Visible)
                 {
-                    if (e.KeyEvent.Key == Key.CursorDown || e.KeyEvent.Key == Key.CursorUp ||
-                        e.KeyEvent.Key == Key.Tab || e.KeyEvent.Key == Key.Esc)
-                    {
-                        return; // Don't refresh autocomplete for these keys
-                    }
+                    if (e == Key.CursorDown || e == Key.CursorUp || e == Key.Tab || e == Key.Esc || e == Key.Enter)
+                        return;
                 }
                 
-                // Delay the check slightly to allow the character to be inserted
-                Application.MainLoop.AddTimeout(TimeSpan.FromMilliseconds(50), (_) => 
+                // Only trigger text change for actual text input keys
+                Application.AddTimeout(TimeSpan.FromMilliseconds(50), () => 
                 {
                     OnCommandTextChanged();
-                    return false; // Don't repeat
+                    return false;
                 });
             };
 
-            // Global key handler for ESC to cancel or close autocomplete
-            Application.Top.KeyDown += (e) =>
+            // Global ESC and Ctrl+C handler
+            top.KeyDown += (s, e) =>
             {
-                if (e.KeyEvent.Key == Key.Esc)
+                if (e == Key.Esc)
                 {
                     if (_autocompleteFrame!.Visible)
                     {
@@ -270,19 +368,26 @@ namespace thuvu
                         e.Handled = true;
                     }
                 }
+                // Ctrl+C to cancel current operation
+                else if (e == Key.C.WithCtrl)
+                {
+                    if (_isProcessing)
+                    {
+                        OnCancelClicked();
+                        e.Handled = true;
+                    }
+                }
             };
 
-            // Add components to Application.Top
-            Application.Top.Add(_statusLabel);
-            Application.Top.Add(_actionView);
-            Application.Top.Add(_commandLabel);
-            Application.Top.Add(_workLabel);
-            Application.Top.Add(_commandField);
-            Application.Top.Add(_sendButton);
-            Application.Top.Add(_cancelButton);
-            Application.Top.Add(_autocompleteFrame);
+            top.Add(_statusLabel);
+            top.Add(_actionView);
+            top.Add(_commandLabel);
+            top.Add(_workLabel);
+            top.Add(_commandField);
+            top.Add(_sendButton);
+            top.Add(_cancelButton);
+            top.Add(_autocompleteFrame);
 
-            // Set focus to command field
             _commandField.SetFocus();
         }
         
@@ -290,21 +395,15 @@ namespace thuvu
         {
             try
             {
-                var text = _commandField!.Text.ToString() ?? "";
-                
-                // Simple approach: just look for @ in the text
+                var text = _commandField!.Text ?? "";
                 var lastAtIndex = text.LastIndexOf('@');
                 
                 if (lastAtIndex >= 0)
                 {
-                    // Get text after @
                     var textAfterAt = text.Substring(lastAtIndex + 1);
-                    
-                    // If there's no space after @, show autocomplete
                     var spaceIndex = textAfterAt.IndexOfAny(new[] { ' ', '\n', '\r', '\t' });
                     if (spaceIndex < 0)
                     {
-                        // No space found - show autocomplete with the prefix
                         _autocompletePrefix = textAfterAt;
                         _autocompleteStartPos = lastAtIndex;
                         ShowFileAutocomplete(_autocompletePrefix);
@@ -314,10 +413,8 @@ namespace thuvu
                 
                 HideAutocomplete();
             }
-            catch (Exception ex)
+            catch
             {
-                // Log error to action view for debugging
-                AppendActionText($"Autocomplete error: {ex.Message}", true);
                 HideAutocomplete();
             }
         }
@@ -326,91 +423,44 @@ namespace thuvu
         {
             try
             {
-                // Search in current directory (project root) not just work directory
                 var searchDir = Directory.GetCurrentDirectory();
-                
-                // Get files and directories
                 var items = new List<string>();
-                
-                // If prefix is empty, show all files in current dir
-                // If prefix has content, search for matching files
                 var searchPattern = string.IsNullOrEmpty(prefix) ? "*" : $"*{prefix}*";
                 
-                // Add directories first (exclude hidden and common non-useful dirs)
                 var excludeDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
-                { 
-                    "bin", "obj", "node_modules", ".git", ".vs", ".idea", "packages" 
-                };
+                { "bin", "obj", "node_modules", ".git", ".vs", ".idea", "packages" };
                 
                 foreach (var dir in Directory.GetDirectories(searchDir, searchPattern, SearchOption.TopDirectoryOnly)
-                    .Where(d => !excludeDirs.Contains(Path.GetFileName(d)))
-                    .Take(8))
+                    .Where(d => !excludeDirs.Contains(Path.GetFileName(d))).Take(8))
                 {
                     var name = Path.GetFileName(dir);
                     if (!name.StartsWith("."))
-                    {
-                        items.Add($"📁 {name}/");
-                    }
+                        items.Add($"[D] {name}/");
                 }
                 
-                // Add files from current directory
                 var excludeExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
-                { 
-                    ".dll", ".exe", ".pdb", ".cache", ".lock" 
-                };
+                { ".dll", ".exe", ".pdb", ".cache", ".lock" };
                 
                 foreach (var file in Directory.GetFiles(searchDir, searchPattern, SearchOption.TopDirectoryOnly)
-                    .Where(f => !excludeExts.Contains(Path.GetExtension(f)))
-                    .Take(12))
+                    .Where(f => !excludeExts.Contains(Path.GetExtension(f))).Take(12))
                 {
                     var name = Path.GetFileName(file);
                     if (!name.StartsWith("."))
-                    {
-                        var icon = GetFileIcon(name);
-                        items.Add($"{icon} {name}");
-                    }
-                }
-                
-                // Also search in subdirectories if we need more results or prefix is specific
-                if ((items.Count < 8 || !string.IsNullOrEmpty(prefix)) && prefix.Length > 0)
-                {
-                    try
-                    {
-                        foreach (var file in Directory.GetFiles(searchDir, searchPattern, SearchOption.AllDirectories)
-                            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") &&
-                                       !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") &&
-                                       !f.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}") &&
-                                       !excludeExts.Contains(Path.GetExtension(f)))
-                            .Take(15))
-                        {
-                            var relativePath = Path.GetRelativePath(searchDir, file);
-                            if (!items.Any(i => i.EndsWith(Path.GetFileName(file))))
-                            {
-                                var icon = GetFileIcon(relativePath);
-                                items.Add($"{icon} {relativePath}");
-                            }
-                            if (items.Count >= 15) break;
-                        }
-                    }
-                    catch { /* Ignore recursive search errors */ }
+                        items.Add($"[F] {name}");
                 }
                 
                 if (items.Count > 0)
                 {
-                    _autocompleteItems = items;
-                    Application.MainLoop.Invoke(() =>
+                    Application.Invoke(() =>
                     {
-                        _autocompleteList!.SetSource(_autocompleteItems);
-                        _autocompleteList.SelectedItem = 0;
+                        _autocompleteItems.Clear();
+                        foreach (var item in items)
+                            _autocompleteItems.Add(item);
+                        
+                        _autocompleteList!.SelectedItem = 0;
                         _autocompleteFrame!.Visible = true;
-                        
-                        // Bring to front by removing and re-adding
-                        Application.Top.Remove(_autocompleteFrame);
-                        Application.Top.Add(_autocompleteFrame);
-                        
-                        _autocompleteFrame.SetNeedsDisplay();
-                        _autocompleteList.SetNeedsDisplay();
-                        Application.Refresh();
+                        _autocompleteFrame.SetNeedsDraw();
+                        _autocompleteList.SetNeedsDraw();
                     });
                 }
                 else
@@ -424,52 +474,30 @@ namespace thuvu
             }
         }
         
-        private string GetFileIcon(string fileName)
-        {
-            var ext = Path.GetExtension(fileName).ToLowerInvariant();
-            return ext switch
-            {
-                ".cs" => "🔷",
-                ".csproj" or ".sln" => "🔶",
-                ".json" => "📋",
-                ".xml" => "📄",
-                ".md" => "📝",
-                ".txt" => "📃",
-                ".ts" or ".js" => "🟨",
-                ".py" => "🐍",
-                ".sh" or ".ps1" => "⚙️",
-                ".yaml" or ".yml" => "📑",
-                ".html" or ".css" => "🌐",
-                ".sql" => "🗃️",
-                _ => "📄"
-            };
-        }
-        
         private void HideAutocomplete()
         {
-            Application.MainLoop.Invoke(() =>
+            Application.Invoke(() =>
             {
                 _autocompleteFrame!.Visible = false;
-                _autocompleteFrame.SetNeedsDisplay();
+                _autocompleteFrame.SetNeedsDraw();
             });
         }
         
-        private void OnAutocompleteSelected(ListViewItemEventArgs args)
+        private void OnAutocompleteSelected(object? sender, ListViewItemEventArgs args)
         {
             if (args.Value is string selected)
             {
-                // Extract the filename (remove icon prefix)
                 var parts = selected.Split(' ', 2);
                 var fileName = parts.Length > 1 ? parts[1].TrimEnd('/') : selected;
                 
-                // Replace @prefix with the selected file
-                var text = _commandField!.Text.ToString();
+                var text = _commandField!.Text ?? "";
                 var before = text.Substring(0, _autocompleteStartPos);
-                var after = text.Substring(_autocompleteStartPos + 1 + _autocompletePrefix.Length);
+                var after = _autocompleteStartPos + 1 + _autocompletePrefix.Length <= text.Length 
+                    ? text.Substring(_autocompleteStartPos + 1 + _autocompletePrefix.Length) 
+                    : "";
                 var newText = before + "@" + fileName + " " + after;
                 
                 _commandField.Text = newText;
-                _commandField.CursorPosition = new Point(_autocompleteStartPos + fileName.Length + 2, 0);
                 
                 HideAutocomplete();
                 _commandField.SetFocus();
@@ -481,180 +509,160 @@ namespace thuvu
             if (_currentRequestCts != null && !_currentRequestCts.IsCancellationRequested)
             {
                 _currentRequestCts.Cancel();
-                AppendActionText($"[{DateTime.Now:HH:mm:ss}] Cancelling request...", true);
+                AppendActionText("[Cancelling request...]", true);
             }
         }
 
         private void SetProcessingState(bool processing)
         {
             _isProcessing = processing;
-            Application.MainLoop.Invoke(() =>
-            {
-                _sendButton!.Visible = !processing;
-                _cancelButton!.Visible = processing;
-                _commandField!.ReadOnly = processing;
-                if (processing)
-                {
-                    _cancelButton.SetFocus();
-                }
-                else
-                {
-                    _commandField.SetFocus();
-                }
-                Application.Refresh();
-            });
+            // UI updates - must be called from UI thread or via Application.Invoke
+            _sendButton!.Visible = !processing;
+            _cancelButton!.Visible = processing;
+            _commandField!.ReadOnly = processing;
+            if (processing)
+                _cancelButton.SetFocus();
+            else
+                _commandField.SetFocus();
         }
 
         private string GetStatusText()
         {
-            var streamIcon = AgentConfig.Config.Stream ? "◉" : "○";
-            var status = _isProcessing ? " │ ⏳ PROCESSING (ESC to cancel)" : "";
-            return $"🤖 {AgentConfig.Config.Model} │ 🌐 {AgentConfig.Config.HostUrl} │ " +
-                   $"{streamIcon} Stream: {(AgentConfig.Config.Stream ? "ON" : "OFF")} │ " +
-                   $"💬 {_messages.Count} msgs{status}";
+            var status = _isProcessing ? " | PROCESSING (ESC=cancel)" : "";
+            return $"Model: {AgentConfig.Config.Model} | Host: {AgentConfig.Config.HostUrl} | " +
+                   $"Stream: {(AgentConfig.Config.Stream ? "ON" : "OFF")} | Msgs: {_messages.Count}{status}";
         }
 
         private void UpdateStatus()
         {
-            _statusLabel.Text = GetStatusText();
-            Application.MainLoop.Invoke(() => _statusLabel.SetNeedsDisplay());
+            // Must be called from UI thread or wrapped in Application.Invoke
+            if (_statusLabel != null)
+            {
+                _statusLabel.Text = GetStatusText();
+                _statusLabel.SetNeedsDraw();
+            }
         }
 
         private void AppendActionText(string text, bool isError = false)
         {
-            Application.MainLoop.Invoke(() =>
-            {
-                var currentText = _actionView!.Text.ToString();
-                
-                // Add styled prefix and timestamp
-                string styledText;
-                if (isError)
-                {
-                    styledText = $"╭─ ✗ ERROR [{DateTime.Now:HH:mm:ss}] ─────────────────────────────────────────\n│ {text}\n╰───────────────────────────────────────────────────────────────────";
-                }
-                else
-                {
-                    styledText = text;
-                }
-
-                _actionView.Text = currentText + styledText + "\n";
-                
-                // Scroll to bottom
-                _actionView.MoveEnd();
-                _actionView.SetNeedsDisplay();
-                Application.Refresh();
-            });
-        }
-
-        private void AppendSuccessText(string text)
-        {
-            Application.MainLoop.Invoke(() =>
-            {
-                var currentText = _actionView!.Text.ToString();
-                _actionView.Text = currentText + $"  ✓ {text}\n";
-                
-                // Scroll to bottom
-                _actionView.MoveEnd();
-                _actionView.SetNeedsDisplay();
-            });
-        }
-
-        private void AppendToolText(string toolName, string result, double? elapsedMs = null)
-        {
-            Application.MainLoop.Invoke(() =>
-            {
-                var currentText = _actionView!.Text.ToString();
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
-                var elapsed = elapsedMs.HasValue ? $" ({elapsedMs.Value:F0}ms)" : "";
-                
-                // Parse result to show status
-                var statusIcon = "✓";
-                var preview = result;
-                if (result.Contains("\"error\"") || result.Contains("\"stderr\":\"timeout\""))
-                    statusIcon = "✗";
-                else if (result.Contains("\"timed_out\":true"))
-                    statusIcon = "⏱";
-                    
-                // Truncate preview
-                if (preview.Length > 150)
-                    preview = preview.Substring(0, 147) + "...";
-                
-                _actionView.Text = currentText + $"  [{timestamp}] 🔧 {statusIcon} {toolName}{elapsed} │ {preview}\n";
-                
-                // Scroll to bottom
-                _actionView.MoveEnd();
-                _actionView.SetNeedsDisplay();
-            });
+            string styledText = isError ? $"[ERROR] {text}" : text;
+            AppendToActionView(styledText + "\n");
         }
         
-        private void AppendToolStart(string toolName)
+        /// <summary>
+        /// Thread-safe append to action view with auto-scroll to end
+        /// </summary>
+        private void AppendToActionView(string text)
         {
-            Application.MainLoop.Invoke(() =>
+            Application.AddTimeout(TimeSpan.Zero, () =>
             {
-                var currentText = _actionView!.Text.ToString();
-                var timestamp = DateTime.Now.ToString("HH:mm:ss");
-                _actionView.Text = currentText + $"  [{timestamp}] 🔧 ▶ {toolName}...\n";
-                _actionView.MoveEnd();
-                _actionView.SetNeedsDisplay();
-                Application.Refresh();
+                try
+                {
+                    var currentText = _actionView!.Text ?? "";
+                    _actionView.Text = currentText + text;
+                    _actionView.MoveEnd();
+                    _actionView.SetNeedsDraw();
+                }
+                catch { }
+                return false;
             });
+            Application.Wakeup();
         }
 
-        private void AppendTokenText(string text)
+        private void AppendToolText(string toolName, string result)
         {
-            Application.MainLoop.Invoke(() =>
+            AppendToolText(toolName, result, null);
+        }
+        
+        private void AppendToolText(string toolName, string result, TimeSpan? elapsed)
+        {
+            var statusIcon = result.Contains("\"error\"") || result.Contains("\"timed_out\":true") ? "[X]" : "[OK]";
+            var elapsedStr = elapsed.HasValue ? $" ({FormatElapsed(elapsed.Value)})" : "";
+            AppendToActionView($"  TOOL {statusIcon} {toolName}{elapsedStr}\n");
+        }
+        
+        private void UpdateToolProgress(ToolProgress progress)
+        {
+            // Capture values to avoid closure issues
+            var toolName = progress.ToolName;
+            var status = progress.Status;
+            var elapsed = progress.ElapsedFormatted;
+            
+            // Use AddTimeout with 0ms delay for non-blocking UI update
+            Application.AddTimeout(TimeSpan.Zero, () =>
             {
-                var currentText = _actionView!.Text.ToString();
-                _actionView.Text = currentText + $"  🎫 TOKENS │ {text}\n";
-                
-                // Scroll to bottom
-                _actionView.MoveEnd();
-                _actionView.SetNeedsDisplay();
+                try
+                {
+                    if (_workLabel != null)
+                    {
+                        var statusIcon = status switch
+                        {
+                            ToolStatus.Running => "⏳",
+                            ToolStatus.Completed => "✓",
+                            ToolStatus.Failed => "✗",
+                            ToolStatus.TimedOut => "⏱",
+                            ToolStatus.Cancelled => "⊘",
+                            _ => "○"
+                        };
+                        _workLabel.Text = $"{statusIcon} {toolName} {elapsed}";
+                        _workLabel.SetNeedsDraw();
+                    }
+                }
+                catch { /* ignore UI errors */ }
+                return false; // Don't repeat
             });
+            Application.Wakeup();
+        }
+        
+        private static string FormatElapsed(TimeSpan elapsed)
+        {
+            if (elapsed.TotalMinutes >= 1)
+                return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s";
+            return $"{elapsed.TotalSeconds:F1}s";
         }
 
-        private void OnCommandKeyDown(View.KeyEventEventArgs e)
+        private void OnCommandKeyDown(object? sender, Key e)
         {
-            // Ctrl+Enter to send message
-            if (e.KeyEvent.Key == (Key.Enter | Key.CtrlMask))
+            // Ctrl+Enter to send
+            if (e == Key.Enter.WithCtrl)
             {
                 e.Handled = true;
-                _ = ProcessCommandAsync();
+                ProcessCommandAsync();
                 return;
             }
             
-            // Tab to select autocomplete item
-            if (e.KeyEvent.Key == Key.Tab && _autocompleteFrame!.Visible)
+            // Tab for autocomplete
+            if (e == Key.Tab && _autocompleteFrame!.Visible)
             {
                 e.Handled = true;
                 var selected = _autocompleteList!.SelectedItem;
                 if (selected >= 0 && selected < _autocompleteItems.Count)
                 {
-                    OnAutocompleteSelected(new ListViewItemEventArgs(selected, _autocompleteItems[selected]));
+                    OnAutocompleteSelected(null, new ListViewItemEventArgs(selected, _autocompleteItems[selected]));
                 }
                 return;
             }
             
-            // Arrow keys to navigate autocomplete
+            // Arrow keys for autocomplete navigation
             if (_autocompleteFrame!.Visible)
             {
-                if (e.KeyEvent.Key == Key.CursorDown)
+                if (e == Key.CursorDown)
                 {
                     e.Handled = true;
                     if (_autocompleteList!.SelectedItem < _autocompleteItems.Count - 1)
                     {
                         _autocompleteList.SelectedItem++;
-                        _autocompleteList.SetNeedsDisplay();
+                        _autocompleteList.SetNeedsDraw();
                     }
                     return;
                 }
-                if (e.KeyEvent.Key == Key.CursorUp)
+                if (e == Key.CursorUp)
                 {
                     e.Handled = true;
                     if (_autocompleteList!.SelectedItem > 0)
                     {
                         _autocompleteList.SelectedItem--;
-                        _autocompleteList.SetNeedsDisplay();
+                        _autocompleteList.SetNeedsDraw();
                     }
                     return;
                 }
@@ -663,47 +671,47 @@ namespace thuvu
 
         private void OnSendClicked()
         {
-            _ = ProcessCommandAsync();
+            ProcessCommandAsync();
         }
 
-        private async Task ProcessCommandAsync()
+        private void ProcessCommandAsync()
         {
-            var command = _commandField!.Text.ToString().Trim().Replace("\r\n", " ").Replace("\n", " ");
+            var command = (_commandField!.Text ?? "").Trim().Replace("\r\n", " ").Replace("\n", " ");
             if (string.IsNullOrWhiteSpace(command))
                 return;
 
-            // Hide autocomplete if visible
             HideAutocomplete();
 
-            // Clear the command field
-            Application.MainLoop.Invoke(() =>
+            _commandField.Text = "";
+            _commandField.SetNeedsDraw();
+
+            AppendActionText($"USER> {command}");
+            
+            // Run everything on a background thread
+            Task.Run(async () =>
             {
-                _commandField.Text = "";
-                _commandField.SetNeedsDisplay();
+                try
+                {
+                    await HandleCommandAsync(command);
+                }
+                catch (Exception ex)
+                {
+                    Application.Invoke(() => AppendActionText($"Error: {ex.Message}", isError: true));
+                }
+                finally
+                {
+                    Application.Invoke(() => UpdateStatus());
+                }
             });
-
-            // Display the user command with styled prefix
-            AppendActionText($"👤 ➤ {command}");
-
-            try
-            {
-                await HandleCommandAsync(command);
-            }
-            catch (Exception ex)
-            {
-                AppendActionText($"Error processing command: {ex.Message}", isError: true);
-            }
-
-            UpdateStatus();
         }
 
         private async Task HandleCommandAsync(string command)
         {
-            // Handle special commands
+            // Simple commands - use Application.Invoke for UI updates
             if (command.Equals("/exit", StringComparison.OrdinalIgnoreCase))
             {
-                Models.PermissionManager.ClearSessionPermissions();
-                Application.RequestStop();
+                PermissionManager.ClearSessionPermissions();
+                Application.Invoke(() => Application.RequestStop());
                 return;
             }
 
@@ -716,20 +724,7 @@ namespace thuvu
             if (command.StartsWith("/clear", StringComparison.OrdinalIgnoreCase))
             {
                 _messages = new List<ChatMessage> { new("system", _messages[0].Content) };
-                AppendSuccessText("Conversation cleared.");
-                return;
-            }
-
-            if (command.StartsWith("/system ", StringComparison.OrdinalIgnoreCase))
-            {
-                var sys = command.Substring(8).Trim();
-                if (string.IsNullOrWhiteSpace(sys))
-                {
-                    AppendActionText("Usage: /system <text>", isError: true);
-                    return;
-                }
-                _messages[0] = new ChatMessage("system", sys);
-                AppendSuccessText("System prompt updated.");
+                AppendActionText("[OK] Conversation cleared.");
                 return;
             }
 
@@ -745,159 +740,8 @@ namespace thuvu
                     AppendActionText("Usage: /stream on|off", isError: true);
                     return;
                 }
-                AppendSuccessText($"Streaming is now {(AgentConfig.Config.Stream ? "ON" : "OFF")}.");
-                UpdateStatus();
-                return;
-            }
-
-            // For other commands that require the original Program methods,
-            // we'll need to handle them here or delegate to the original implementation
-            if (command.StartsWith("/diff", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    // Delegate to original implementation
-                    await CommandHandlers.HandleDiffCommandAsync(command, _appCancellationTokenSource.Token, (text, isError) =>
-                    {
-                        if (isError)
-                            AppendActionText(text, true);
-                        else
-                            AppendActionText(text);
-                    });
-                }
-                catch (Exception ex)
-                {
-                    AppendActionText($"Error executing diff command: {ex.Message}", true);
-                }
-                return;
-            }
-            if(command.StartsWith("/set", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    var args = ConsoleHelpers.TokenizeArgs(command); // you already have this helper
-                    if (args.Count < 3)
-                    {
-                        AppendSuccessText("Usage: /set model <id> | /set host <url> | /set stream on|off | /set timeout <ms> | /set httptimeout <minutes>");
-                        return;
-                    }
-
-                    var key = args[1].ToLowerInvariant();
-                    switch (key)
-                    {
-                        case "model":
-                            {
-                                var id = string.Join(' ', args.Skip(2));
-                                if (string.IsNullOrWhiteSpace(id)) { AppendSuccessText("Model id required."); break; }
-                                AgentConfig.Config.Model = id.Trim();
-                                AgentConfig.SaveConfig();
-                                AppendSuccessText($"Model set to: {AgentConfig.Config.Model}");
-                                UpdateStatus();
-                                return;
-                            }
-                        case "host":
-                            {
-                                var url = string.Join(' ', args.Skip(2));
-                                if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
-                                    (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-                                {
-                                    AppendActionText("Please provide a valid http(s) URL, e.g. http://127.0.0.1:1234");
-                                    return;
-                                }
-                                AgentConfig.Config.HostUrl = uri.ToString().TrimEnd('/'); // normalize (optional)
-                                AgentConfig.SaveConfig();
-                                AppendActionText($"Host set to: {AgentConfig.Config.HostUrl}");
-                                AppendActionText("Note: Restart the application for the host change to take effect.");
-                                UpdateStatus();
-                                return;
-                            }
-                        case "stream":
-                            {
-                                var v = args[2].ToLowerInvariant();
-                                if (v is "on" or "off")
-                                {
-                                    AgentConfig.Config.Stream = v == "on";
-
-                                    AgentConfig.SaveConfig();
-                                    AppendActionText($"Streaming is now {(AgentConfig.Config.Stream ? "ON" : "OFF")}.");
-                                }
-                                else AppendActionText("Usage: /set stream on|off");
-                                UpdateStatus();
-                                return;
-                            }
-                        case "timeout":
-                            {
-                                if (!int.TryParse(args[2], out var ms) || ms < 1000 || ms > 600_000)
-                                {
-                                    AppendActionText("Timeout must be 1000..600000 ms.");
-                                    return;
-                                }
-                                AgentConfig.Config.TimeoutMs = ms;
-                                AgentConfig.SaveConfig();
-                                AppendActionText($"Default process timeout set to {AgentConfig.Config.TimeoutMs} ms.");
-                                UpdateStatus();
-                                return;
-                            }
-                        case "httptimeout":
-                            {
-                                if (!int.TryParse(args[2], out var minutes) || minutes < 1 || minutes > 120)
-                                {
-                                    AppendActionText("HTTP timeout must be 1..120 minutes.");
-                                    return;
-                                }
-                                AgentConfig.Config.HttpRequestTimeout = minutes;
-                                AgentConfig.SaveConfig();
-                                AppendActionText($"HTTP request timeout set to {AgentConfig.Config.HttpRequestTimeout} minutes.");
-                                AppendActionText("Note: Restart the application for the timeout change to take effect.");
-                                UpdateStatus();
-                                return;
-                            }
-                        default:
-                            AppendActionText("Supported keys: model, host, stream, timeout, httptimeout");
-                            break;
-
-                    }
-                }
-                catch (Exception ex)
-                {
-                    AppendActionText($"Error executing set command: {ex.Message}", true);
-                }
-            }
-            if (command.StartsWith("/test", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    await CommandHandlers.HandleTestCommandAsync(command, _appCancellationTokenSource.Token, (text, isError) =>
-                    {
-                        if (isError)
-                            AppendActionText(text, true);
-                        else
-                            AppendActionText(text);
-                    });
-                }
-                catch (Exception ex)
-                {
-                    AppendActionText($"Error executing test command: {ex.Message}", true);
-                }
-                return;
-            }
-
-            if (command.StartsWith("/run", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    await CommandHandlers.HandleRunCommandAsync(command, _appCancellationTokenSource.Token, (text, isError) =>
-                    {
-                        if (isError)
-                            AppendActionText(text, true);
-                        else
-                            AppendActionText(text);
-                    });
-                }
-                catch (Exception ex)
-                {
-                    AppendActionText($"Error executing run command: {ex.Message}", true);
-                }
+                AppendActionText($"[OK] Streaming: {(AgentConfig.Config.Stream ? "ON" : "OFF")}");
+                Application.Invoke(() => UpdateStatus());
                 return;
             }
 
@@ -907,270 +751,185 @@ namespace thuvu
                 return;
             }
 
-            // Handle regular chat message
+            // Regular chat - heavy work on background thread
             if (!string.IsNullOrWhiteSpace(command))
             {
                 _messages.Add(new ChatMessage("user", command));
 
-                // Create cancellation token for this request
                 _currentRequestCts?.Dispose();
                 _currentRequestCts = new CancellationTokenSource();
                 var ct = _currentRequestCts.Token;
 
-                SetProcessingState(true);
-                UpdateStatus();
+                Application.Invoke(() => 
+                {
+                    SetProcessingState(true);
+                    UpdateStatus();
+                });
 
-                AppendActionText($"╭─── 📤 Sending to {AgentConfig.Config.Model} ───────────────────────────────────\n│ Press ESC to cancel");
-                bool finished = false;
-                int iterationCount = 0;
                 try
                 {
-                    while (!finished && !ct.IsCancellationRequested)
+                    string? final;
+                    if (AgentConfig.Config.Stream)
                     {
-                        iterationCount++;
-                        AppendActionText($"╭─ 🔄 Iteration {iterationCount} [{DateTime.Now:HH:mm:ss}] ──────────────────────────────────");
+                        bool receivedTokens = false;
+                        var tokenBuffer = new System.Text.StringBuilder();
+                        int tokenCount = 0;
                         
-                        string? final;
-                        if (AgentConfig.Config.Stream)
+                        _thinkingAnimationCts?.Cancel();
+                        _thinkingAnimationCts = new CancellationTokenSource();
+                        var thinkingToken = _thinkingAnimationCts.Token;
+                        var startTime = DateTime.Now;
+                        
+                        _ = Task.Run(async () =>
                         {
-                            // Track streaming state
-                            bool receivedTokens = false;
-                            var tokenBuffer = new System.Text.StringBuilder();
-                            var streamStartTime = DateTime.Now;
-                            int tokenCount = 0;
-                            
-                            // Start thinking animation - use class-level CTS so cancel works
-                            _thinkingAnimationCts?.Cancel();
-                            _thinkingAnimationCts?.Dispose();
-                            _thinkingAnimationCts = new CancellationTokenSource();
-                            var thinkingToken = _thinkingAnimationCts.Token;
-                            var thinkingChars = new[] { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
-                            int thinkingIdx = 0;
-                            _ = Task.Run(async () =>
+                            try
                             {
-                                try
+                                while (!thinkingToken.IsCancellationRequested && !receivedTokens)
                                 {
-                                    while (!thinkingToken.IsCancellationRequested && !receivedTokens)
+                                    var elapsed = (DateTime.Now - startTime).TotalSeconds;
+                                    Application.Invoke(() =>
                                     {
-                                        var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
-                                        Application.MainLoop.Invoke(() =>
+                                        if (_workLabel != null)
                                         {
-                                            _workLabel!.Text = $"{thinkingChars[thinkingIdx % thinkingChars.Length]} Waiting {elapsed:F0}s...";
-                                            _workLabel.SetNeedsDisplay();
-                                            Application.Refresh();
-                                        });
-                                        thinkingIdx++;
-                                        await Task.Delay(100, thinkingToken);
-                                    }
-                                }
-                                catch (OperationCanceledException) { /* Expected when cancelled */ }
-                            }, thinkingToken);
-                            
-                            final = await AgentLoop.CompleteWithToolsStreamingAsync(
-                                _http, AgentConfig.Config.Model, _messages, _tools, ct,
-                                onToken: token => 
-                                {
-                                    if (!receivedTokens)
-                                    {
-                                        receivedTokens = true;
-                                        _thinkingAnimationCts?.Cancel();
-                                        Application.MainLoop.Invoke(() =>
-                                        {
-                                            var currentText = _actionView!.Text.ToString();
-                                            var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
-                                            _actionView.Text = currentText + $"╭─── 🤖 Response (first token in {elapsed:F1}s) ────────────────────────────────\n│ ";
-                                            _actionView.MoveEnd();
-                                            _actionView.SetNeedsDisplay();
-                                            Application.Refresh();
-                                        });
-                                    }
-                                    
-                                    tokenCount++;
-                                    tokenBuffer.Append(token);
-                                    
-                                    // Update work label with token count
-                                    if (tokenCount % 5 == 0)
-                                    {
-                                        var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
-                                        var tps = elapsed > 0 ? tokenCount / elapsed : 0;
-                                        Application.MainLoop.Invoke(() =>
-                                        {
-                                            _workLabel!.Text = $"📝 {tokenCount} ({tps:F0} t/s)";
-                                            _workLabel.SetNeedsDisplay();
-                                        });
-                                    }
-                                    
-                                    // Buffer tokens and flush periodically for better performance
-                                    if (tokenBuffer.Length > 10 || token.Contains('\n'))
-                                    {
-                                        var bufferedText = tokenBuffer.ToString();
-                                        tokenBuffer.Clear();
-                                        Application.MainLoop.Invoke(() =>
-                                        {
-                                            var currentText = _actionView!.Text.ToString();
-                                            _actionView.Text = currentText + bufferedText;
-                                            _actionView.MoveEnd();
-                                            _actionView.SetNeedsDisplay();
-                                            Application.Refresh();
-                                            Animate();
-                                        });
-                                    }
-                                },
-                                onToolResult: (name, result) =>
-                                {
-                                    _thinkingAnimationCts?.Cancel();
-                                    // Flush any remaining tokens before showing tool result
-                                    if (tokenBuffer.Length > 0)
-                                    {
-                                        var bufferedText = tokenBuffer.ToString();
-                                        tokenBuffer.Clear();
-                                        Application.MainLoop.Invoke(() =>
-                                        {
-                                            var currentText = _actionView!.Text.ToString();
-                                            _actionView.Text = currentText + bufferedText + "\n";
-                                            _actionView.SetNeedsDisplay();
-                                            Application.Refresh();
-                                        });
-                                    }
-                                    AppendToolText(name, result);
-                                    Animate();
-                                },
-                                onUsage: usage =>
-                                {
-                                    var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
-                                    var tps = elapsed > 0 ? tokenCount / elapsed : 0;
-                                    AppendActionText($"╰─── ⏱ {elapsed:F1}s │ 📝 {tokenCount} tokens │ ⚡ {tps:F1} t/s ───────────────────────");
-                                    AppendTokenText($"prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
-                                    Application.MainLoop.Invoke(() =>
-                                    {
-                                        _workLabel!.Text = " ";
-                                        _workLabel.SetNeedsDisplay();
+                                            _workLabel.Text = $"Waiting {elapsed:F0}s...";
+                                            _workLabel.SetNeedsDraw();
+                                        }
                                     });
-                                    Animate();
+                                    await Task.Delay(500, thinkingToken);
                                 }
-                            );
-                            
-                            // Ensure thinking animation is stopped
-                            _thinkingAnimationCts?.Cancel();
-                            
-                            // Reset work label to show completion
-                            Application.MainLoop.Invoke(() =>
+                            }
+                            catch (OperationCanceledException) { }
+                        }, thinkingToken);
+                        
+                        final = await AgentLoop.CompleteWithToolsStreamingAsync(
+                            _http, AgentConfig.Config.Model, _messages, _tools, ct,
+                            onToken: token => 
                             {
-                                _workLabel!.Text = "✓ Done";
-                                _workLabel.SetNeedsDisplay();
-                            });
-                            
-                            // Flush any remaining buffered tokens
-                            if (tokenBuffer.Length > 0)
-                            {
-                                var bufferedText = tokenBuffer.ToString();
-                                Application.MainLoop.Invoke(() =>
+                                if (!receivedTokens)
                                 {
-                                    var currentText = _actionView!.Text.ToString();
-                                    _actionView.Text = currentText + bufferedText;
-                                    _actionView.MoveEnd();
-                                    _actionView.SetNeedsDisplay();
-                                    Application.Refresh();
+                                    receivedTokens = true;
+                                    _thinkingAnimationCts?.Cancel();
+                                    AppendToActionView("ASSISTANT> ");
+                                }
+                                
+                                tokenCount++;
+                                tokenBuffer.Append(token);
+                                
+                                if (tokenBuffer.Length > 10 || token.Contains('\n'))
+                                {
+                                    var bufferedText = tokenBuffer.ToString();
+                                    tokenBuffer.Clear();
+                                    AppendToActionView(bufferedText);
+                                }
+                            },
+                            onToolResult: (name, result) =>
+                            {
+                                _thinkingAnimationCts?.Cancel();
+                                if (tokenBuffer.Length > 0)
+                                {
+                                    var bufferedText = tokenBuffer.ToString();
+                                    tokenBuffer.Clear();
+                                    AppendToActionView(bufferedText + "\n");
+                                }
+                            },
+                            onUsage: usage =>
+                            {
+                                Application.AddTimeout(TimeSpan.Zero, () =>
+                                {
+                                    try
+                                    {
+                                        if (_workLabel != null)
+                                        {
+                                            _workLabel.Text = $"Tokens: {usage.TotalTokens}";
+                                            _workLabel.SetNeedsDraw();
+                                        }
+                                    }
+                                    catch { }
+                                    return false;
                                 });
-                            }
-                            
-                            // Show completion footer if usage wasn't reported
-                            if (!receivedTokens)
+                                Application.Wakeup();
+                            },
+                            onToolComplete: (name, result, elapsed) =>
                             {
-                                AppendActionText("(No tokens received from model)");
-                            }
-                            else
-                            {
-                                var elapsed = (DateTime.Now - streamStartTime).TotalSeconds;
-                                var tps = elapsed > 0 ? tokenCount / elapsed : 0;
-                                // Only add footer if onUsage didn't fire
-                                if (tokenCount > 0)
-                                {
-                                    AppendActionText($"\n╰─── ⏱ {elapsed:F1}s │ 📝 ~{tokenCount} chunks ───────────────────────");
-                                }
-                            }
-                        }
-                        else
+                                AppendToolText(name, result, elapsed);
+                            },
+                            onToolProgress: UpdateToolProgress
+                        );
+                        
+                        _thinkingAnimationCts?.Cancel();
+                        
+                        // Flush remaining buffer
+                        if (tokenBuffer.Length > 0)
                         {
-                            final = await AgentLoop.CompleteWithToolsAsync(
-                                _http, AgentConfig.Config.Model, _messages, _tools, ct,
-                                onToolResult: (name, result) =>
-                                {
-                                    AppendToolText(name, result);
-                                    Animate();
-                                }
-                            );
+                            var bufferedText = tokenBuffer.ToString();
+                            AppendToActionView(bufferedText);
                         }
-
-                        if (!string.IsNullOrEmpty(final))
-                        {
-                            if (!AgentConfig.Config.Stream)
-                            {
-                                // Only append final text if not streaming (streaming already shows it)
-                                AppendActionText($"\n{final}\n");
-                            }
-                            else
-                            {
-                                AppendActionText(""); // Just add a newline after streaming
-                            }
-                            _messages.Add(new ChatMessage("assistant", final));
-                            Animate();
-                            if(final.IndexOf("Finished Tasks.")>=0)
-                            {
-                                AppendSuccessText("Agent completed all tasks.");
-                                finished = true;
-                            }
-                        }
-                        else
-                        {
-                            AppendActionText($"[{DateTime.Now:HH:mm:ss}] (no content in response)");
-                        }
+                        
+                        AppendToActionView("\n");
                     }
-                }
-                catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
-                {
-                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] Request timed out. Try increasing /set httptimeout", true);
+                    else
+                    {
+                        final = await AgentLoop.CompleteWithToolsAsync(
+                            _http, AgentConfig.Config.Model, _messages, _tools, ct,
+                            onToolResult: null,
+                            onToolComplete: (name, result, elapsed) => AppendToolText(name, result, elapsed),
+                            onToolProgress: UpdateToolProgress
+                        );
+                    }
+
+                    if (!string.IsNullOrEmpty(final))
+                    {
+                        if (!AgentConfig.Config.Stream)
+                            AppendActionText($"ASSISTANT> {final}");
+                        _messages.Add(new ChatMessage("assistant", final));
+                    }
                 }
                 catch (OperationCanceledException)
                 {
-                    // Stop the thinking animation
                     _thinkingAnimationCts?.Cancel();
-                    Application.MainLoop.Invoke(() =>
+                    Application.AddTimeout(TimeSpan.Zero, () =>
                     {
-                        _workLabel!.Text = " ";
-                        _workLabel.SetNeedsDisplay();
+                        try
+                        {
+                            if (_workLabel != null)
+                            {
+                                _workLabel.Text = " ";
+                                _workLabel.SetNeedsDraw();
+                            }
+                        }
+                        catch { }
+                        return false;
                     });
-                    
-                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] Request cancelled by user.", true);
-                    // Remove the last user message since we cancelled the request
-                    if (_messages.Count > 1 && _messages[^1].Role == "user")
-                    {
-                        _messages.RemoveAt(_messages.Count - 1);
-                    }
-                }
-                catch (HttpRequestException ex)
-                {
-                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] HTTP Error: {ex.Message} - Is the LLM server running at {AgentConfig.Config.HostUrl}?", true);
+                    Application.Wakeup();
+                    AppendActionText("Request cancelled.", true);
                 }
                 catch (Exception ex)
                 {
-                    AppendActionText($"[{DateTime.Now:HH:mm:ss}] Error: {ex.GetType().Name}: {ex.Message}", true);
+                    AppendActionText($"Error: {ex.Message}", true);
                 }
                 finally
                 {
-                    // Stop thinking animation and reset processing state
                     _thinkingAnimationCts?.Cancel();
                     _thinkingAnimationCts?.Dispose();
                     _thinkingAnimationCts = null;
                     
-                    Application.MainLoop.Invoke(() =>
+                    Application.AddTimeout(TimeSpan.Zero, () =>
                     {
-                        _workLabel!.Text = " ";
-                        _workLabel.SetNeedsDisplay();
+                        try
+                        {
+                            if (_workLabel != null)
+                            {
+                                _workLabel.Text = " ";
+                                _workLabel.SetNeedsDraw();
+                            }
+                            SetProcessingState(false);
+                            UpdateStatus();
+                        }
+                        catch { }
+                        return false;
                     });
+                    Application.Wakeup();
                     
-                    SetProcessingState(false);
-                    UpdateStatus();
                     _currentRequestCts?.Dispose();
                     _currentRequestCts = null;
                 }
@@ -1179,46 +938,24 @@ namespace thuvu
 
         private void ShowHelp()
         {
-            var helpText = @"╔══════════════════════════════════════════════════════════════════════════╗
-║                    T.H.U.V.U. HELP                                       ║
-║   (T)ool for (H)eurustic (U)niversal (V)ersatile (U)sage                 ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  KEYBOARD SHORTCUTS                                                      ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  Ctrl+Enter               │ Send message                                 ║
-║  @                        │ File autocomplete (type @ then filename)     ║
-║  Tab                      │ Select autocomplete item                     ║
-║  ↑/↓                      │ Navigate autocomplete list                   ║
-║  Esc                      │ Close autocomplete / Cancel request          ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  BASIC COMMANDS                                                          ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  /help                    │ Show this help                               ║
-║  /exit                    │ Quit                                         ║
-║  /clear                   │ Reset conversation                           ║
-║  /system <text>           │ Set system prompt                            ║
-║  /stream on|off           │ Toggle streaming                             ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  DEVELOPMENT COMMANDS                                                    ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  /diff [--staged]         │ Show git unified diff                        ║
-║  /test [PROJECT]          │ Run dotnet tests                             ║
-║  /run CMD [ARGS]          │ Run whitelisted command                      ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  PERMISSION SYSTEM                                                       ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  Read-only tools: always allowed                                         ║
-║  Write tools prompt: [A]lways │ [S]ession │ [O]nce │ [N]o                ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  MULTI-MODEL SUPPORT                                                     ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║  /models list             │ List all configured models                   ║
-║  /models use <id>         │ Switch to a specific model                   ║
-║  /models thinking [id]    │ Get/set thinking model for planning          ║
-║  /models coding [id]      │ Get/set coding model for simple tasks        ║
-╚══════════════════════════════════════════════════════════════════════════╝";
+            AppendActionText(@"
+T.H.U.V.U. HELP
+===============
+Ctrl+Enter    Send message
+@             File autocomplete
+Tab           Select autocomplete
+Esc           Close autocomplete / Cancel
 
-            AppendActionText(helpText);
+/help         Show this help
+/exit         Quit
+/clear        Reset conversation
+/stream on|off Toggle streaming
+/models list  List models
+/models use   Switch model
+
+Permission prompts appear for write operations.
+[A]lways | [S]ession | [O]nce | [N]o
+");
         }
 
         private void HandleModelsCommand(string command)
@@ -1229,17 +966,12 @@ namespace thuvu
             switch (subCommand)
             {
                 case "list":
-                    AppendActionText("╭─── 🤖 Configured Models ───────────────────────────────────────");
+                    AppendActionText("Models:");
                     foreach (var m in ModelRegistry.Instance.Models)
                     {
-                        var status = m.Enabled ? "✓" : "✗";
-                        var local = m.IsLocal ? "local" : "remote";
-                        var thinkingFlag = m.IsThinkingModel ? " [thinking]" : "";
-                        var isDefault = m.ModelId == ModelRegistry.Instance.DefaultModelId ? " ⭐" : "";
-                        AppendActionText($"│ {status} {m.DisplayName ?? m.ModelId} ({local}{thinkingFlag}){isDefault}");
-                        AppendActionText($"│   {m.HostUrl} | Purposes: {string.Join(", ", m.Purposes)}");
+                        var isDefault = m.ModelId == ModelRegistry.Instance.DefaultModelId ? " *" : "";
+                        AppendActionText($"  {(m.Enabled ? "[+]" : "[-]")} {m.DisplayName ?? m.ModelId}{isDefault}");
                     }
-                    AppendActionText($"╰─── Default: {ModelRegistry.Instance.DefaultModelId}");
                     break;
 
                 case "use":
@@ -1248,49 +980,22 @@ namespace thuvu
                         AppendActionText("Usage: /models use <model-id>", true);
                         return;
                     }
-                    var modelId = args[2];
-                    var model = ModelRegistry.Instance.GetModel(modelId);
+                    var model = ModelRegistry.Instance.GetModel(args[2]);
                     if (model == null)
                     {
-                        AppendActionText($"Model '{modelId}' not found", true);
+                        AppendActionText($"Model '{args[2]}' not found", true);
                         return;
                     }
                     ModelRegistry.Instance.DefaultModelId = model.ModelId;
                     AgentConfig.Config.Model = model.ModelId;
                     AgentConfig.Config.HostUrl = model.HostUrl;
                     AgentConfig.Config.Stream = model.Stream;
-                    AppendSuccessText($"Now using: {model.DisplayName ?? model.ModelId}");
+                    AppendActionText($"[OK] Now using: {model.DisplayName ?? model.ModelId}");
                     UpdateStatus();
                     break;
 
-                case "thinking":
-                    if (args.Count < 3)
-                    {
-                        var thinking = ModelRegistry.Instance.GetThinkingModel();
-                        AppendActionText($"Thinking model: {thinking?.DisplayName ?? "(not set)"}");
-                    }
-                    else
-                    {
-                        ModelRegistry.Instance.ThinkingModelId = args[2];
-                        AppendSuccessText($"Thinking model set to: {args[2]}");
-                    }
-                    break;
-
-                case "coding":
-                    if (args.Count < 3)
-                    {
-                        var coding = ModelRegistry.Instance.GetCodingModel();
-                        AppendActionText($"Coding model: {coding?.DisplayName ?? "(not set)"}");
-                    }
-                    else
-                    {
-                        ModelRegistry.Instance.CodingModelId = args[2];
-                        AppendSuccessText($"Coding model set to: {args[2]}");
-                    }
-                    break;
-
                 default:
-                    AppendActionText("Usage: /models list | use <id> | thinking [id] | coding [id]");
+                    AppendActionText("Usage: /models list | use <id>");
                     break;
             }
         }

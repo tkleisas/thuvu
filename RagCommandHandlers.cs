@@ -162,7 +162,8 @@ namespace thuvu
                                 var content = result.GetProperty("content").GetString();
 
                                 ConsoleHelpers.WithColor(ConsoleColor.Cyan, () => Console.WriteLine($"[{similarity:P1}] {source}"));
-                                Console.WriteLine(content?.Length > 200 ? content[..200] + "..." : content);
+                                // Show full content - let it scroll naturally
+                                Console.WriteLine(content);
                                 Console.WriteLine();
                             }
                         }

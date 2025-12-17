@@ -91,13 +91,28 @@ namespace thuvu.Tools
         {
             try
             {
+                // Use separate embedding model/endpoint if configured
+                var embeddingModel = !string.IsNullOrEmpty(RagConfig.Instance.EmbeddingModel) 
+                    ? RagConfig.Instance.EmbeddingModel 
+                    : AgentConfig.Config.Model;
+                    
                 var request = new
                 {
-                    model = AgentConfig.Config.Model,
+                    model = embeddingModel,
                     input = text
                 };
 
-                using var response = await _http.PostAsJsonAsync("/v1/embeddings", request, ct);
+                HttpResponseMessage response;
+                if (!string.IsNullOrEmpty(RagConfig.Instance.EmbeddingHostUrl))
+                {
+                    // Use separate embedding endpoint
+                    using var embeddingClient = new HttpClient { BaseAddress = new Uri(RagConfig.Instance.EmbeddingHostUrl) };
+                    response = await embeddingClient.PostAsJsonAsync("/v1/embeddings", request, ct);
+                }
+                else
+                {
+                    response = await _http.PostAsJsonAsync("/v1/embeddings", request, ct);
+                }
                 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -311,6 +326,7 @@ namespace thuvu.Tools
         /// </summary>
         public async Task<RagStats> GetStatsAsync(CancellationToken ct = default)
         {
+            AgentLogger.LogInfo("GetStatsAsync: RagConfig.Instance.Enabled = {Enabled}", RagConfig.Instance.Enabled);
             if (!RagConfig.Instance.Enabled)
                 return new RagStats { Enabled = false };
 

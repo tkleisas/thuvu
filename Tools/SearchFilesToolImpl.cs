@@ -3,13 +3,16 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace thuvu.Tools
 {
     public class SearchFilesToolImpl
     {
-        public static string[] SearchFilesTool(string rawArgs)
+        public static string[] SearchFilesTool(string rawArgs) => SearchFilesTool(rawArgs, CancellationToken.None);
+        
+        public static string[] SearchFilesTool(string rawArgs, CancellationToken ct)
         {
             using var doc = JsonDocument.Parse(rawArgs);
             var glob = doc.RootElement.TryGetProperty("glob", out var gEl) ? (gEl.GetString() ?? "**/*") : "**/*";
@@ -26,6 +29,7 @@ namespace thuvu.Tools
             var results = new List<string>();
             const int MaxMatches = 500;
             const long MaxFileBytes = 2L * 1024 * 1024; // 2 MB
+            int filesChecked = 0;
 
             var enumOpts = new EnumerationOptions
             {
@@ -37,6 +41,10 @@ namespace thuvu.Tools
 
             foreach (var file in Directory.EnumerateFiles(rootDir, "*", enumOpts))
             {
+                // Check for cancellation periodically (every 100 files)
+                if (++filesChecked % 100 == 0)
+                    ct.ThrowIfCancellationRequested();
+                
                 if (IsInExcludedDir(rootDir, file)) continue;
 
                 var rel = Path.GetRelativePath(rootDir, file).Replace('\\', '/');
@@ -58,7 +66,7 @@ namespace thuvu.Tools
                 }
                 catch { continue; }
 
-                if (SafeFileContains(file, query))
+                if (SafeFileContains(file, query, ct))
                 {
                     results.Add(Path.GetFullPath(file));
                     if (results.Count >= MaxMatches) break;
@@ -71,25 +79,23 @@ namespace thuvu.Tools
         {
             try
             {
-                Queue<string> dirs = new Queue<string>();
+                // First check the start directory itself for common project markers
                 var dir = new DirectoryInfo(startDir);
-                dirs.Enqueue(dir.FullName);
-                while(dirs.Count > 0)
+                
+                // Check current directory first (most common case)
+                if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
+                if (Directory.EnumerateFiles(dir.FullName, "*.sln", SearchOption.TopDirectoryOnly).Any()) return dir.FullName;
+                if (File.Exists(Path.Combine(dir.FullName, "package.json"))) return dir.FullName;
+                if (File.Exists(Path.Combine(dir.FullName, "PROJECT.md"))) return dir.FullName;
+                
+                // Walk up the directory tree to find project root
+                var current = dir;
+                while (current?.Parent != null && current.FullName != current.Root.FullName)
                 {
-                    dir = new DirectoryInfo(dirs.Dequeue());
-                    Console.WriteLine($"Checking directory [{dir.FullName}]");
-                    if (dir.Parent != null && dir.Parent.FullName == dir.FullName) break; // Avoid infinite loop on root
-                    if (dir.Name.StartsWith('.') || dir.Name.StartsWith("bin", StringComparison.OrdinalIgnoreCase) || dir.Name.StartsWith("obj", StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    Console.WriteLine($"Searching in directory [{dir.Name}]");
-                    if (File.Exists("PROJECT.md")) return dir.FullName;
-                    // Heuristics for a repo/project root
-                    if (Directory.Exists(Path.Combine(dir.FullName, ".git"))) return dir.FullName;
-                    if (Directory.EnumerateFiles(dir.FullName, "*.sln", SearchOption.TopDirectoryOnly).Any()) return dir.FullName;
-                    if (File.Exists(Path.Combine(dir.FullName, "package.json"))) return dir.FullName;
-                    if (Directory.Exists(Path.Combine(dir.FullName, "src"))) return dir.FullName;
-                    foreach(var subdir in dir.EnumerateDirectories())
-                        dirs.Enqueue(subdir.FullName);
+                    current = current.Parent;
+                    if (Directory.Exists(Path.Combine(current.FullName, ".git"))) return current.FullName;
+                    if (Directory.EnumerateFiles(current.FullName, "*.sln", SearchOption.TopDirectoryOnly).Any()) return current.FullName;
+                    if (File.Exists(Path.Combine(current.FullName, "package.json"))) return current.FullName;
                 }
             }
             catch { /* ignore */ }
@@ -173,7 +179,7 @@ namespace thuvu.Tools
             return false;
         }
 
-        private static bool SafeFileContains(string path, string query)
+        private static bool SafeFileContains(string path, string query, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(query)) return true;
             try
@@ -182,9 +188,16 @@ namespace thuvu.Tools
                 using var sr = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
                 string? line;
                 var cmp = StringComparison.OrdinalIgnoreCase;
+                int lineCount = 0;
                 while ((line = sr.ReadLine()) != null)
+                {
+                    // Check for cancellation every 1000 lines
+                    if (++lineCount % 1000 == 0)
+                        ct.ThrowIfCancellationRequested();
                     if (line.IndexOf(query, cmp) >= 0) return true;
+                }
             }
+            catch (OperationCanceledException) { throw; }
             catch { }
             return false;
         }

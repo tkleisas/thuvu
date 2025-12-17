@@ -319,6 +319,26 @@ namespace thuvu.Models
                     _instance = System.Text.Json.JsonSerializer.Deserialize<ModelRegistry>(element.GetRawText(), options) 
                                 ?? new ModelRegistry();
                     AgentLogger.LogInfo("Loaded {Count} model configurations", _instance.Models.Count);
+                    
+                    // Sync DefaultModelId with AgentConfig.Config.Model
+                    if (!string.IsNullOrEmpty(_instance.DefaultModelId))
+                    {
+                        var defaultModel = _instance.Models.FirstOrDefault(m => m.ModelId == _instance.DefaultModelId);
+                        if (defaultModel != null)
+                        {
+                            AgentConfig.Config.Model = defaultModel.ModelId;
+                            AgentConfig.Config.HostUrl = defaultModel.HostUrl;
+                            AgentConfig.Config.Stream = defaultModel.Stream;
+                            
+                            // Set auth token if configured on the model
+                            if (!string.IsNullOrEmpty(defaultModel.AuthToken))
+                            {
+                                AgentConfig.Config.AuthToken = defaultModel.AuthToken;
+                            }
+                            
+                            AgentLogger.LogInfo("Set default model to: {Model} at {Host}", defaultModel.ModelId, defaultModel.HostUrl);
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {

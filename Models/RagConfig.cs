@@ -16,6 +16,18 @@ namespace thuvu.Models
         public int TopK { get; set; } = 5; // Number of results to retrieve
         public float SimilarityThreshold { get; set; } = 0.7f; // Minimum similarity score
         public bool Enabled { get; set; } = false; // RAG disabled by default until configured
+        
+        /// <summary>
+        /// Separate endpoint for embedding API. If empty, uses the main LLM HostUrl.
+        /// Useful when using a local embedding model while using a remote LLM.
+        /// </summary>
+        public string EmbeddingHostUrl { get; set; } = "";
+        
+        /// <summary>
+        /// Model name for embeddings. If empty, uses the main model.
+        /// Common values: "text-embedding-ada-002", "nomic-embed-text", etc.
+        /// </summary>
+        public string EmbeddingModel { get; set; } = "";
 
         public static RagConfig Instance { get; private set; } = new();
 
@@ -48,14 +60,17 @@ namespace thuvu.Models
                     if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("RagConfig", out var section))
                     {
                         Instance = JsonSerializer.Deserialize<RagConfig>(section.GetRawText(), options) ?? new RagConfig();
+                        AgentLogger.LogInfo("RAG config loaded from RagConfig section, Enabled={Enabled}", Instance.Enabled);
                     }
                     else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Rag", out var ragSection))
                     {
                         Instance = JsonSerializer.Deserialize<RagConfig>(ragSection.GetRawText(), options) ?? new RagConfig();
+                        AgentLogger.LogInfo("RAG config loaded from Rag section, Enabled={Enabled}", Instance.Enabled);
                     }
                     else
                     {
                         Instance = JsonSerializer.Deserialize<RagConfig>(json, options) ?? new RagConfig();
+                        AgentLogger.LogInfo("RAG config loaded from root, Enabled={Enabled}", Instance.Enabled);
                     }
                 }
                 else
@@ -63,8 +78,9 @@ namespace thuvu.Models
                     SaveConfig();
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AgentLogger.LogError("Failed to load RagConfig: {Error}", ex.Message);
                 Instance = new RagConfig();
             }
         }
