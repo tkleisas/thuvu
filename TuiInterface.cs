@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -8,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Terminal.Gui;
 using thuvu.Models;
+using thuvu.Tui;
 using CodingAgent;
 using thuvu.Tools;
 using TgAttribute = Terminal.Gui.Attribute;
@@ -35,11 +35,14 @@ namespace thuvu
         private TextView? _commandField;
         private Button? _sendButton;
         private Button? _cancelButton;
-        private ListView? _autocompleteList;
-        private FrameView? _autocompleteFrame;
-        private ObservableCollection<string> _autocompleteItems = new();
-        private string _autocompletePrefix = "";
-        private int _autocompleteStartPos = 0;
+        
+        // Refactored components
+        private TuiAutocomplete? _autocomplete;
+        private TuiOrchestrationView? _orchestrationView;
+        private Toplevel? _top;
+        
+        // Orchestration state - uses refactored TuiOrchestrationView
+        private bool _orchestrationMode = false;
         
         public TuiInterface(HttpClient http, List<Tool> tools, List<ChatMessage> initialMessages)
         {
@@ -52,17 +55,29 @@ namespace thuvu
         {
             Application.Init();
             
-            // Set up TUI permission prompt handler
-            PermissionManager.CustomPermissionPrompt = TuiPermissionPrompt;
+            // Set up TUI permission prompt handler using refactored component
+            PermissionManager.CustomPermissionPrompt = (toolName, argsJson) =>
+            {
+                var result = TuiPermissionDialog.Show(toolName, argsJson, action =>
+                {
+                    // Update action view with permission result
+                    var timestamp = DateTime.Now.ToString("HH:mm:ss");
+                    var icon = action == "Denied" ? "[DENY]" : "[PERMIT]";
+                    AppendToActionView($"  [{timestamp}] {icon} {toolName}\n");
+                });
+                return result;
+            };
             
-            // Set up Ctrl+C handler as fallback (in case Terminal.Gui doesn't intercept it)
+            // Set up Ctrl+C handler as fallback
             Console.CancelKeyPress += OnConsoleCancelKeyPress;
             
             try
             {
-                var top = new Toplevel();
-                SetupUi(top);
-                Application.Run(top);
+                _top = new Toplevel();
+                _autocomplete = new TuiAutocomplete();
+                _orchestrationView = new TuiOrchestrationView(_top);
+                SetupUi(_top);
+                Application.Run(_top);
             }
             finally
             {
@@ -70,6 +85,7 @@ namespace thuvu
                 PermissionManager.CustomPermissionPrompt = null;
                 Application.Shutdown();
                 _appCancellationTokenSource.Cancel();
+                _orchestrationView?.Dispose();
             }
         }
         
@@ -87,118 +103,8 @@ namespace thuvu
             }
         }
         
-        /// <summary>
-        /// TUI-compatible permission prompt using Dialog
-        /// </summary>
-        private char TuiPermissionPrompt(string toolName, string argsJson)
-        {
-            char result = 'N'; // Default to deny
-            
-            // Use Invoke to run on UI thread and wait for completion
-            var completionEvent = new ManualResetEventSlim(false);
-            
-            Application.Invoke(() =>
-            {
-                try
-                {
-                    // Create buttons
-                    var alwaysBtn = new Button { Text = "_Always" };
-                    var sessionBtn = new Button { Text = "_Session" };
-                    var onceBtn = new Button { Text = "_Once" };
-                    var noBtn = new Button { Text = "_No" };
-                    
-                    // Create dialog with buttons
-                    var dialog = new Dialog
-                    {
-                        Title = "Permission Required",
-                        Width = 65,
-                        Height = 14,
-                        Buttons = [alwaysBtn, sessionBtn, onceBtn, noBtn]
-                    };
-                    
-                    // Add content labels
-                    var toolLabel = new Label
-                    {
-                        X = 1,
-                        Y = 1,
-                        Text = $"Tool: {toolName}"
-                    };
-                    
-                    var argsDisplay = argsJson.Length > 50 ? argsJson.Substring(0, 47) + "..." : argsJson;
-                    var argsLabel = new Label
-                    {
-                        X = 1,
-                        Y = 3,
-                        Width = Dim.Fill() - 2,
-                        Text = $"Args: {argsDisplay}"
-                    };
-                    
-                    var questionLabel = new Label
-                    {
-                        X = 1,
-                        Y = 5,
-                        Text = "Allow this operation?"
-                    };
-                    
-                    var hintLabel = new Label
-                    {
-                        X = 1,
-                        Y = 7,
-                        ColorScheme = new ColorScheme { Normal = new TgAttribute(Color.DarkGray, Color.Black) },
-                        Text = "[A]lways=persist | [S]ession=temp | [O]nce | [N]o=deny"
-                    };
-                    
-                    dialog.Add(toolLabel, argsLabel, questionLabel, hintLabel);
-                    
-                    // Button handlers
-                    alwaysBtn.Accepting += (s, e) => { result = 'A'; Application.RequestStop(); };
-                    sessionBtn.Accepting += (s, e) => { result = 'S'; Application.RequestStop(); };
-                    onceBtn.Accepting += (s, e) => { result = 'O'; Application.RequestStop(); };
-                    noBtn.Accepting += (s, e) => { result = 'N'; Application.RequestStop(); };
-                    
-                    // Run the dialog modally
-                    Application.Run(dialog);
-                    dialog.Dispose();
-                }
-                finally
-                {
-                    completionEvent.Set();
-                }
-            });
-            
-            // Wait for dialog to complete
-            completionEvent.Wait();
-            
-            // Log the result
-            var action = result switch
-            {
-                'A' => "Always allowed",
-                'S' => "Session allowed", 
-                'O' => "Once allowed",
-                _ => "Denied"
-            };
-            SessionLogger.Instance.LogInfo($"Permission {action} for tool: {toolName}");
-            
-            // Update action view
-            Application.Invoke(() =>
-            {
-                if (_actionView != null)
-                {
-                    var currentText = _actionView.Text ?? "";
-                    var timestamp = DateTime.Now.ToString("HH:mm:ss");
-                    var icon = result == 'N' ? "[DENY]" : "[PERMIT]";
-                    _actionView.Text = currentText + $"  [{timestamp}] {icon} {toolName}\n";
-                    _actionView.MoveEnd();
-                    _actionView.SetNeedsDraw();
-                }
-            });
-            
-            return result;
-        }
-
         private void SetupUi(Toplevel top)
         {
-            
             // Status area (top)
             _statusLabel = new Label
             {
@@ -207,16 +113,8 @@ namespace thuvu
                 Height = 1,
                 Width = Dim.Fill(),
                 Text = GetStatusText(),
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new TgAttribute(Color.Green, Color.Black)
-                }
+                ColorScheme = TuiStyles.StatusBar
             };
-            
-            string banner = 
-                "╔══════════════════════════════════════════════════════════════╗\n"+
-                "║  T.H.U.V.U. - Tool for Heuristic Universal Versatile Usage   ║\n"+
-                "╚══════════════════════════════════════════════════════════════╝\n";
             
             // Action area (middle) - scrollable text view  
             _actionView = new TextView
@@ -227,12 +125,8 @@ namespace thuvu
                 Height = Dim.Fill() - 7,
                 ReadOnly = true,
                 WordWrap = true,
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new TgAttribute(Color.White, Color.Black),
-                    Focus = new TgAttribute(Color.BrightYellow, Color.Black)
-                },
-                Text = banner + "Welcome! Type commands or chat. Ctrl+Enter to send. /help for commands.\n\n"
+                ColorScheme = TuiStyles.ActionView,
+                Text = TuiStyles.Banner + TuiStyles.WelcomeMessage
             };
 
             // Command area labels
@@ -241,10 +135,7 @@ namespace thuvu
                 X = 0,
                 Y = Pos.Bottom(_actionView),
                 Text = "Command (Ctrl+Enter): ",
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new TgAttribute(Color.DarkGray, Color.Black)
-                }
+                ColorScheme = TuiStyles.CommandLabel
             };
             
             _workLabel = new Label
@@ -254,10 +145,7 @@ namespace thuvu
                 Width = 30,
                 Height = 1,
                 Text = " ",
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new TgAttribute(Color.Cyan, Color.Black)
-                }
+                ColorScheme = TuiStyles.WorkLabel
             };
             
             // Multi-line command input
@@ -268,11 +156,7 @@ namespace thuvu
                 Width = Dim.Fill() - 12,
                 Height = 4,
                 WordWrap = true,
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new TgAttribute(Color.BrightYellow, Color.Black),
-                    Focus = new TgAttribute(Color.BrightYellow, Color.DarkGray)
-                }
+                ColorScheme = TuiStyles.CommandField
             };
 
             _sendButton = new Button
@@ -291,39 +175,8 @@ namespace thuvu
                 Visible = false
             };
             
-            // Autocomplete popup
-            _autocompleteFrame = new FrameView
-            {
-                X = 2,
-                Y = 10,
-                Width = 60,
-                Height = 12,
-                Visible = false,
-                Title = "Files (Tab=select, Esc=close)",
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new TgAttribute(Color.Black, Color.Gray),
-                    Focus = new TgAttribute(Color.Black, Color.Gray)
-                }
-            };
-            
-            _autocompleteList = new ListView
-            {
-                X = 0,
-                Y = 0,
-                Width = Dim.Fill(),
-                Height = Dim.Fill(),
-                CanFocus = true,
-                Source = new ListWrapper<string>(_autocompleteItems),
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new TgAttribute(Color.Black, Color.Gray),
-                    Focus = new TgAttribute(Color.White, Color.Blue)
-                }
-            };
-            _autocompleteFrame.Add(_autocompleteList);
-            
-            _autocompleteList.OpenSelectedItem += OnAutocompleteSelected;
+            // Setup autocomplete selection handler
+            _autocomplete!.List.OpenSelectedItem += OnAutocompleteSelected;
 
             // Event handlers
             _sendButton.Accepting += (s, e) => OnSendClicked();
@@ -333,21 +186,18 @@ namespace thuvu
             // Text change detection for autocomplete
             _commandField.KeyDown += (s, e) => 
             {
-                // Skip if already handled by OnCommandKeyDown
-                if (e.Handled)
-                    return;
+                if (e.Handled) return;
                     
                 // Skip navigation keys when autocomplete is visible
-                if (_autocompleteFrame!.Visible)
+                if (_autocomplete!.IsVisible)
                 {
                     if (e == Key.CursorDown || e == Key.CursorUp || e == Key.Tab || e == Key.Esc || e == Key.Enter)
                         return;
                 }
                 
-                // Only trigger text change for actual text input keys
                 Application.AddTimeout(TimeSpan.FromMilliseconds(50), () => 
                 {
-                    OnCommandTextChanged();
+                    _autocomplete.ProcessTextChange(_commandField.Text ?? "");
                     return false;
                 });
             };
@@ -357,9 +207,9 @@ namespace thuvu
             {
                 if (e == Key.Esc)
                 {
-                    if (_autocompleteFrame!.Visible)
+                    if (_autocomplete!.IsVisible)
                     {
-                        HideAutocomplete();
+                        _autocomplete.Hide();
                         e.Handled = true;
                     }
                     else if (_isProcessing)
@@ -368,7 +218,6 @@ namespace thuvu
                         e.Handled = true;
                     }
                 }
-                // Ctrl+C to cancel current operation
                 else if (e == Key.C.WithCtrl)
                 {
                     if (_isProcessing)
@@ -386,120 +235,23 @@ namespace thuvu
             top.Add(_commandField);
             top.Add(_sendButton);
             top.Add(_cancelButton);
-            top.Add(_autocompleteFrame);
+            top.Add(_autocomplete.Frame);
 
             _commandField.SetFocus();
-        }
-        
-        private void OnCommandTextChanged()
-        {
-            try
-            {
-                var text = _commandField!.Text ?? "";
-                var lastAtIndex = text.LastIndexOf('@');
-                
-                if (lastAtIndex >= 0)
-                {
-                    var textAfterAt = text.Substring(lastAtIndex + 1);
-                    var spaceIndex = textAfterAt.IndexOfAny(new[] { ' ', '\n', '\r', '\t' });
-                    if (spaceIndex < 0)
-                    {
-                        _autocompletePrefix = textAfterAt;
-                        _autocompleteStartPos = lastAtIndex;
-                        ShowFileAutocomplete(_autocompletePrefix);
-                        return;
-                    }
-                }
-                
-                HideAutocomplete();
-            }
-            catch
-            {
-                HideAutocomplete();
-            }
-        }
-        
-        private void ShowFileAutocomplete(string prefix)
-        {
-            try
-            {
-                var searchDir = Directory.GetCurrentDirectory();
-                var items = new List<string>();
-                var searchPattern = string.IsNullOrEmpty(prefix) ? "*" : $"*{prefix}*";
-                
-                var excludeDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
-                { "bin", "obj", "node_modules", ".git", ".vs", ".idea", "packages" };
-                
-                foreach (var dir in Directory.GetDirectories(searchDir, searchPattern, SearchOption.TopDirectoryOnly)
-                    .Where(d => !excludeDirs.Contains(Path.GetFileName(d))).Take(8))
-                {
-                    var name = Path.GetFileName(dir);
-                    if (!name.StartsWith("."))
-                        items.Add($"[D] {name}/");
-                }
-                
-                var excludeExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) 
-                { ".dll", ".exe", ".pdb", ".cache", ".lock" };
-                
-                foreach (var file in Directory.GetFiles(searchDir, searchPattern, SearchOption.TopDirectoryOnly)
-                    .Where(f => !excludeExts.Contains(Path.GetExtension(f))).Take(12))
-                {
-                    var name = Path.GetFileName(file);
-                    if (!name.StartsWith("."))
-                        items.Add($"[F] {name}");
-                }
-                
-                if (items.Count > 0)
-                {
-                    Application.Invoke(() =>
-                    {
-                        _autocompleteItems.Clear();
-                        foreach (var item in items)
-                            _autocompleteItems.Add(item);
-                        
-                        _autocompleteList!.SelectedItem = 0;
-                        _autocompleteFrame!.Visible = true;
-                        _autocompleteFrame.SetNeedsDraw();
-                        _autocompleteList.SetNeedsDraw();
-                    });
-                }
-                else
-                {
-                    HideAutocomplete();
-                }
-            }
-            catch
-            {
-                HideAutocomplete();
-            }
-        }
-        
-        private void HideAutocomplete()
-        {
-            Application.Invoke(() =>
-            {
-                _autocompleteFrame!.Visible = false;
-                _autocompleteFrame.SetNeedsDraw();
-            });
         }
         
         private void OnAutocompleteSelected(object? sender, ListViewItemEventArgs args)
         {
             if (args.Value is string selected)
             {
-                var parts = selected.Split(' ', 2);
-                var fileName = parts.Length > 1 ? parts[1].TrimEnd('/') : selected;
-                
                 var text = _commandField!.Text ?? "";
-                var before = text.Substring(0, _autocompleteStartPos);
-                var after = _autocompleteStartPos + 1 + _autocompletePrefix.Length <= text.Length 
-                    ? text.Substring(_autocompleteStartPos + 1 + _autocompletePrefix.Length) 
-                    : "";
-                var newText = before + "@" + fileName + " " + after;
+                var newText = _autocomplete!.ApplySelection(text, selected);
                 
                 _commandField.Text = newText;
+                _commandField.MoveEnd();
                 
-                HideAutocomplete();
+                _autocomplete.Hide();
+                _autocomplete.Reset();
                 _commandField.SetFocus();
             }
         }
@@ -516,7 +268,6 @@ namespace thuvu
         private void SetProcessingState(bool processing)
         {
             _isProcessing = processing;
-            // UI updates - must be called from UI thread or via Application.Invoke
             _sendButton!.Visible = !processing;
             _cancelButton!.Visible = processing;
             _commandField!.ReadOnly = processing;
@@ -528,14 +279,14 @@ namespace thuvu
 
         private string GetStatusText()
         {
-            var status = _isProcessing ? " | PROCESSING (ESC=cancel)" : "";
-            return $"Model: {AgentConfig.Config.Model} | Host: {AgentConfig.Config.HostUrl} | " +
-                   $"Stream: {(AgentConfig.Config.Stream ? "ON" : "OFF")} | Msgs: {_messages.Count}{status}";
+            var status = _isProcessing ? " | PROCESSING" : "";
+            var cwd = Directory.GetCurrentDirectory();
+            var shortCwd = TuiHelpers.ShortenPath(cwd, 30);
+            return $"Dir: {shortCwd} | Model: {AgentConfig.Config.Model} | Stream: {(AgentConfig.Config.Stream ? "ON" : "OFF")}{status}";
         }
 
         private void UpdateStatus()
         {
-            // Must be called from UI thread or wrapped in Application.Invoke
             if (_statusLabel != null)
             {
                 _statusLabel.Text = GetStatusText();
@@ -620,6 +371,44 @@ namespace thuvu
                 return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s";
             return $"{elapsed.TotalSeconds:F1}s";
         }
+        
+        /// <summary>
+        /// Switch to orchestration mode with multi-panel layout
+        /// </summary>
+        private void EnterOrchestrationMode(int agentCount)
+        {
+            if (_orchestrationMode) return;
+            _orchestrationMode = true;
+            
+            _orchestrationView!.Enter(agentCount, _actionView!, _commandLabel!, _workLabel!, _commandField!, _sendButton!, _cancelButton!);
+        }
+        
+        /// <summary>
+        /// Exit orchestration mode and return to normal layout
+        /// </summary>
+        private void ExitOrchestrationMode()
+        {
+            if (!_orchestrationMode) return;
+            _orchestrationMode = false;
+            
+            _orchestrationView!.Exit(_actionView!, _commandLabel!, _workLabel!, _commandField!, _sendButton!, _cancelButton!);
+        }
+        
+        /// <summary>
+        /// Append text to agent-specific output view during orchestration
+        /// </summary>
+        private void AppendAgentOutput(string agentId, string text)
+        {
+            _orchestrationView?.AppendAgentOutput(agentId, text);
+        }
+        
+        /// <summary>
+        /// Append orchestrator status message
+        /// </summary>
+        private void AppendOrchestratorStatus(string text)
+        {
+            _orchestrationView?.AppendOrchestratorStatus(text, _actionView);
+        }
 
         private void OnCommandKeyDown(object? sender, Key e)
         {
@@ -632,38 +421,30 @@ namespace thuvu
             }
             
             // Tab for autocomplete
-            if (e == Key.Tab && _autocompleteFrame!.Visible)
+            if (e == Key.Tab && _autocomplete!.IsVisible)
             {
                 e.Handled = true;
-                var selected = _autocompleteList!.SelectedItem;
-                if (selected >= 0 && selected < _autocompleteItems.Count)
+                var selected = _autocomplete.GetSelectedItem();
+                if (selected != null)
                 {
-                    OnAutocompleteSelected(null, new ListViewItemEventArgs(selected, _autocompleteItems[selected]));
+                    OnAutocompleteSelected(null, new ListViewItemEventArgs(0, selected));
                 }
                 return;
             }
             
             // Arrow keys for autocomplete navigation
-            if (_autocompleteFrame!.Visible)
+            if (_autocomplete!.IsVisible)
             {
                 if (e == Key.CursorDown)
                 {
                     e.Handled = true;
-                    if (_autocompleteList!.SelectedItem < _autocompleteItems.Count - 1)
-                    {
-                        _autocompleteList.SelectedItem++;
-                        _autocompleteList.SetNeedsDraw();
-                    }
+                    _autocomplete.MoveDown();
                     return;
                 }
                 if (e == Key.CursorUp)
                 {
                     e.Handled = true;
-                    if (_autocompleteList!.SelectedItem > 0)
-                    {
-                        _autocompleteList.SelectedItem--;
-                        _autocompleteList.SetNeedsDraw();
-                    }
+                    _autocomplete.MoveUp();
                     return;
                 }
             }
@@ -680,7 +461,7 @@ namespace thuvu
             if (string.IsNullOrWhiteSpace(command))
                 return;
 
-            HideAutocomplete();
+            _autocomplete?.Hide();
 
             _commandField.Text = "";
             _commandField.SetNeedsDraw();
@@ -748,6 +529,141 @@ namespace thuvu
             if (command.StartsWith("/models", StringComparison.OrdinalIgnoreCase))
             {
                 HandleModelsCommand(command);
+                return;
+            }
+            
+            if (command.StartsWith("/plan", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandlePlanCommandAsync(command);
+                return;
+            }
+            
+            if (command.StartsWith("/orchestrate", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleOrchestrateCommandAsync(command);
+                return;
+            }
+            
+            // Commands that delegate to CommandHandlers
+            if (command.StartsWith("/config", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandleConfigCommandAsync(command, _http, _appCancellationTokenSource.Token);
+                return;
+            }
+            
+            if (command.StartsWith("/set", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandleSetCommandAsync(command, _http, _appCancellationTokenSource.Token);
+                Application.Invoke(() => UpdateStatus());
+                return;
+            }
+            
+            if (command.StartsWith("/diff", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandleDiffCommandAsync(command, _appCancellationTokenSource.Token, 
+                    (msg, isError) => AppendActionText(msg, isError));
+                return;
+            }
+            
+            if (command.StartsWith("/test", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendActionText("Running tests...");
+                await CommandHandlers.HandleTestCommandAsync(command, _appCancellationTokenSource.Token,
+                    (msg, isError) => AppendActionText(msg, isError));
+                return;
+            }
+            
+            if (command.StartsWith("/run ", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandleRunCommandAsync(command, _appCancellationTokenSource.Token,
+                    (msg, isError) => AppendActionText(msg, isError));
+                return;
+            }
+            
+            if (command.StartsWith("/commit", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandleCommitCommandAsync(command, _appCancellationTokenSource.Token);
+                AppendActionText("Commit completed.");
+                return;
+            }
+            
+            if (command.StartsWith("/push", StringComparison.OrdinalIgnoreCase))
+            {
+                await GitCommandHandlers.HandlePushCommandAsync(command, _appCancellationTokenSource.Token);
+                AppendActionText("Push completed.");
+                return;
+            }
+            
+            if (command.StartsWith("/pull", StringComparison.OrdinalIgnoreCase))
+            {
+                await GitCommandHandlers.HandlePullCommandAsync(command, _appCancellationTokenSource.Token);
+                AppendActionText("Pull completed.");
+                return;
+            }
+            
+            if (command.StartsWith("/rag", StringComparison.OrdinalIgnoreCase))
+            {
+                await RagCommandHandlers.HandleRagCommandAsync(command, _appCancellationTokenSource.Token);
+                return;
+            }
+            
+            if (command.StartsWith("/mcp", StringComparison.OrdinalIgnoreCase))
+            {
+                await McpCommandHandlers.HandleMcpCommandAsync(command, _appCancellationTokenSource.Token);
+                return;
+            }
+            
+            if (command.StartsWith("/health", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendActionText("Running health check...");
+                await HealthCheck.RunAllChecksAsync(_http);
+                return;
+            }
+            
+            if (command.StartsWith("/status", StringComparison.OrdinalIgnoreCase))
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"Messages: {_messages.Count}");
+                sb.AppendLine($"Model: {AgentConfig.Config.Model}");
+                sb.AppendLine($"Host: {AgentConfig.Config.HostUrl}");
+                sb.AppendLine($"Stream: {AgentConfig.Config.Stream}");
+                sb.AppendLine($"Work Dir: {Directory.GetCurrentDirectory()}");
+                AppendActionText(sb.ToString());
+                return;
+            }
+            
+            if (command.StartsWith("/tokens", StringComparison.OrdinalIgnoreCase))
+            {
+                int totalTokens = 0;
+                foreach (var msg in _messages)
+                {
+                    totalTokens += (msg.Content?.Length ?? 0) / 4; // rough estimate
+                }
+                AppendActionText($"Estimated tokens: ~{totalTokens} (based on {_messages.Count} messages)");
+                return;
+            }
+
+            if (command.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendActionText("Summarizing conversation...");
+                try
+                {
+                    var success = await AgentLoop.SummarizeConversationAsync(
+                        _http, AgentConfig.Config.Model, _messages, CancellationToken.None,
+                        s => Application.Invoke(() => AppendActionText($"  {s}")));
+                    
+                    Application.Invoke(() =>
+                    {
+                        if (success)
+                            AppendActionText("✓ Conversation summarized successfully.");
+                        else
+                            AppendActionText("✗ Summarization failed or not enough messages.");
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Application.Invoke(() => AppendActionText($"✗ Summarization error: {ex.Message}"));
+                }
                 return;
             }
 
@@ -942,16 +858,51 @@ namespace thuvu
 T.H.U.V.U. HELP
 ===============
 Ctrl+Enter    Send message
-@             File autocomplete
+/             Command autocomplete
+@             File autocomplete (file: or dir: prefix)
 Tab           Select autocomplete
 Esc           Close autocomplete / Cancel
 
-/help         Show this help
-/exit         Quit
-/clear        Reset conversation
-/stream on|off Toggle streaming
-/models list  List models
-/models use   Switch model
+COMMANDS
+--------
+/help           Show this help
+/exit           Quit
+/clear          Reset conversation
+/status         Show session status
+/tokens         Estimate token usage
+
+CONFIGURATION
+-------------
+/config         Show current configuration
+/set KEY VALUE  Change setting
+/stream on|off  Toggle streaming
+/models list    List available models
+/models use ID  Switch model
+
+DEVELOPMENT
+-----------
+/diff           Show git diff
+/test           Run dotnet tests
+/run CMD        Run whitelisted command
+/commit MSG     Commit with test gate
+/push           Safe push with checks
+/pull           Safe pull with autostash
+
+ORCHESTRATION
+-------------
+/plan DESC      Create execution plan from task description
+/orchestrate    Execute plan with multiple agents
+  --agents N    Number of agents (1-8)
+  --reset       Start fresh (reset all tasks)
+  --retry       Retry failed tasks
+  --skip        Skip failed dependencies (proceed anyway)
+  --plan FILE   Use specific plan file
+
+ADVANCED
+--------
+/rag            RAG operations (index, search, stats, clear)
+/mcp            MCP code execution
+/health         Run health checks
 
 Permission prompts appear for write operations.
 [A]lways | [S]ession | [O]nce | [N]o
@@ -997,6 +948,344 @@ Permission prompts appear for write operations.
                 default:
                     AppendActionText("Usage: /models list | use <id>");
                     break;
+            }
+        }
+        
+        private async Task HandlePlanCommandAsync(string command)
+        {
+            var taskDescription = command.Length > 5 ? command[5..].Trim() : "";
+            
+            if (string.IsNullOrWhiteSpace(taskDescription))
+            {
+                AppendActionText(@"Usage: /plan <task description>
+
+Examples:
+  /plan Create a REST API for user management
+  /plan Add unit tests for the Calculator class
+  /plan Refactor the database layer
+
+Analyzes a task and shows subtasks, estimated time, and recommended agent count.");
+                return;
+            }
+            
+            AppendActionText("Analyzing task and creating decomposition plan...");
+            
+            try
+            {
+                var decomposer = new TaskDecomposer(_http);
+                var plan = await decomposer.DecomposeAsync(taskDescription, null, _appCancellationTokenSource.Token);
+                
+                // Save plan to files
+                var jsonPath = TaskPlan.GetDefaultPlanPath();
+                var mdPath = System.IO.Path.ChangeExtension(jsonPath, ".md");
+                
+                plan.SaveToFile(jsonPath);
+                plan.SaveToMarkdown(mdPath);
+                
+                // Format plan for TUI display
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine();
+                sb.AppendLine($"== Task Decomposition Plan ==");
+                sb.AppendLine($"Task: {plan.OriginalRequest}");
+                sb.AppendLine($"Summary: {plan.Summary}");
+                sb.AppendLine();
+                sb.AppendLine($"Recommended Agents: {plan.RecommendedAgentCount}  |  Est. Time: {plan.TotalEstimatedMinutes} min  |  Subtasks: {plan.SubTasks.Count}");
+                sb.AppendLine();
+                
+                var groups = plan.GetParallelGroups();
+                int groupNum = 1;
+                
+                foreach (var group in groups)
+                {
+                    var parallelLabel = group.Count > 1 ? $" (can run {group.Count} in parallel)" : "";
+                    sb.AppendLine($"-- Phase {groupNum++}{parallelLabel} --");
+                    
+                    foreach (var task in group)
+                    {
+                        var icon = task.Type.ToString()[0];
+                        sb.AppendLine($"  [{icon}] {task.Id}: {task.Title} (~{task.EstimatedMinutes}min)");
+                        if (task.Dependencies.Any())
+                        {
+                            sb.AppendLine($"      depends on: {string.Join(", ", task.Dependencies)}");
+                        }
+                    }
+                }
+                
+                sb.AppendLine();
+                sb.AppendLine($"Risk: {plan.RiskAssessment}");
+                sb.AppendLine();
+                sb.AppendLine($"Strategy: {plan.ParallelizationStrategy}");
+                sb.AppendLine();
+                sb.AppendLine($"[Plan saved to: {jsonPath}]");
+                sb.AppendLine($"Use '/orchestrate' to execute this plan.");
+                
+                AppendActionText(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                AppendActionText($"Failed to decompose task: {ex.Message}", isError: true);
+            }
+        }
+        
+        private async Task HandleOrchestrateCommandAsync(string command)
+        {
+            // Parse options
+            var parts = ConsoleHelpers.TokenizeArgs(command);
+            int? maxAgents = null;
+            bool resetProgress = false;
+            bool retryFailed = false;
+            bool skipFailed = false;
+            string? planFile = null;
+            
+            for (int i = 1; i < parts.Count; i++)
+            {
+                if (parts[i] == "--agents" && i + 1 < parts.Count && int.TryParse(parts[i + 1], out var n))
+                {
+                    maxAgents = Math.Clamp(n, 1, 8);
+                    i++;
+                }
+                else if (parts[i] == "--reset")
+                {
+                    resetProgress = true;
+                }
+                else if (parts[i] == "--retry")
+                {
+                    retryFailed = true;
+                }
+                else if (parts[i] == "--skip")
+                {
+                    skipFailed = true;
+                }
+                else if (parts[i] == "--plan" && i + 1 < parts.Count)
+                {
+                    planFile = parts[++i];
+                }
+                else if (parts[i] == "--tui")
+                {
+                    // Already in TUI mode, ignore
+                }
+                else if (parts[i] == "help")
+                {
+                    AppendActionText(@"Usage: /orchestrate [options]
+
+Options:
+  --agents N     Number of agents (1-8, default: plan recommendation)
+  --reset        Reset all tasks to pending (start fresh)
+  --retry        Retry failed tasks (resets failed/blocked to pending)
+  --skip         Skip failed dependencies (proceed with downstream tasks)
+  --plan FILE    Use specific plan file (default: current-plan.json)
+
+Completed tasks are automatically skipped (resume mode).
+Use --retry to retry failed tasks, --skip to proceed despite failures,
+or --reset to start completely over.");
+                    return;
+                }
+            }
+            
+            // Load plan
+            var currentDir = System.IO.Directory.GetCurrentDirectory();
+            var planPath = planFile != null 
+                ? (System.IO.Path.IsPathRooted(planFile) ? planFile : System.IO.Path.Combine(currentDir, planFile))
+                : TaskPlan.GetDefaultPlanPath();
+            
+            if (!System.IO.File.Exists(planPath))
+            {
+                AppendActionText($"No plan found at {planPath}. Use '/plan <description>' first.", isError: true);
+                return;
+            }
+            
+            TaskPlan? plan;
+            try
+            {
+                plan = TaskPlan.LoadFromFile(planPath);
+                if (plan == null)
+                {
+                    AppendActionText("Failed to load plan file.", isError: true);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendActionText($"Error loading plan: {ex.Message}", isError: true);
+                return;
+            }
+            
+            // Handle reset
+            if (resetProgress)
+            {
+                foreach (var task in plan.SubTasks)
+                {
+                    task.Status = SubTaskStatus.Pending;
+                    task.AssignedAgentId = null;
+                }
+                plan.SaveToFile(planPath);
+                AppendActionText("Reset all task statuses to Pending.");
+            }
+            // Handle retry (reset only failed/blocked/interrupted)
+            else if (retryFailed)
+            {
+                var (pendingBefore, completedBefore, failedBefore, blockedBefore, inProgressBefore) = plan.GetStatusCounts();
+                AppendActionText($"Before retry: Pending={pendingBefore}, InProgress={inProgressBefore}, Completed={completedBefore}, Failed={failedBefore}, Blocked={blockedBefore}");
+                
+                int resetCount = plan.ResetFailedTasks();
+                plan.SaveToFile(planPath); // Always save after retry attempt
+                
+                if (resetCount > 0)
+                {
+                    AppendActionText($"Reset {resetCount} failed/blocked/interrupted task(s) to Pending.");
+                }
+                else
+                {
+                    AppendActionText("No tasks to retry (all tasks are either Pending or Completed).");
+                }
+            }
+            
+            // Check status
+            var (pending, completed, failed, blocked, inProgress) = plan.GetStatusCounts();
+            bool isResume = completed > 0 || failed > 0;
+            
+            // Check if orchestration can make progress
+            if (!plan.CanMakeProgress())
+            {
+                AppendActionText($"Cannot make progress: no tasks are ready to run.\n" +
+                    $"  Pending: {pending}, InProgress: {inProgress}, Completed: {completed}, Failed: {failed}, Blocked: {blocked}\n" +
+                    $"  Use '--retry' to reset failed/blocked/interrupted tasks, or '--reset' to start over.",
+                    isError: true);
+                return;
+            }
+            
+            var config = new OrchestratorConfig
+            {
+                MaxAgents = maxAgents ?? plan.RecommendedAgentCount,
+                AutoMergeResults = true,
+                UseProcessIsolation = false
+            };
+            
+            var workDir = AgentConfig.GetWorkDirectory();
+            
+            // Enter orchestration mode with multi-panel UI
+            EnterOrchestrationMode(config.MaxAgents);
+            
+            // Show status
+            var sb = new System.Text.StringBuilder();
+            if (isResume)
+            {
+                sb.AppendLine($"Resuming orchestration...");
+                sb.AppendLine($"  Completed: {completed}, Failed: {failed}, Pending: {pending}, Blocked: {blocked}");
+            }
+            sb.AppendLine($"Starting orchestration with {config.MaxAgents} agent(s)...");
+            sb.AppendLine($"  Plan: {plan.Summary}");
+            sb.AppendLine($"  Remaining subtasks: {pending}");
+            sb.AppendLine($"  Work directory: {workDir}");
+            AppendOrchestratorStatus(sb.ToString());
+            
+            using var orchestrator = new TaskOrchestrator(_http, config, workDir);
+            
+            // Progress callbacks - these are called from background threads
+            // so we just pass to the append methods which handle UI thread marshalling
+            orchestrator.OnAgentStarted += (agentId, taskId) =>
+            {
+                AppendOrchestratorStatus($"  [{agentId}] Starting task {taskId}...");
+                AppendAgentOutput(agentId, $"=== Starting task {taskId} ===\n");
+            };
+            
+            orchestrator.OnTaskCompleted += (agentId, result) =>
+            {
+                var icon = result.Success ? "[OK]" : "[FAIL]";
+                AppendOrchestratorStatus($"  [{agentId}] {icon} Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)");
+                AppendAgentOutput(agentId, $"\n=== Task {result.TaskId} {(result.Success ? "completed" : "failed")} ({result.Duration.TotalSeconds:F1}s) ===\n");
+                
+                // Update plan file (in background, no UI involvement)
+                var task = plan.SubTasks.FirstOrDefault(t => t.Id == result.TaskId);
+                if (task != null)
+                {
+                    task.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
+                    task.AssignedAgentId = agentId;
+                    try { plan.SaveToFile(planPath); } catch { }
+                }
+            };
+            
+            orchestrator.OnPhaseCompleted += (phase) =>
+            {
+                AppendOrchestratorStatus($"  -- {phase} completed --");
+            };
+            
+            // Streaming output from agents
+            orchestrator.OnAgentOutput += (agentId, text) =>
+            {
+                AppendAgentOutput(agentId, text);
+            };
+            
+            orchestrator.OnAgentToolCall += (agentId, toolName, status) =>
+            {
+                AppendAgentOutput(agentId, $"\n  [TOOL] {toolName}: {status}\n");
+            };
+            
+            // Tool progress updates (use newline instead of carriage return)
+            orchestrator.OnAgentToolProgress += (agentId, progress) =>
+            {
+                var elapsed = progress.Elapsed.TotalSeconds;
+                var statusIcon = progress.Status switch
+                {
+                    ToolStatus.Running => "⏳",
+                    ToolStatus.Completed => "✓",
+                    ToolStatus.Failed => "✗",
+                    ToolStatus.TimedOut => "⏱",
+                    ToolStatus.Cancelled => "⊘",
+                    _ => "•"
+                };
+                // Only show completed/failed/timeout status, skip in-progress updates to reduce noise
+                if (progress.Status != ToolStatus.Running)
+                {
+                    AppendAgentOutput(agentId, $"  {statusIcon} {progress.ToolName} [{elapsed:F1}s]\n");
+                }
+            };
+            
+            // Start console redirection to prevent raw console output from corrupting TUI
+            TuiConsoleRedirector.StartRedirection(text =>
+            {
+                // Redirect any Console.Write calls to the orchestrator status panel
+                AppendOrchestratorStatus($"[Console] {text.TrimEnd()}");
+            });
+            
+            try
+            {
+                var result = await orchestrator.ExecutePlanAsync(plan, _appCancellationTokenSource.Token, planPath, retryFailed, skipFailed);
+                
+                // Save final state
+                plan.SaveToFile(planPath);
+                plan.SaveToMarkdown(System.IO.Path.ChangeExtension(planPath, ".md"));
+                
+                // Show result
+                var resultSb = new System.Text.StringBuilder();
+                resultSb.AppendLine();
+                resultSb.AppendLine(result.Success ? "=== Orchestration Completed ===" : "=== Orchestration Failed ===");
+                resultSb.AppendLine($"Duration: {result.Duration.TotalMinutes:F1} minutes");
+                resultSb.AppendLine($"Tasks: {result.CompletedCount} completed, {result.FailedCount} failed");
+                
+                if (!string.IsNullOrEmpty(result.Error))
+                {
+                    resultSb.AppendLine($"Error: {result.Error}");
+                }
+                
+                AppendOrchestratorStatus(resultSb.ToString());
+            }
+            catch (OperationCanceledException)
+            {
+                plan.SaveToFile(planPath);
+                AppendOrchestratorStatus("Orchestration cancelled. Progress saved.");
+            }
+            catch (Exception ex)
+            {
+                AppendOrchestratorStatus($"Orchestration failed: {ex.Message}");
+            }
+            finally
+            {
+                // Stop console redirection
+                TuiConsoleRedirector.StopRedirection();
+                
+                // Exit orchestration mode
+                ExitOrchestrationMode();
             }
         }
     }

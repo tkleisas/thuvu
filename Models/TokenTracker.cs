@@ -51,6 +51,33 @@ namespace thuvu.Models
         public double CriticalThreshold { get; set; } = 0.85;
 
         /// <summary>
+        /// Auto-summarize threshold percentage (default: 90%)
+        /// When exceeded, conversation is automatically summarized
+        /// </summary>
+        public double AutoSummarizeThreshold { get; set; } = 0.90;
+
+        /// <summary>
+        /// Truncation threshold percentage (default: 95%)
+        /// When exceeded after summarization, older messages are truncated
+        /// </summary>
+        public double TruncationThreshold { get; set; } = 0.95;
+
+        /// <summary>
+        /// Whether auto-summarization is enabled
+        /// </summary>
+        public bool AutoSummarizeEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Whether context needs summarization
+        /// </summary>
+        public bool NeedsSummarization => UsagePercent >= AutoSummarizeThreshold;
+
+        /// <summary>
+        /// Whether context needs truncation (last resort)
+        /// </summary>
+        public bool NeedsTruncation => UsagePercent >= TruncationThreshold;
+
+        /// <summary>
         /// Singleton instance
         /// </summary>
         public static TokenTracker Instance
@@ -91,18 +118,48 @@ namespace thuvu.Models
         public bool IsCritical => UsagePercent >= CriticalThreshold;
 
         /// <summary>
+        /// Last reported prompt tokens (context size)
+        /// </summary>
+        public int LastPromptTokens { get; private set; }
+
+        /// <summary>
         /// Update token counts from API usage response
         /// </summary>
         public void UpdateFromUsage(int promptTokens, int completionTokens, int totalTokens)
         {
             lock (_lock)
             {
-                TotalTokens = totalTokens;
-                // Estimate breakdown (actual breakdown would require message tracking)
+                // For context tracking, prompt_tokens is the key metric as it represents
+                // the actual context window usage (all messages sent to the model)
+                LastPromptTokens = promptTokens;
+                TotalTokens = promptTokens; // Use prompt tokens as the context usage indicator
                 AssistantTokens += completionTokens;
             }
 
             // Check thresholds and warn
+            CheckThresholds();
+        }
+        
+        /// <summary>
+        /// Update from full Usage object (supports DeepSeek and other APIs)
+        /// </summary>
+        public void UpdateFromUsage(Usage usage)
+        {
+            if (usage == null) return;
+            
+            lock (_lock)
+            {
+                // Update max context length if API reports it
+                if (usage.MaxContextLength.HasValue && usage.MaxContextLength.Value > 0)
+                {
+                    MaxContextLength = usage.MaxContextLength.Value;
+                }
+                
+                LastPromptTokens = usage.PromptTokens;
+                TotalTokens = usage.PromptTokens; // Context usage = prompt tokens
+                AssistantTokens += usage.CompletionTokens;
+            }
+            
             CheckThresholds();
         }
 

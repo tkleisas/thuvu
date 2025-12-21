@@ -41,7 +41,7 @@ namespace thuvu.Tools
                 args = new List<string> { "-c", bashCmd };
             }
 
-            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
+            var workDir = thuvu.Models.AgentContext.GetEffectiveWorkDirectory();
             var cwd = doc.RootElement.TryGetProperty("cwd", out var cwdEl) ? cwdEl.GetString() : null;
             var timeoutMs = doc.RootElement.TryGetProperty("timeout_ms", out var tEl) ? Math.Clamp(tEl.GetInt32(), 1000, 600_000) : 120_000;
 

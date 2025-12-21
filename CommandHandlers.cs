@@ -478,5 +478,401 @@ namespace thuvu
                 ? $"Execution successful. Result: {result.Result ?? "(no return value)"}"
                 : $"Execution failed: {result.Error}";
         }
+        
+        /// <summary>
+        /// /plan [task description] - Decompose a task into subtasks and estimate agent count
+        /// /plan load [file] - Load an existing plan from file
+        /// /plan show - Show the current plan
+        /// </summary>
+        public static async Task<string> HandlePlanCommandAsync(string line, HttpClient http, CancellationToken ct)
+        {
+            var parts = ConsoleHelpers.TokenizeArgs(line);
+            var subCommand = parts.Count > 1 ? parts[1].ToLowerInvariant() : "";
+            
+            // Handle subcommands
+            if (subCommand == "load")
+            {
+                var filePath = parts.Count > 2 ? parts[2] : TaskPlan.GetDefaultPlanPath();
+                return LoadPlan(filePath);
+            }
+            
+            if (subCommand == "show")
+            {
+                return ShowCurrentPlan();
+            }
+            
+            if (subCommand == "help" || subCommand == "")
+            {
+                return @"Usage: /plan <task description>
+       /plan load [file]    - Load plan from file (default: current-plan.json)
+       /plan show           - Show the current loaded plan
+
+Examples:
+  /plan Create a REST API for user management with CRUD operations
+  /plan Add unit tests for the Calculator class
+  /plan load my-plan.json
+
+This command analyzes a task and breaks it down into subtasks,
+showing estimated time, complexity, and recommended number of agents.
+The plan is saved to the work directory for later execution.";
+            }
+            
+            // Otherwise treat everything after /plan as the task description
+            var taskDescription = line.Length > 5 ? line[5..].Trim() : "";
+            
+            if (string.IsNullOrWhiteSpace(taskDescription))
+            {
+                return "Please provide a task description. Use '/plan help' for usage.";
+            }
+            
+            Console.WriteLine();
+            ConsoleHelpers.WithColor(ConsoleColor.Cyan, () => 
+                Console.WriteLine("🔍 Analyzing task and creating decomposition plan..."));
+            Console.WriteLine();
+            
+            try
+            {
+                // Get codebase context from work directory (not thuvu source!)
+                string? codebaseContext = null;
+                var workDir = AgentConfig.GetWorkDirectory();
+                
+                try
+                {
+                    // Search in work directory only
+                    var files = Directory.GetFiles(workDir, "*.cs", SearchOption.AllDirectories)
+                        .Take(20)
+                        .Select(f => Path.GetRelativePath(workDir, f))
+                        .ToList();
+                    
+                    if (files.Any())
+                    {
+                        codebaseContext = $"Existing project files in work directory: {string.Join(", ", files.Take(10))}";
+                    }
+                    else
+                    {
+                        codebaseContext = "Work directory is empty - this will be a new project.";
+                    }
+                }
+                catch { /* Ignore context errors */ }
+                
+                var decomposer = new TaskDecomposer(http);
+                var plan = await decomposer.DecomposeAsync(taskDescription, codebaseContext, ct);
+                
+                // Save plan to files
+                var jsonPath = TaskPlan.GetDefaultPlanPath();
+                var mdPath = Path.ChangeExtension(jsonPath, ".md");
+                
+                plan.SaveToFile(jsonPath);
+                plan.SaveToMarkdown(mdPath);
+                
+                // Print the plan
+                TaskPlanPrinter.PrintPlan(plan);
+                
+                Console.WriteLine();
+                ConsoleHelpers.WithColor(ConsoleColor.Green, () =>
+                {
+                    Console.WriteLine($"📁 Plan saved to:");
+                    Console.WriteLine($"   JSON: {jsonPath}");
+                    Console.WriteLine($"   Markdown: {mdPath}");
+                });
+                
+                // Return summary
+                return $"Task decomposed into {plan.SubTasks.Count} subtasks. " +
+                       $"Recommended agents: {plan.RecommendedAgentCount}. " +
+                       $"Estimated time: {plan.TotalEstimatedMinutes} minutes.\n" +
+                       $"Use '/orchestrate' to execute this plan.";
+            }
+            catch (Exception ex)
+            {
+                ConsoleHelpers.WithColor(ConsoleColor.Red, () => 
+                    Console.WriteLine($"✗ Failed to decompose task: {ex.Message}"));
+                return $"Error: {ex.Message}";
+            }
+        }
+        
+        private static string LoadPlan(string filePath)
+        {
+            // If relative path, look in current directory
+            if (!Path.IsPathRooted(filePath))
+            {
+                filePath = Path.Combine(Directory.GetCurrentDirectory(), filePath);
+            }
+            
+            if (!File.Exists(filePath))
+            {
+                return $"Plan file not found: {filePath}";
+            }
+            
+            try
+            {
+                var plan = TaskPlan.LoadFromFile(filePath);
+                if (plan == null)
+                {
+                    return "Failed to parse plan file.";
+                }
+                
+                TaskPlanPrinter.PrintPlan(plan);
+                
+                return $"Plan loaded: {plan.SubTasks.Count} subtasks, " +
+                       $"recommended {plan.RecommendedAgentCount} agents.";
+            }
+            catch (Exception ex)
+            {
+                return $"Error loading plan: {ex.Message}";
+            }
+        }
+        
+        private static string ShowCurrentPlan()
+        {
+            var planPath = TaskPlan.GetDefaultPlanPath();
+            
+            if (!File.Exists(planPath))
+            {
+                return "No current plan. Use '/plan <description>' to create one.";
+            }
+            
+            return LoadPlan(planPath);
+        }
+        
+        /// <summary>
+        /// /orchestrate [--agents N] [--no-merge] [--plan file] [--reset] - Execute a plan with multiple agents
+        /// </summary>
+        public static async Task<string> HandleOrchestrateCommandAsync(string line, HttpClient http, CancellationToken ct)
+        {
+            // Parse options
+            var parts = ConsoleHelpers.TokenizeArgs(line);
+            int? maxAgents = null;
+            bool autoMerge = true;
+            string? planFile = null;
+            bool resetProgress = false;
+            
+            bool retryFailed = false;
+            
+            for (int i = 1; i < parts.Count; i++)
+            {
+                if (parts[i] == "--agents" && i + 1 < parts.Count && int.TryParse(parts[i + 1], out var n))
+                {
+                    maxAgents = Math.Clamp(n, 1, 8);
+                    i++;
+                }
+                else if (parts[i] == "--no-merge")
+                {
+                    autoMerge = false;
+                }
+                else if (parts[i] == "--plan" && i + 1 < parts.Count)
+                {
+                    planFile = parts[++i];
+                }
+                else if (parts[i] == "--reset")
+                {
+                    resetProgress = true;
+                }
+                else if (parts[i] == "--retry")
+                {
+                    retryFailed = true;
+                }
+                else if (parts[i] == "help")
+                {
+                    return @"Usage: /orchestrate [options]
+
+Options:
+  --agents N     Number of agents to use (1-8, default: plan recommendation)
+  --no-merge     Don't auto-merge agent branches
+  --plan FILE    Use specific plan file (default: current-plan.json)
+  --reset        Reset all task statuses to pending (start fresh)
+  --retry        Reset only failed/blocked tasks to pending (retry failures)
+
+The orchestrator reads the plan and executes subtasks. If tasks are already
+marked as completed, they will be skipped (resume mode). Use --retry to retry
+failed tasks, or --reset to start completely over.
+Progress is saved after each task completes.";
+                }
+            }
+            
+            // Load plan from file (in current directory, not work directory)
+            var currentDir = Directory.GetCurrentDirectory();
+            var planPath = planFile != null 
+                ? (Path.IsPathRooted(planFile) ? planFile : Path.Combine(currentDir, planFile))
+                : TaskPlan.GetDefaultPlanPath();
+            
+            // Work directory is where agents will create project files
+            var workDir = AgentConfig.GetWorkDirectory();
+            
+            if (!File.Exists(planPath))
+            {
+                return $"No plan found at {planPath}. Use '/plan <description>' to create one.";
+            }
+            
+            TaskPlan? plan;
+            try
+            {
+                plan = TaskPlan.LoadFromFile(planPath);
+                if (plan == null)
+                {
+                    return "Failed to load plan file.";
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"Error loading plan: {ex.Message}";
+            }
+            
+            // Handle reset option
+            if (resetProgress)
+            {
+                foreach (var task in plan.SubTasks)
+                {
+                    task.Status = SubTaskStatus.Pending;
+                    task.AssignedAgentId = null;
+                }
+                plan.SaveToFile(planPath);
+                ConsoleHelpers.WithColor(ConsoleColor.Yellow, () =>
+                    Console.WriteLine("Reset all task statuses to Pending."));
+            }
+            // Handle retry option (reset only failed/blocked/interrupted)
+            else if (retryFailed)
+            {
+                var (pendingBefore, completedBefore, failedBefore, blockedBefore, inProgressBefore) = plan.GetStatusCounts();
+                ConsoleHelpers.WithColor(ConsoleColor.Gray, () =>
+                    Console.WriteLine($"Before retry: Pending={pendingBefore}, InProgress={inProgressBefore}, Completed={completedBefore}, Failed={failedBefore}, Blocked={blockedBefore}"));
+                
+                int resetCount = plan.ResetFailedTasks();
+                plan.SaveToFile(planPath); // Always save after retry attempt
+                
+                if (resetCount > 0)
+                {
+                    ConsoleHelpers.WithColor(ConsoleColor.Yellow, () =>
+                        Console.WriteLine($"Reset {resetCount} failed/blocked/interrupted task(s) to Pending."));
+                }
+                else
+                {
+                    ConsoleHelpers.WithColor(ConsoleColor.Yellow, () =>
+                        Console.WriteLine("No tasks to retry (all tasks are either Pending or Completed)."));
+                }
+            }
+            
+            // Check for resume scenario
+            var (pending, completed, failed, blocked, inProgress) = plan.GetStatusCounts();
+            
+            // Check if orchestration can make progress
+            if (!plan.CanMakeProgress())
+            {
+                return $"Cannot make progress: no tasks are ready to run.\n" +
+                       $"  Pending: {pending}, InProgress: {inProgress}, Completed: {completed}, Failed: {failed}, Blocked: {blocked}\n" +
+                       $"  Use '--retry' to reset failed/blocked/interrupted tasks, or '--reset' to start over.";
+            }
+            
+            bool isResume = completed > 0 || failed > 0;
+            
+            var config = new OrchestratorConfig
+            {
+                MaxAgents = maxAgents ?? plan.RecommendedAgentCount,
+                AutoMergeResults = autoMerge,
+                UseProcessIsolation = false // In-process for now
+            };
+            
+            // Create progress tracking file in current directory (alongside plan)
+            var progressPath = Path.Combine(currentDir, "orchestration-progress.json");
+            
+            Console.WriteLine();
+            if (isResume)
+            {
+                ConsoleHelpers.WithColor(ConsoleColor.Yellow, () =>
+                {
+                    Console.WriteLine($"📂 Resuming orchestration...");
+                    Console.WriteLine($"   Completed: {completed}, Failed: {failed}, Pending: {pending}, Blocked: {blocked}");
+                });
+            }
+            ConsoleHelpers.WithColor(ConsoleColor.Cyan, () =>
+            {
+                Console.WriteLine($"🚀 {(isResume ? "Continuing" : "Starting")} orchestration with {config.MaxAgents} agent(s)...");
+                Console.WriteLine($"   Plan: {plan.Summary}");
+                Console.WriteLine($"   Remaining subtasks: {pending}");
+                Console.WriteLine($"   Work directory: {workDir}");
+            });
+            Console.WriteLine();
+            
+            using var orchestrator = new TaskOrchestrator(http, config, workDir);
+            
+            // Set up event handlers for progress
+            orchestrator.OnAgentStarted += (agentId, taskId) =>
+            {
+                ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () =>
+                    Console.WriteLine($"  [{agentId}] Starting task {taskId}..."));
+            };
+            
+            orchestrator.OnTaskCompleted += (agentId, result) =>
+            {
+                var color = result.Success ? ConsoleColor.Green : ConsoleColor.Red;
+                var icon = result.Success ? "✓" : "✗";
+                ConsoleHelpers.WithColor(color, () =>
+                    Console.WriteLine($"  [{agentId}] {icon} Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)"));
+                
+                // Update plan file with progress
+                var task = plan.SubTasks.FirstOrDefault(t => t.Id == result.TaskId);
+                if (task != null)
+                {
+                    task.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
+                    task.AssignedAgentId = agentId;
+                    try
+                    {
+                        plan.SaveToFile(planPath);
+                        plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
+                    }
+                    catch { /* Ignore save errors during progress */ }
+                }
+            };
+            
+            orchestrator.OnPhaseCompleted += (phase) =>
+            {
+                ConsoleHelpers.WithColor(ConsoleColor.Yellow, () =>
+                    Console.WriteLine($"  ── {phase} completed ──"));
+            };
+            
+            try
+            {
+                var result = await orchestrator.ExecutePlanAsync(plan, ct);
+                
+                // Save final state
+                plan.SaveToFile(planPath);
+                plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
+                
+                // Save orchestration result
+                SaveOrchestrationResult(result, progressPath);
+                
+                // Print result
+                OrchestratorPrinter.PrintResult(result);
+                
+                return result.Success 
+                    ? $"Orchestration completed successfully in {result.Duration.TotalMinutes:F1} minutes."
+                    : $"Orchestration failed: {result.Error}";
+            }
+            catch (OperationCanceledException)
+            {
+                // Save progress before exiting
+                plan.SaveToFile(planPath);
+                return "Orchestration cancelled. Progress saved.";
+            }
+            catch (Exception ex)
+            {
+                ConsoleHelpers.WithColor(ConsoleColor.Red, () =>
+                    Console.WriteLine($"✗ Orchestration failed: {ex.Message}"));
+                return $"Error: {ex.Message}";
+            }
+        }
+        
+        private static void SaveOrchestrationResult(OrchestratorResult result, string filePath)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(result, new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                });
+                File.WriteAllText(filePath, json);
+            }
+            catch { /* Ignore save errors */ }
+        }
     }
 }

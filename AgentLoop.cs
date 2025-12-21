@@ -28,7 +28,7 @@ namespace thuvu
         }
 
         // Loop detection settings
-        private const int MaxIterations = 50;
+        public const int DefaultMaxIterations = 50;
         private const int MaxConsecutiveFailures = 3;
         
         /// <summary>
@@ -44,18 +44,20 @@ namespace thuvu
             CancellationToken ct,
             Action<string, string>? onToolResult = null,
             Action<string, string, TimeSpan>? onToolComplete = null,
-            ToolProgressCallback? onToolProgress = null)
+            ToolProgressCallback? onToolProgress = null,
+            int? maxIterations = null)
         {
+            int maxIter = maxIterations ?? DefaultMaxIterations;
             int iteration = 0;
             var failureTracker = new Dictionary<string, int>(); // Track consecutive failures per tool
             
             while (true)
             {
                 iteration++;
-                if (iteration > MaxIterations)
+                if (iteration > maxIter)
                 {
-                    LogAgent($"Loop limit reached ({MaxIterations} iterations). Stopping.");
-                    return "[Agent stopped: Maximum iteration limit reached. The task may be too complex or the model is stuck in a loop.]";
+                    LogAgent($"Loop limit reached ({maxIter} iterations). Stopping.");
+                    return $"[Agent stopped: Maximum iteration limit ({maxIter}) reached. The task may be too complex or the model is stuck in a loop.]";
                 }
                 var req = new ChatRequest
                 {
@@ -96,7 +98,16 @@ namespace thuvu
                 if (body?.Usage is { } u)
                 {
                     ConsoleHelpers.PrintTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
-                    TokenTracker.Instance.UpdateFromUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens);
+                    // Update the effective token tracker (per-agent in orchestrated mode, global otherwise)
+                    var tracker = Models.AgentContext.GetEffectiveTokenTracker();
+                    tracker.UpdateFromUsage(u);
+                    
+                    // Check context size and auto-summarize if needed
+                    if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
+                    {
+                        LogAgent($"Context at {tracker.UsagePercent:P0}, triggering auto-summarize");
+                        await HandleContextSizeAsync(http, model, messages, ct);
+                    }
                 }
                 var msg = body.Choices[0].Message;
 
@@ -169,8 +180,10 @@ namespace thuvu
             Action<string, string>? onToolResult = null,
             Action<Usage>? onUsage = null,
             Action<string, string, TimeSpan>? onToolComplete = null,
-            ToolProgressCallback? onToolProgress = null)
+            ToolProgressCallback? onToolProgress = null,
+            int? maxIterations = null)
         {
+            int maxIter = maxIterations ?? DefaultMaxIterations;
             int iteration = 0;
             var failureTracker = new Dictionary<string, int>();
             var executedToolCalls = new HashSet<string>(); // Track tool call signatures to detect loops
@@ -180,10 +193,10 @@ namespace thuvu
             while (true)
             {
                 iteration++;
-                if (iteration > MaxIterations)
+                if (iteration > maxIter)
                 {
-                    LogAgent($"Loop limit reached ({MaxIterations} iterations). Stopping.");
-                    var msg = $"[Agent stopped: Maximum iteration limit ({MaxIterations}) reached. The task may be too complex or the model is stuck in a loop.]";
+                    LogAgent($"Loop limit reached ({maxIter} iterations). Stopping.");
+                    var msg = $"[Agent stopped: Maximum iteration limit ({maxIter}) reached. The task may be too complex or the model is stuck in a loop.]";
                     onToken?.Invoke(msg);
                     return msg;
                 }
@@ -208,6 +221,14 @@ namespace thuvu
                 LogAgent($"Calling StreamChatOnceAsync... (iteration {iteration})");
                 var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken, onUsage);
                 LogAgent($"StreamChatOnceAsync returned, ToolCalls={result.ToolCalls?.Count ?? 0}, Content length={result.Content?.Length ?? 0}");
+
+                // Check context size and auto-summarize if needed
+                var tracker = Models.AgentContext.GetEffectiveTokenTracker();
+                if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
+                {
+                    LogAgent($"Context at {tracker.UsagePercent:P0}, triggering auto-summarize");
+                    await HandleContextSizeAsync(http, model, messages, ct, s => onToken?.Invoke($"\n[{s}]\n"));
+                }
 
                 // Check if the LLM signaled task completion (various formats)
                 bool hasFinishSignal = result.Content != null && 
@@ -320,6 +341,211 @@ namespace thuvu
                 LogAgent($"Returning final content, length={result.Content?.Length ?? 0}");
                 return result.Content;
             }
+        }
+
+        /// <summary>
+        /// Auto-summarize threshold (90% of context)
+        /// </summary>
+        private const double AutoSummarizeThreshold = 0.90;
+        
+        /// <summary>
+        /// Truncation threshold after summarization fails (95% of context)
+        /// </summary>
+        private const double TruncationThreshold = 0.95;
+
+        /// <summary>
+        /// Summarize the conversation to reduce context size.
+        /// Keeps the system prompt and creates a summary of the conversation so far.
+        /// </summary>
+        public static async Task<bool> SummarizeConversationAsync(
+            HttpClient http,
+            string model,
+            List<ChatMessage> messages,
+            CancellationToken ct,
+            Action<string>? onStatus = null)
+        {
+            if (messages.Count < 3) // Need at least system + some conversation
+            {
+                LogAgent("Not enough messages to summarize");
+                return false;
+            }
+
+            onStatus?.Invoke("Auto-summarizing conversation to reduce context size...");
+            LogAgent($"Starting auto-summarization. Current message count: {messages.Count}");
+
+            try
+            {
+                // Build conversation text for summarization (skip system message)
+                var conversationParts = new List<string>();
+                int systemMsgIndex = -1;
+                
+                for (int i = 0; i < messages.Count; i++)
+                {
+                    var msg = messages[i];
+                    if (msg.Role == "system")
+                    {
+                        systemMsgIndex = i;
+                        continue;
+                    }
+                    
+                    var roleLabel = msg.Role switch
+                    {
+                        "user" => "User",
+                        "assistant" => "Assistant",
+                        "tool" => $"Tool({msg.Name})",
+                        _ => msg.Role
+                    };
+                    
+                    // Truncate very long messages for summary
+                    var content = msg.Content ?? "";
+                    if (content.Length > 2000)
+                        content = content.Substring(0, 2000) + "...[truncated]";
+                    
+                    conversationParts.Add($"{roleLabel}: {content}");
+                }
+
+                var conversationText = string.Join("\n\n", conversationParts);
+                
+                // Create summarization request
+                var summaryRequest = new ChatRequest
+                {
+                    Model = model,
+                    Messages = new List<ChatMessage>
+                    {
+                        new("system", "You are a helpful assistant that summarizes conversations. Create a concise summary that preserves all important context, decisions made, files modified, errors encountered, and current task status. Be thorough but brief."),
+                        new("user", $"Summarize this conversation, preserving key context for continuing the task:\n\n{conversationText}")
+                    },
+                    Temperature = 0.3
+                };
+
+                using var resp = await http.PostAsJsonAsync("/v1/chat/completions", summaryRequest, JsonOpts, ct);
+                resp.EnsureSuccessStatusCode();
+                var body = await resp.Content.ReadFromJsonAsync<ChatResponse>(JsonOpts, ct);
+                
+                var summary = body?.Choices?[0]?.Message?.Content;
+                if (string.IsNullOrEmpty(summary))
+                {
+                    LogAgent("Summarization returned empty result");
+                    return false;
+                }
+
+                LogAgent($"Generated summary ({summary.Length} chars)");
+
+                // Preserve system message if exists
+                var systemMsg = systemMsgIndex >= 0 ? messages[systemMsgIndex] : null;
+                
+                // Clear and rebuild messages with summary
+                messages.Clear();
+                if (systemMsg != null)
+                    messages.Add(systemMsg);
+                
+                // Add summary as context
+                messages.Add(new ChatMessage("user", $"[CONVERSATION SUMMARY - Context from previous messages]\n{summary}\n\n[END SUMMARY - Continue from here]"));
+                messages.Add(new ChatMessage("assistant", "I understand. I have the context from the summarized conversation. I'll continue from where we left off."));
+
+                LogAgent($"Conversation summarized. New message count: {messages.Count}");
+                onStatus?.Invoke($"Conversation summarized. Reduced from many messages to {messages.Count}.");
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogAgent($"Summarization failed: {ex.Message}");
+                onStatus?.Invoke($"Summarization failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Truncate older messages while keeping system prompt and recent context.
+        /// This is a last resort when summarization doesn't help enough.
+        /// </summary>
+        public static void TruncateConversation(List<ChatMessage> messages, int keepRecentCount = 6, Action<string>? onStatus = null)
+        {
+            if (messages.Count <= keepRecentCount + 1) // +1 for system message
+            {
+                LogAgent("Not enough messages to truncate");
+                return;
+            }
+
+            LogAgent($"Truncating conversation. Current count: {messages.Count}, keeping {keepRecentCount} recent");
+            onStatus?.Invoke($"Truncating conversation to last {keepRecentCount} messages...");
+
+            // Find system message
+            ChatMessage? systemMsg = null;
+            int systemIndex = -1;
+            for (int i = 0; i < messages.Count; i++)
+            {
+                if (messages[i].Role == "system")
+                {
+                    systemMsg = messages[i];
+                    systemIndex = i;
+                    break;
+                }
+            }
+
+            // Get recent messages (excluding system)
+            var nonSystemMessages = new List<ChatMessage>();
+            for (int i = 0; i < messages.Count; i++)
+            {
+                if (i != systemIndex)
+                    nonSystemMessages.Add(messages[i]);
+            }
+
+            // Keep only recent messages
+            var recentMessages = nonSystemMessages.Count > keepRecentCount
+                ? nonSystemMessages.GetRange(nonSystemMessages.Count - keepRecentCount, keepRecentCount)
+                : nonSystemMessages;
+
+            // Rebuild messages
+            messages.Clear();
+            if (systemMsg != null)
+                messages.Add(systemMsg);
+            
+            // Add truncation notice
+            messages.Add(new ChatMessage("user", "[Note: Earlier conversation was truncated due to context limits. Continue with the current task.]"));
+            messages.Add(new ChatMessage("assistant", "Understood. I'll continue working on the current task."));
+            
+            messages.AddRange(recentMessages);
+
+            LogAgent($"Conversation truncated. New count: {messages.Count}");
+            onStatus?.Invoke($"Conversation truncated to {messages.Count} messages.");
+        }
+
+        /// <summary>
+        /// Check and handle context size, auto-summarizing or truncating if needed.
+        /// Returns true if context was modified.
+        /// </summary>
+        public static async Task<bool> HandleContextSizeAsync(
+            HttpClient http,
+            string model,
+            List<ChatMessage> messages,
+            CancellationToken ct,
+            Action<string>? onStatus = null)
+        {
+            var tracker = Models.AgentContext.GetEffectiveTokenTracker();
+            
+            if (!tracker.AutoSummarizeEnabled)
+                return false;
+
+            // Check if we need to take action
+            if (tracker.UsagePercent < AutoSummarizeThreshold)
+                return false;
+
+            LogAgent($"Context usage at {tracker.UsagePercent:P0}, threshold is {AutoSummarizeThreshold:P0}");
+            onStatus?.Invoke($"⚠️ Context usage at {tracker.UsagePercent:P0}, attempting to reduce...");
+
+            // First try summarization
+            var summarized = await SummarizeConversationAsync(http, model, messages, ct, onStatus);
+            
+            // If still over truncation threshold, truncate
+            if (tracker.UsagePercent >= TruncationThreshold)
+            {
+                LogAgent($"Still at {tracker.UsagePercent:P0} after summarization, truncating");
+                TruncateConversation(messages, keepRecentCount: 4, onStatus);
+            }
+
+            return summarized || tracker.UsagePercent >= TruncationThreshold;
         }
 
         /// <summary>

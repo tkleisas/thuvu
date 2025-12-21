@@ -578,6 +578,7 @@ namespace thuvu
             PrintHelpCommand("/tokens", "Show token usage breakdown");
             PrintHelpCommand("/tokens reset", "Reset conversation and tokens");
             PrintHelpCommand("/tokens budget <n>", "Set max token budget");
+            PrintHelpCommand("/summarize", "Summarize conversation to reduce context");
             Console.WriteLine();
 
             // Multi-Model Support

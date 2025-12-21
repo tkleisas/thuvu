@@ -19,7 +19,8 @@ namespace thuvu.Tools
             var query = doc.RootElement.TryGetProperty("query", out var qEl) ? (qEl.GetString() ?? "") : "";
 
             // Use work directory as the base for all file operations
-            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
+            // AgentContext provides per-agent work directory in orchestrated mode
+            var workDir = thuvu.Models.AgentContext.GetEffectiveWorkDirectory();
             var projectRoot = DetectProjectRoot(workDir) ?? workDir;
 
             // Split the glob into (rootDir, relative-pattern)

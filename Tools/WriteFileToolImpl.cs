@@ -14,7 +14,7 @@ namespace thuvu.Tools
         {
             using var doc = JsonDocument.Parse(rawArgs);
             var root = doc.RootElement;
-            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
+            var workDir = thuvu.Models.AgentContext.GetEffectiveWorkDirectory();
 
             var path = root.GetProperty("path").GetString()!;
             // Resolve relative paths against work directory

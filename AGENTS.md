@@ -26,10 +26,12 @@ T.H.U.V.U. is a **local-first AI coding agent** that performs software engineeri
 | **Permission System** | ✅ Done | `PermissionManager.cs` - Granular read/write permissions |
 | **RAG Support** | ✅ Done | PostgreSQL/pgvector semantic search |
 | **MCP Code Execution** | ✅ Done | TypeScript sandbox via Deno (Phases 1-7) |
-| **TUI Interface** | ✅ Done | Terminal.GUI-based interface |
+| **TUI Interface** | ✅ Done | Terminal.GUI-based interface with progress feedback |
 | **Configuration** | ✅ Done | `appsettings.json` centralized config |
 | **Logging** | ✅ Done | Structured logging with session tracking |
 | **Skills System** | ✅ Done | Save/load reusable TypeScript workflows |
+| **Task Decomposition** | ✅ Done | `TaskDecomposition.cs` - Break complex tasks into subtasks |
+| **Multi-Agent Orchestration** | ✅ Done | `TaskOrchestrator.cs` - Coordinate multiple agents |
 
 ### 📁 Project Structure
 
@@ -40,6 +42,7 @@ thuvu/
 ├── ToolExecutor.cs         # Tool dispatch and execution
 ├── ConsoleHelpers.cs       # CLI styling and output
 ├── TuiInterface.cs         # Terminal.GUI interface
+├── CommandHandlers.cs      # Slash command implementations
 │
 ├── Models/                 # Data models and configuration
 │   ├── AgentConfig.cs      # Main configuration
@@ -48,7 +51,10 @@ thuvu/
 │   ├── PermissionManager.cs # Security permissions
 │   ├── McpBridge.cs        # C# <-> TypeScript IPC
 │   ├── McpCodeExecutor.cs  # Deno sandbox executor
-│   └── ModelConfig.cs      # Multi-model registry
+│   ├── ModelConfig.cs      # Multi-model registry
+│   ├── HealthCheck.cs      # Service health verification
+│   ├── TaskDecomposition.cs # Task analysis and subtask planning
+│   └── TaskOrchestrator.cs # Multi-agent coordination
 │
 ├── Tools/                  # Tool implementations
 │   ├── BuildTools.cs       # Tool schema definitions
@@ -72,6 +78,7 @@ thuvu/
 │
 ├── docker/                 # PostgreSQL + pgvector setup
 └── docs/                   # Documentation
+    └── orchestration.md    # Multi-agent orchestration guide
 ```
 
 ---
@@ -229,6 +236,10 @@ User Input → Command Handler → LLM Request
 | `/rag <subcommand>` | RAG operations (index, search, stats, clear) |
 | `/mcp <subcommand>` | MCP operations (enable, run, tools, skills) |
 | `/models <subcommand>` | Model management (list, use, thinking, coding) |
+| `/plan <task>` | Decompose task into subtasks with agent recommendations |
+| `/orchestrate [opts]` | Execute plan with multiple agents (`--agents N`, `--no-merge`) |
+| `/health` | Run health checks on all services |
+| `/status` | Show session and token status |
 
 ---
 
@@ -930,6 +941,7 @@ Preview changes without executing (useful for risky operations):
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2025-12-18 | 0.0.7 | Multi-agent orchestration: TaskDecomposition, TaskOrchestrator, /plan and /orchestrate commands |
 | 2025-12-17 | 0.0.6 | MVP implementation: HealthCheck, RetryHandler, AgentSessionManager, TokenTracker |
 | 2025-12-17 | 0.0.5 | Added AGENTS.md project plan, git isolation strategy |
 | 2025-12-13 | 0.0.4 | MCP Phases 1-7 complete, appsettings.json |

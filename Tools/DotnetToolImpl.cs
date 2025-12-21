@@ -47,7 +47,7 @@ namespace thuvu.Tools
         public static Task<string> DotnetNewTool(string rawArgs)
         {
             using var doc = JsonDocument.Parse(rawArgs);
-            var workDir = thuvu.Models.AgentConfig.GetWorkDirectory();
+            var workDir = thuvu.Models.AgentContext.GetEffectiveWorkDirectory();
             var path = ExtractPath(rawArgs);
             var template = doc.RootElement.TryGetProperty("template", out var t) ? t.GetString() : null;
 

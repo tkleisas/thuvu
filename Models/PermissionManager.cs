@@ -73,11 +73,20 @@ namespace thuvu.Models
             
             // Check persistent permissions first
             if (AgentConfig.Config.ToolPermissions.ContainsKey(permissionKey))
+            {
+                AgentLogger.LogDebug("Tool {Tool} allowed by persistent permission (key: {Key})", toolName, permissionKey);
                 return true;
+            }
 
             // Check session permissions
             if (SessionPermissions.ContainsKey(permissionKey))
+            {
+                AgentLogger.LogDebug("Tool {Tool} allowed by session permission (key: {Key})", toolName, permissionKey);
                 return true;
+            }
+
+            AgentLogger.LogDebug("Tool {Tool} requires permission prompt (key: {Key}, stored keys: {Keys})", 
+                toolName, permissionKey, string.Join(", ", AgentConfig.Config.ToolPermissions.Keys));
 
             // Need to ask user
             return PromptForPermission(toolName, argsJson, permissionKey);
@@ -86,7 +95,10 @@ namespace thuvu.Models
         private static string GetPermissionKey(string toolName)
         {
             var repoPath = _currentRepoPath ?? Directory.GetCurrentDirectory();
-            return $"{repoPath}:{toolName}";
+            // Normalize path for consistent key generation (Windows can have different casing)
+            repoPath = Path.GetFullPath(repoPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var key = $"{repoPath}:{toolName}";
+            return key;
         }
 
         private static bool PromptForPermission(string toolName, string argsJson, string permissionKey)

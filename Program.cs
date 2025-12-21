@@ -108,15 +108,39 @@ namespace thuvu
             }
 
             // Initialize token tracker with context length
+            // Priority: 1) Model-specific config, 2) AgentConfig setting, 3) API detection, 4) Default 32768
             try
             {
-                _currentContextLength = (int)(await AgentLoop.GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None) ?? 4096);
+                // Check if current model has a specific context length configured
+                var currentModel = ModelRegistry.Instance.GetModel(AgentConfig.Config.Model);
+                if (currentModel?.MaxContextLength > 0)
+                {
+                    _currentContextLength = currentModel.MaxContextLength;
+                    AgentLogger.LogInfo("Using model-specific MaxContextLength: {Length} for {Model}", 
+                        _currentContextLength, currentModel.ModelId);
+                }
+                else if (AgentConfig.Config.MaxContextLength > 0)
+                {
+                    // Use configured value (user-specified for APIs that don't report context length)
+                    _currentContextLength = AgentConfig.Config.MaxContextLength;
+                    AgentLogger.LogInfo("Using configured MaxContextLength: {Length}", _currentContextLength);
+                }
+                else
+                {
+                    // Try to detect from API
+                    var detected = await AgentLoop.GetContextLengthAsync(http, AgentConfig.Config.Model, CancellationToken.None);
+                    _currentContextLength = detected ?? 32768; // Default to 32K if not detected
+                    AgentLogger.LogInfo("Context length {Source}: {Length}", 
+                        detected.HasValue ? "detected" : "defaulted", _currentContextLength);
+                }
                 TokenTracker.Instance.MaxContextLength = _currentContextLength;
             }
             catch (Exception ex)
             {
-                AgentLogger.LogWarning("Could not connect to LLM service: {Message}. Using default context length.", ex.Message);
-                _currentContextLength = 4096;
+                AgentLogger.LogWarning("Could not determine context length: {Message}. Using default.", ex.Message);
+                _currentContextLength = AgentConfig.Config.MaxContextLength > 0 
+                    ? AgentConfig.Config.MaxContextLength 
+                    : 32768;
                 TokenTracker.Instance.MaxContextLength = _currentContextLength;
             }
 
@@ -465,6 +489,19 @@ namespace thuvu
                 return true;
             }
 
+            if (user.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Summarizing conversation...");
+                var success = await AgentLoop.SummarizeConversationAsync(
+                    http, AgentConfig.Config.Model, messages, ct, 
+                    s => Console.WriteLine($"  {s}"));
+                if (success)
+                    Console.WriteLine("✓ Conversation summarized successfully.");
+                else
+                    Console.WriteLine("✗ Summarization failed or not enough messages.");
+                return true;
+            }
+
             if (user.Equals("/health", StringComparison.OrdinalIgnoreCase))
             {
                 var report = await HealthCheck.RunAllChecksAsync(http, ct);
@@ -476,6 +513,18 @@ namespace thuvu
             {
                 AgentSessionManager.PrintSessionStatus();
                 TokenTracker.Instance.PrintStatus();
+                return true;
+            }
+            
+            if (user.StartsWith("/plan", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandlePlanCommandAsync(user, http, ct);
+                return true;
+            }
+            
+            if (user.StartsWith("/orchestrate", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandleOrchestrateCommandAsync(user, http, ct);
                 return true;
             }
 

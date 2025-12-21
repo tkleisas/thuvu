@@ -100,6 +100,9 @@ namespace thuvu.Models
         /// <summary>Maximum context length (0 = auto-detect)</summary>
         public int MaxContextLength { get; set; } = 0;
         
+        /// <summary>Maximum output tokens (0 = use default)</summary>
+        public int MaxOutputTokens { get; set; } = 0;
+        
         /// <summary>Temperature for generation (0.0 - 2.0)</summary>
         public double Temperature { get; set; } = 0.2;
         

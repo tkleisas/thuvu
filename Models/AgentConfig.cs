@@ -38,6 +38,12 @@ namespace thuvu.Models
         /// </summary>
         public bool AutoApproveTuiTools { get; set; } = true;
         
+        /// <summary>
+        /// Maximum context length for the model. If 0, will attempt to detect from API or use 32768 default.
+        /// Set this manually for APIs that don't report context length (e.g., DeepSeek: 65536).
+        /// </summary>
+        public int MaxContextLength { get; set; } = 0;
+        
         public static AgentConfig Config = new();
         
         /// <summary>
@@ -123,11 +129,55 @@ namespace thuvu.Models
             {
                 var path = GetConfigPath();
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                var json = JsonSerializer.Serialize(Config, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(path, json);
+                
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                
+                // Preserve the existing file structure if it exists
+                if (File.Exists(path))
+                {
+                    var existingJson = File.ReadAllText(path);
+                    using var doc = JsonDocument.Parse(existingJson);
+                    
+                    // Check if the file has a nested structure
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object && 
+                        doc.RootElement.TryGetProperty("AgentConfig", out _))
+                    {
+                        // File has nested structure - update only the AgentConfig section
+                        var rootDict = new Dictionary<string, object>();
+                        
+                        // Copy all existing sections
+                        foreach (var prop in doc.RootElement.EnumerateObject())
+                        {
+                            if (prop.Name == "AgentConfig")
+                            {
+                                // Replace AgentConfig with our updated config
+                                rootDict[prop.Name] = Config;
+                            }
+                            else
+                            {
+                                // Preserve other sections as-is using JsonElement
+                                rootDict[prop.Name] = JsonSerializer.Deserialize<object>(prop.Value.GetRawText())!;
+                            }
+                        }
+                        
+                        var json = JsonSerializer.Serialize(rootDict, options);
+                        File.WriteAllText(path, json);
+                        AgentLogger.LogDebug("Saved AgentConfig to nested section in {Path}", path);
+                        return true;
+                    }
+                }
+                
+                // No existing nested structure - save as flat config
+                var flatJson = JsonSerializer.Serialize(Config, options);
+                File.WriteAllText(path, flatJson);
+                AgentLogger.LogDebug("Saved AgentConfig as flat config to {Path}", path);
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to save config: {Error}", ex.Message);
+                return false;
+            }
         }
 
         public static void ApplyConfig(HttpClient http)

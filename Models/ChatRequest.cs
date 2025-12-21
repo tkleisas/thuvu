@@ -14,5 +14,6 @@ namespace thuvu.Models
         [JsonPropertyName("tools")] public List<Tool>? Tools { get; set; }
         [JsonPropertyName("tool_choice")] public string? ToolChoice { get; set; }
         [JsonPropertyName("temperature")] public double? Temperature { get; set; }
+        [JsonPropertyName("max_tokens")] public int? Max_Tokens { get; set; }
     }
 }
