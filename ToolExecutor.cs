@@ -15,7 +15,7 @@ namespace thuvu
         /// <summary>
         /// Default tool execution timeout (2 minutes)
         /// </summary>
-        public static TimeSpan DefaultTimeout { get; set; } = TimeSpan.FromMinutes(2);
+        public static TimeSpan DefaultTimeout { get; set; } = TimeSpan.FromMinutes(60);
         
         /// <summary>
         /// Executes a tool by name, returning a JSON string result
