@@ -73,7 +73,7 @@ namespace thuvu.Models
                 _writer.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] 📥 LLM RESPONSE: elapsed={elapsedSeconds:F2}s, toolCalls={toolCallCount ?? 0}");
                 if (!string.IsNullOrEmpty(content))
                 {
-                    var preview = content.Length > 500 ? content.Substring(0, 500) + "..." : content;
+                    var preview = content;// content.Length > 500 ? content.Substring(0, 500) + "..." : content;
                     _writer.WriteLine($"    Content: {preview}");
                 }
                 _writer.WriteLine();
@@ -84,7 +84,7 @@ namespace thuvu.Models
         {
             lock (_lock)
             {
-                var argsPreview = argsJson.Length > 200 ? argsJson.Substring(0, 200) + "..." : argsJson;
+                var argsPreview = argsJson;//argsJson.Length > 200 ? argsJson.Substring(0, 200) + "..." : argsJson;
                 _writer.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] 🔧 TOOL START: {toolName}");
                 _writer.WriteLine($"    Args: {argsPreview}");
             }
@@ -94,7 +94,7 @@ namespace thuvu.Models
         {
             lock (_lock)
             {
-                var resultPreview = result.Length > 500 ? result.Substring(0, 500) + "..." : result;
+                var resultPreview = result;//result.Length > 500 ? result.Substring(0, 500) + "..." : result;
                 _writer.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] 🔧 TOOL END: {toolName} ({elapsedMs:F0}ms)");
                 _writer.WriteLine($"    Result: {resultPreview}");
                 _writer.WriteLine();

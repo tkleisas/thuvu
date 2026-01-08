@@ -277,44 +277,64 @@ namespace thuvu.Models
                 return result;
             }
 
-            try
+            // Try configured path first, then fallback to deno.exe and deno.cmd on Windows
+            var denoPathsToTry = new List<string> { McpConfig.Instance.DenoPath };
+            if (OperatingSystem.IsWindows() && !McpConfig.Instance.DenoPath.Contains('.'))
             {
-                using var process = new Process
+                // On Windows, try .cmd first (npm/scoop installs), then .exe
+                denoPathsToTry.Add(McpConfig.Instance.DenoPath + ".cmd");
+                denoPathsToTry.Add(McpConfig.Instance.DenoPath + ".exe");
+            }
+
+            Exception? lastException = null;
+            foreach (var denoPath in denoPathsToTry)
+            {
+                try
                 {
-                    StartInfo = new ProcessStartInfo
+                    using var process = new Process
                     {
-                        FileName = McpConfig.Instance.DenoPath,
-                        Arguments = "--version",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = denoPath,
+                            Arguments = "--version",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+
+                    process.Start();
+                    var output = await process.StandardOutput.ReadToEndAsync(ct);
+                    await process.WaitForExitAsync(ct);
+
+                    if (process.ExitCode == 0)
+                    {
+                        var firstLine = output.Split('\n')[0].Trim();
+                        result.IsHealthy = true;
+                        result.Status = firstLine;
+                        result.Endpoint = denoPath;
+                        sw.Stop();
+                        result.Duration = sw.Elapsed;
+                        return result;
                     }
-                };
-
-                process.Start();
-                var output = await process.StandardOutput.ReadToEndAsync(ct);
-                await process.WaitForExitAsync(ct);
-
-                if (process.ExitCode == 0)
-                {
-                    var firstLine = output.Split('\n')[0].Trim();
-                    result.IsHealthy = true;
-                    result.Status = firstLine;
+                    else
+                    {
+                        var stderr = await process.StandardError.ReadToEndAsync(ct);
+                        lastException = new Exception($"Exit code {process.ExitCode}: {stderr}");
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    result.IsHealthy = false;
-                    result.Status = "Error";
-                    result.Error = $"Exit code {process.ExitCode}";
+                    lastException = ex;
+                    // Try next path
                 }
             }
-            catch (Exception ex)
-            {
-                result.IsHealthy = false;
-                result.Status = "Not installed";
-                result.Error = $"MCP disabled: {ex.Message}";
-            }
+
+            // All paths failed
+            result.IsHealthy = false;
+            result.Status = "Not installed";
+            result.Error = lastException?.Message ?? "Deno not found";
 
             sw.Stop();
             result.Duration = sw.Elapsed;
