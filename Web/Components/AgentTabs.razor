@@ -1,0 +1,298 @@
+@using Microsoft.AspNetCore.SignalR.Client
+@inject IJSRuntime JS
+
+<div class="agent-tabs @(_isVisible ? "visible" : "")">
+    @if (_isVisible)
+    {
+        <div class="tabs-header">
+            <div class="tabs-title">
+                <span class="icon">🎭</span>
+                <span>Orchestration: @_taskName</span>
+            </div>
+            <div class="tabs-actions">
+                <button class="btn-icon" @onclick="ToggleMinimize" title="@(_isMinimized ? "Expand" : "Minimize")">
+                    @(_isMinimized ? "⬆️" : "⬇️")
+                </button>
+                <button class="btn-icon" @onclick="Close" title="Close">✕</button>
+            </div>
+        </div>
+
+        @if (!_isMinimized)
+        {
+            <div class="tabs-container">
+                <div class="tab-buttons">
+                    @foreach (var agent in _agents)
+                    {
+                        <button class="tab-button @(agent.Id == _activeTabId ? "active" : "") @agent.Status.ToLowerInvariant()"
+                                @onclick="() => SelectTab(agent.Id)">
+                            <span class="agent-status-dot @agent.Status.ToLowerInvariant()"></span>
+                            <span class="agent-name">@agent.Name</span>
+                            @if (agent.Status == "Running")
+                            {
+                                <span class="spinner">⏳</span>
+                            }
+                        </button>
+                    }
+                    <button class="tab-button summary @(_activeTabId == "summary" ? "active" : "")"
+                            @onclick='() => SelectTab("summary")'>
+                        📊 Summary
+                    </button>
+                </div>
+
+                <div class="tab-content">
+                    @if (_activeTabId == "summary")
+                    {
+                        <div class="summary-view">
+                            <h4>Orchestration Summary</h4>
+                            <div class="summary-stats">
+                                <div class="stat">
+                                    <span class="stat-label">Total Agents:</span>
+                                    <span class="stat-value">@_agents.Count</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Completed:</span>
+                                    <span class="stat-value">@_agents.Count(a => a.Status == "Completed")</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Running:</span>
+                                    <span class="stat-value">@_agents.Count(a => a.Status == "Running")</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Failed:</span>
+                                    <span class="stat-value">@_agents.Count(a => a.Status == "Failed")</span>
+                                </div>
+                            </div>
+                            
+                            @if (!string.IsNullOrEmpty(_mergedResult))
+                            {
+                                <div class="merged-result">
+                                    <h5>Merged Results</h5>
+                                    <MarkdownRenderer Content="@_mergedResult" />
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        var activeAgent = _agents.FirstOrDefault(a => a.Id == _activeTabId);
+                        @if (activeAgent != null)
+                        {
+                            <div class="agent-view">
+                                <div class="agent-header">
+                                    <span class="agent-task">@activeAgent.Task</span>
+                                    <span class="agent-status badge @activeAgent.Status.ToLowerInvariant()">@activeAgent.Status</span>
+                                </div>
+                                <div class="agent-messages">
+                                    @foreach (var msg in activeAgent.Messages)
+                                    {
+                                        <div class="agent-message @msg.Role">
+                                            <span class="message-role">@GetRoleIcon(msg.Role)</span>
+                                            <div class="message-content">
+                                                @if (msg.Role == "assistant")
+                                                {
+                                                    <MarkdownRenderer Content="@msg.Content" />
+                                                }
+                                                else
+                                                {
+                                                    <pre>@msg.Content</pre>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                    @if (activeAgent.Status == "Running")
+                                    {
+                                        <div class="agent-message assistant streaming">
+                                            <span class="message-role">🤖</span>
+                                            <div class="message-content">
+                                                <span class="typing-indicator">Thinking...</span>
+                                            </div>
+                                        </div>
+                                    }
+                                    <div id="orchestration-scroll-anchor"></div>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private bool _isVisible;
+    private bool _isMinimized;
+    private string _taskName = "";
+    private string _activeTabId = "summary";
+    private string _mergedResult = "";
+    private List<AgentTab> _agents = new();
+
+    public void StartOrchestration(string taskName, List<(string Id, string Title)> subtasks)
+    {
+        _isVisible = true;
+        _isMinimized = false;
+        _taskName = taskName;
+        _mergedResult = "";
+        _agents = subtasks.Select((task, idx) => new AgentTab
+        {
+            Id = $"agent-{idx}",
+            TaskId = task.Id,
+            Name = $"Task {idx + 1}",
+            Task = task.Title,
+            Status = "Pending",
+            Messages = new List<AgentMessage>()
+        }).ToList();
+        
+        _activeTabId = _agents.FirstOrDefault()?.Id ?? "summary";
+        StateHasChanged();
+    }
+
+    public void UpdateAgentStatusByTaskId(string taskId, string status)
+    {
+        var agent = _agents.FirstOrDefault(a => a.TaskId == taskId);
+        if (agent != null)
+        {
+            agent.Status = status;
+            StateHasChanged();
+        }
+    }
+
+    public void AddAgentMessageByTaskId(string taskId, string role, string content)
+    {
+        var agent = _agents.FirstOrDefault(a => a.TaskId == taskId);
+        if (agent != null)
+        {
+            agent.Messages.Add(new AgentMessage { Role = role, Content = content });
+            StateHasChanged();
+            _ = ScrollToBottomAsync();
+        }
+    }
+
+    public void AppendAgentStreamingByTaskId(string taskId, string content)
+    {
+        var agent = _agents.FirstOrDefault(a => a.TaskId == taskId);
+        if (agent != null)
+        {
+            // Find the last assistant message or create one
+            var lastMsg = agent.Messages.LastOrDefault();
+            if (lastMsg != null && lastMsg.Role == "assistant" && lastMsg.IsStreaming)
+            {
+                lastMsg.Content += content;
+            }
+            else
+            {
+                agent.Messages.Add(new AgentMessage { Role = "assistant", Content = content, IsStreaming = true });
+            }
+            StateHasChanged();
+            _ = ScrollToBottomAsync();
+        }
+    }
+
+    public void FinalizeAgentStreamingByTaskId(string taskId)
+    {
+        var agent = _agents.FirstOrDefault(a => a.TaskId == taskId);
+        if (agent != null)
+        {
+            var lastMsg = agent.Messages.LastOrDefault();
+            if (lastMsg != null && lastMsg.IsStreaming)
+            {
+                lastMsg.IsStreaming = false;
+            }
+            StateHasChanged();
+        }
+    }
+
+    public void UpdateAgentStatus(string agentId, string status)
+    {
+        var agent = _agents.FirstOrDefault(a => a.Id == agentId);
+        if (agent != null)
+        {
+            agent.Status = status;
+            StateHasChanged();
+        }
+    }
+
+    public void AddAgentMessage(string agentId, string role, string content)
+    {
+        var agent = _agents.FirstOrDefault(a => a.Id == agentId);
+        if (agent != null)
+        {
+            agent.Messages.Add(new AgentMessage { Role = role, Content = content });
+            StateHasChanged();
+        }
+    }
+
+    public void SetMergedResult(string result)
+    {
+        _mergedResult = result;
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        _isVisible = false;
+        // Don't clear agents - allow reopening
+        OnClose.InvokeAsync();
+    }
+
+    public void Show()
+    {
+        if (_agents.Count > 0)
+        {
+            _isVisible = true;
+            StateHasChanged();
+        }
+    }
+
+    public bool HasOrchestration => _agents.Count > 0;
+
+    private void ToggleMinimize()
+    {
+        _isMinimized = !_isMinimized;
+    }
+
+    private void SelectTab(string tabId)
+    {
+        _activeTabId = tabId;
+        _ = ScrollToBottomAsync();
+    }
+
+    private string GetRoleIcon(string role) => role switch
+    {
+        "user" => "👤",
+        "assistant" => "🤖",
+        "tool" => "🔧",
+        "system" => "ℹ️",
+        _ => "💬"
+    };
+
+    private async Task ScrollToBottomAsync()
+    {
+        try
+        {
+            await Task.Delay(10); // Small delay to let DOM update
+            await JS.InvokeVoidAsync("thuvu.scrollToAnchor", "orchestration-scroll-anchor");
+        }
+        catch { }
+    }
+
+    public class AgentTab
+    {
+        public string Id { get; set; } = "";
+        public string TaskId { get; set; } = "";  // The subtask ID (t1, t2, etc.)
+        public string Name { get; set; } = "";
+        public string Task { get; set; } = "";
+        public string Status { get; set; } = "Pending"; // Pending, Running, Completed, Failed
+        public List<AgentMessage> Messages { get; set; } = new();
+    }
+
+    public class AgentMessage
+    {
+        public string Role { get; set; } = "";
+        public string Content { get; set; } = "";
+        public bool IsStreaming { get; set; }
+    }
+}

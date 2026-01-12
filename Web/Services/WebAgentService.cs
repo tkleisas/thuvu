@@ -1,0 +1,1278 @@
+using System.Collections.Concurrent;
+using System.Net.Http;
+using System.Text.Json;
+using CodingAgent;
+using thuvu.Models;
+using thuvu.Tools;
+
+namespace thuvu.Web.Services
+{
+    /// <summary>
+    /// Represents a web-based agent session
+    /// </summary>
+    public class WebAgentSession
+    {
+        public string SessionId { get; set; } = Guid.NewGuid().ToString("N")[..8];
+        public List<ChatMessage> Messages { get; set; } = new();
+        public List<Tool> Tools { get; set; } = new();
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
+        public DateTime LastActivityAt { get; set; } = DateTime.Now;
+        public bool IsProcessing { get; set; }
+        public CancellationTokenSource? CurrentCts { get; set; }
+    }
+
+    /// <summary>
+    /// Service that wraps AgentLoop for web clients
+    /// </summary>
+    public class WebAgentService
+    {
+        private readonly HttpClient _http;
+        private readonly ConcurrentDictionary<string, WebAgentSession> _sessions = new();
+
+        public WebAgentService(HttpClient http)
+        {
+            _http = http;
+            
+            // Set up permission handler for web - auto-allow based on stored permissions
+            // This prevents console prompts from blocking the web UI
+            PermissionManager.CustomPermissionPrompt = (toolName, argsJson) =>
+            {
+                // Auto-allow if already in config, otherwise deny (require CLI setup)
+                var repoPath = Path.GetFullPath(AgentConfig.GetWorkDirectory())
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var permissionKey = $"{repoPath}:{toolName}";
+                
+                if (AgentConfig.Config.ToolPermissions.ContainsKey(permissionKey))
+                {
+                    return 'A'; // Allow
+                }
+                
+                // For web, auto-allow session permissions to avoid blocking
+                // User should set persistent permissions via CLI if needed
+                SessionLogger.Instance.LogInfo($"Auto-allowing tool {toolName} for web session");
+                return 'S'; // Session allow
+            };
+        }
+
+        /// <summary>
+        /// Create a new session or get existing one
+        /// </summary>
+        public WebAgentSession GetOrCreateSession(string? sessionId = null)
+        {
+            if (sessionId != null && _sessions.TryGetValue(sessionId, out var existing))
+            {
+                existing.LastActivityAt = DateTime.Now;
+                return existing;
+            }
+
+            var session = new WebAgentSession
+            {
+                Messages = new List<ChatMessage>
+                {
+                    new("system", McpSystemPrompts.GetSystemPrompt(McpConfig.Instance.McpModeActive))
+                },
+                Tools = BuildTools.GetBuildTools()
+            };
+
+            _sessions[session.SessionId] = session;
+            return session;
+        }
+
+        /// <summary>
+        /// Get session by ID
+        /// </summary>
+        public WebAgentSession? GetSession(string sessionId)
+        {
+            return _sessions.TryGetValue(sessionId, out var session) ? session : null;
+        }
+
+        /// <summary>
+        /// Send a message and stream the response
+        /// </summary>
+        public async IAsyncEnumerable<AgentStreamEvent> SendMessageAsync(
+            string sessionId,
+            string message,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            var session = GetSession(sessionId);
+            if (session == null)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "Session not found" };
+                yield break;
+            }
+
+            if (session.IsProcessing)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "Session is already processing a request" };
+                yield break;
+            }
+
+            session.IsProcessing = true;
+            session.CurrentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var linkedCt = session.CurrentCts.Token;
+
+            try
+            {
+                // Process @file references - expand file contents inline
+                var processedMessage = await ProcessFileReferencesAsync(message);
+                
+                session.Messages.Add(new ChatMessage("user", processedMessage));
+                session.LastActivityAt = DateTime.Now;
+
+                yield return new AgentStreamEvent { Type = "status", Data = "Processing..." };
+
+                // Use a channel to collect events from callbacks
+                var channel = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
+                var writer = channel.Writer;
+
+                var completionTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = await AgentLoop.CompleteWithToolsStreamingAsync(
+                            _http,
+                            AgentConfig.Config.Model,
+                            session.Messages,
+                            session.Tools,
+                            linkedCt,
+                            onToken: token =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent { Type = "token", Data = token });
+                            },
+                            onToolResult: (name, result) =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "tool_result", 
+                                    ToolName = name,
+                                    Data = TruncateResult(result)
+                                });
+                            },
+                            onUsage: usage =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "usage",
+                                    Data = JsonSerializer.Serialize(new 
+                                    { 
+                                        prompt = usage.PromptTokens,
+                                        completion = usage.CompletionTokens,
+                                        total = usage.TotalTokens
+                                    })
+                                });
+                            },
+                            onToolComplete: (name, result, elapsed) =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "tool_complete",
+                                    ToolName = name,
+                                    Data = $"Completed in {elapsed.TotalSeconds:F1}s"
+                                });
+                            },
+                            onToolProgress: progress =>
+                            {
+                                // Send tool_start when status is Running and just started
+                                if (progress.Status == ToolStatus.Running || progress.Status == ToolStatus.Pending)
+                                {
+                                    writer.TryWrite(new AgentStreamEvent 
+                                    { 
+                                        Type = "tool_progress",
+                                        ToolName = progress.ToolName,
+                                        Data = progress.Message ?? $"{progress.Status} ({progress.ElapsedFormatted})"
+                                    });
+                                }
+                                else
+                                {
+                                    writer.TryWrite(new AgentStreamEvent 
+                                    { 
+                                        Type = "tool_progress",
+                                        ToolName = progress.ToolName,
+                                        Data = progress.Message ?? progress.Status.ToString()
+                                    });
+                                }
+                            }
+                        );
+
+                        if (result != null)
+                        {
+                            session.Messages.Add(new ChatMessage("assistant", result));
+                        }
+
+                        writer.TryWrite(new AgentStreamEvent { Type = "done", Data = result ?? "" });
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        writer.TryWrite(new AgentStreamEvent { Type = "cancelled", Data = "Request cancelled" });
+                    }
+                    catch (Exception ex)
+                    {
+                        writer.TryWrite(new AgentStreamEvent { Type = "error", Data = ex.Message });
+                    }
+                    finally
+                    {
+                        writer.Complete();
+                    }
+                }, linkedCt);
+
+                // Stream events as they come
+                await foreach (var evt in channel.Reader.ReadAllAsync(linkedCt))
+                {
+                    yield return evt;
+                }
+
+                await completionTask;
+            }
+            finally
+            {
+                session.IsProcessing = false;
+                session.CurrentCts?.Dispose();
+                session.CurrentCts = null;
+            }
+        }
+
+        /// <summary>
+        /// Cancel the current request for a session
+        /// </summary>
+        public bool CancelRequest(string sessionId)
+        {
+            var session = GetSession(sessionId);
+            if (session?.CurrentCts != null && !session.CurrentCts.IsCancellationRequested)
+            {
+                session.CurrentCts.Cancel();
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Clear session history
+        /// </summary>
+        public void ClearSession(string sessionId)
+        {
+            var session = GetSession(sessionId);
+            if (session != null)
+            {
+                session.Messages.Clear();
+                session.Messages.Add(new ChatMessage("system", McpSystemPrompts.GetSystemPrompt(McpConfig.Instance.McpModeActive)));
+            }
+        }
+
+        /// <summary>
+        /// Execute a slash command
+        /// </summary>
+        public async IAsyncEnumerable<AgentStreamEvent> ExecuteCommandAsync(
+            string sessionId,
+            string command,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            var session = GetSession(sessionId);
+            if (session == null)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "Session not found" };
+                yield break;
+            }
+
+            var parts = command.Split(' ', 2);
+            var cmdName = parts[0].ToLowerInvariant();
+
+            // Special handling for orchestration - needs real-time streaming
+            if (cmdName == "/orchestrate")
+            {
+                await foreach (var evt in ExecuteOrchestrationAsync(command, ct))
+                {
+                    yield return evt;
+                }
+                yield return new AgentStreamEvent { Type = "done", Data = "" };
+                yield break;
+            }
+
+            // Use a list to collect events since we can't yield in try/catch
+            var events = new List<AgentStreamEvent>();
+            
+            await ProcessCommandAsync(sessionId, command, cmdName, session, events, ct);
+            
+            foreach (var evt in events)
+            {
+                yield return evt;
+            }
+            
+            yield return new AgentStreamEvent { Type = "done", Data = "" };
+        }
+        
+        /// <summary>
+        /// Execute orchestration with real-time streaming
+        /// </summary>
+        private async IAsyncEnumerable<AgentStreamEvent> ExecuteOrchestrationAsync(
+            string command,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            // Parse orchestrate options
+            var orchArgs = command.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToList();
+            var agentCount = 2;
+            var retryFailed = false;
+            var skipFailed = false;
+            
+            for (int i = 0; i < orchArgs.Count; i++)
+            {
+                if (orchArgs[i] == "--agents" && i + 1 < orchArgs.Count && int.TryParse(orchArgs[i + 1], out var n))
+                    agentCount = Math.Clamp(n, 1, 4);
+                else if (orchArgs[i] == "--retry")
+                    retryFailed = true;
+                else if (orchArgs[i] == "--skip")
+                    skipFailed = true;
+            }
+            
+            yield return new AgentStreamEvent { Type = "orchestration_start", Data = agentCount.ToString() };
+            
+            var workDir = AgentConfig.GetWorkDirectory();
+            var planPath = Path.Combine(workDir, "current-plan.json");
+            
+            if (!File.Exists(planPath))
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "No plan found. Use `/plan <task>` first." };
+                yield break;
+            }
+            
+            TaskPlan? plan = null;
+            string? loadError = null;
+            
+            try
+            {
+                var planJson = await File.ReadAllTextAsync(planPath, ct);
+                plan = JsonSerializer.Deserialize<TaskPlan>(planJson);
+            }
+            catch (Exception ex)
+            {
+                loadError = ex.Message;
+            }
+            
+            if (loadError != null)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = $"Failed to load plan: {loadError}" };
+                yield break;
+            }
+            
+            if (plan == null || plan.SubTasks.Count == 0)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "Invalid or empty plan." };
+                yield break;
+            }
+            
+            // Send plan info
+            yield return new AgentStreamEvent 
+            { 
+                Type = "orchestration_plan", 
+                Data = JsonSerializer.Serialize(new 
+                {
+                    taskId = plan.TaskId,
+                    taskName = plan.OriginalRequest,
+                    subtasks = plan.SubTasks.Select(t => new 
+                    {
+                        id = t.Id,
+                        title = t.Title,
+                        description = t.Description,
+                        status = t.Status.ToString()
+                    }).ToList()
+                })
+            };
+            
+            yield return new AgentStreamEvent { Type = "status", Data = $"Starting orchestration with {agentCount} agent(s)..." };
+            
+            // Use channel for streaming events from orchestrator
+            var channel = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
+            var writer = channel.Writer;
+            
+            var config = new OrchestratorConfig 
+            { 
+                MaxAgents = agentCount,
+                UseProcessIsolation = false
+            };
+            
+            var orchestrationTask = Task.Run(async () =>
+            {
+                try
+                {
+                    using var orchestrator = new TaskOrchestrator(_http, config, workDir);
+                    
+                    // Track which agent is working on which task
+                    var agentTaskMap = new ConcurrentDictionary<string, string>();
+                    
+                    // Wire up events
+                    orchestrator.OnAgentStarted += (agentId, taskId) =>
+                    {
+                        agentTaskMap[agentId] = taskId;
+                        writer.TryWrite(new AgentStreamEvent 
+                        { 
+                            Type = "agent_started", 
+                            Data = JsonSerializer.Serialize(new { agentId, taskId })
+                        });
+                    };
+                    
+                    orchestrator.OnAgentOutput += (agentId, text) =>
+                    {
+                        var taskId = agentTaskMap.GetValueOrDefault(agentId, "");
+                        writer.TryWrite(new AgentStreamEvent 
+                        { 
+                            Type = "agent_output", 
+                            Data = JsonSerializer.Serialize(new { agentId, taskId, text })
+                        });
+                    };
+                    
+                    orchestrator.OnAgentToolCall += (agentId, toolName, status) =>
+                    {
+                        var taskId = agentTaskMap.GetValueOrDefault(agentId, "");
+                        writer.TryWrite(new AgentStreamEvent 
+                        { 
+                            Type = "agent_tool_call", 
+                            Data = JsonSerializer.Serialize(new { agentId, taskId, toolName, status })
+                        });
+                    };
+                    
+                    orchestrator.OnTaskCompleted += (agentId, result) =>
+                    {
+                        agentTaskMap.TryRemove(agentId, out _);
+                        writer.TryWrite(new AgentStreamEvent 
+                        { 
+                            Type = "agent_completed", 
+                            Data = JsonSerializer.Serialize(new 
+                            { 
+                                agentId, 
+                                taskId = result.TaskId,
+                                success = result.Success,
+                                result = result.Result,
+                                error = result.Error
+                            })
+                        });
+                    };
+                    
+                    orchestrator.OnPhaseCompleted += (phase) =>
+                    {
+                        writer.TryWrite(new AgentStreamEvent { Type = "phase_completed", Data = phase });
+                    };
+                    
+                    // Execute the plan
+                    var result = await orchestrator.ExecutePlanAsync(plan, ct, planPath, retryFailed, skipFailed);
+                    
+                    // Send completion summary
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine($"## Orchestration Complete\n");
+                    sb.AppendLine($"**Duration:** {result.Duration.TotalMinutes:F1} minutes");
+                    sb.AppendLine($"**Tasks:** {result.TaskResults.Count(r => r.Success)} succeeded, {result.TaskResults.Count(r => !r.Success)} failed\n");
+                    
+                    if (!string.IsNullOrEmpty(result.Error))
+                    {
+                        sb.AppendLine($"⚠️ **Error:** {result.Error}\n");
+                    }
+                    
+                    writer.TryWrite(new AgentStreamEvent 
+                    { 
+                        Type = "orchestration_completed", 
+                        Data = JsonSerializer.Serialize(new { success = result.TaskResults.All(r => r.Success) })
+                    });
+                    
+                    writer.TryWrite(new AgentStreamEvent { Type = "command_result", Data = sb.ToString() });
+                }
+                catch (OperationCanceledException)
+                {
+                    writer.TryWrite(new AgentStreamEvent { Type = "cancelled", Data = "Orchestration cancelled" });
+                }
+                catch (Exception ex)
+                {
+                    writer.TryWrite(new AgentStreamEvent { Type = "error", Data = $"Orchestration failed: {ex.Message}" });
+                }
+                finally
+                {
+                    writer.Complete();
+                }
+            }, ct);
+            
+            // Stream events as they arrive
+            await foreach (var evt in channel.Reader.ReadAllAsync(ct))
+            {
+                yield return evt;
+            }
+            
+            await orchestrationTask;
+        }
+
+        private async Task ProcessCommandAsync(
+            string sessionId,
+            string command,
+            string cmdName,
+            WebAgentSession session,
+            List<AgentStreamEvent> events,
+            CancellationToken ct)
+        {
+            try
+            {
+                switch (cmdName)
+                {
+                    case "/help":
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = GetHelpText() });
+                        break;
+
+                    case "/clear":
+                        ClearSession(sessionId);
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = "✓ Conversation cleared." });
+                        break;
+
+                    case "/config":
+                        var config = GetConfig();
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = FormatConfig(config) });
+                        break;
+
+                    case "/status":
+                        var status = $"Session: {sessionId}\nMessages: {session.Messages.Count}\nProcessing: {session.IsProcessing}";
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = status });
+                        break;
+
+                    case "/diff":
+                        events.Add(new AgentStreamEvent { Type = "status", Data = "Running git diff..." });
+                        var diffResult = await RunCommandAsync(() => CommandHandlers.HandleDiffCommandAsync(command, ct, null));
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = diffResult });
+                        break;
+
+                    case "/test":
+                        events.Add(new AgentStreamEvent { Type = "status", Data = "Running tests..." });
+                        var testResult = await RunCommandAsync(() => CommandHandlers.HandleTestCommandAsync(command, ct, null));
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = testResult });
+                        break;
+
+                    case "/run":
+                        events.Add(new AgentStreamEvent { Type = "status", Data = "Running command..." });
+                        var runResult = await RunCommandAsync(() => CommandHandlers.HandleRunCommandAsync(command, ct, null));
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = runResult });
+                        break;
+
+                    case "/models":
+                        var modelsInfo = GetModelsInfo();
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = modelsInfo });
+                        break;
+
+                    case "/health":
+                        events.Add(new AgentStreamEvent { Type = "status", Data = "Running health checks..." });
+                        var healthResult = await RunHealthCheckAsync(ct);
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = healthResult });
+                        break;
+
+                    case "/system":
+                        var parts = command.Split(' ', 2);
+                        if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
+                        {
+                            // Show current system prompt
+                            var currentPrompt = session.Messages.FirstOrDefault(m => m.Role == "system")?.Content ?? "(none)";
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = $"**Current system prompt:**\n\n{currentPrompt}" });
+                        }
+                        else
+                        {
+                            // Set new system prompt
+                            var newPrompt = parts[1].Trim();
+                            var systemMsg = session.Messages.FirstOrDefault(m => m.Role == "system");
+                            if (systemMsg != null)
+                            {
+                                systemMsg.Content = newPrompt;
+                            }
+                            else
+                            {
+                                session.Messages.Insert(0, new ChatMessage("system", newPrompt));
+                            }
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = $"✓ System prompt updated." });
+                        }
+                        break;
+
+                    case "/stream":
+                        var streamParts = command.Split(' ', 2);
+                        if (streamParts.Length < 2)
+                        {
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = $"Streaming: {(AgentConfig.Config.Stream ? "on" : "off")}" });
+                        }
+                        else
+                        {
+                            var val = streamParts[1].Trim().ToLowerInvariant();
+                            AgentConfig.Config.Stream = val == "on" || val == "true" || val == "1";
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = $"✓ Streaming set to: {(AgentConfig.Config.Stream ? "on" : "off")}" });
+                        }
+                        break;
+
+                    case "/plan":
+                        var planParts = command.Split(' ', 2);
+                        if (planParts.Length < 2 || string.IsNullOrWhiteSpace(planParts[1]))
+                        {
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = GetPlanHelpText() });
+                        }
+                        else
+                        {
+                            events.Add(new AgentStreamEvent { Type = "status", Data = "Analyzing task..." });
+                            var planResult = await HandlePlanAsync(planParts[1].Trim(), ct);
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = planResult });
+                        }
+                        break;
+
+                    case "/orchestrate":
+                        // Handled by ExecuteOrchestrationAsync - this shouldn't be reached
+                        events.Add(new AgentStreamEvent { Type = "error", Data = "Orchestration routing error" });
+                        break;
+
+                    default:
+                        events.Add(new AgentStreamEvent { Type = "error", Data = $"Unknown command: {cmdName}\nType /help for available commands." });
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                events.Add(new AgentStreamEvent { Type = "error", Data = $"Command failed: {ex.Message}" });
+            }
+        }
+
+        private static string GetPlanHelpText()
+        {
+            return @"**Task Planning**
+
+Usage: `/plan <task description>`
+
+Examples:
+- `/plan Create a REST API for user management`
+- `/plan Add unit tests for the Calculator class`
+- `/plan Refactor the authentication module`
+
+The agent will analyze the task and suggest a decomposition into subtasks.";
+        }
+
+        private async Task<string> HandlePlanAsync(string taskDescription, CancellationToken ct)
+        {
+            try
+            {
+                // Get codebase context from work directory
+                string? codebaseContext = null;
+                var workDir = AgentConfig.GetWorkDirectory();
+                
+                try
+                {
+                    var files = Directory.GetFiles(workDir, "*.cs", SearchOption.AllDirectories)
+                        .Take(20)
+                        .Select(f => Path.GetRelativePath(workDir, f))
+                        .ToList();
+                    
+                    if (files.Any())
+                    {
+                        codebaseContext = $"Existing project files: {string.Join(", ", files.Take(10))}";
+                    }
+                    else
+                    {
+                        codebaseContext = "Work directory is empty - this will be a new project.";
+                    }
+                }
+                catch { /* Ignore context errors */ }
+
+                // Use the TaskDecomposer service
+                var decomposer = new TaskDecomposer(_http);
+                var plan = await decomposer.DecomposeAsync(taskDescription, codebaseContext, ct);
+                
+                if (plan == null || plan.SubTasks.Count == 0)
+                {
+                    return "Could not decompose the task. Try being more specific.";
+                }
+
+                // Save plan to work directory (so it shows in workspace file browser)
+                var jsonPath = Path.Combine(workDir, "current-plan.json");
+                var mdPath = Path.Combine(workDir, "current-plan.md");
+                
+                try
+                {
+                    // Ensure work directory exists
+                    Directory.CreateDirectory(workDir);
+                    plan.SaveToFile(jsonPath);
+                    plan.SaveToMarkdown(mdPath);
+                }
+                catch (Exception saveEx)
+                {
+                    SessionLogger.Instance.LogError($"Could not save plan files: {saveEx.Message}");
+                }
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"**Task Plan: {plan.OriginalRequest}**\n");
+                sb.AppendLine($"Summary: {plan.Summary}\n");
+                sb.AppendLine($"Recommended Agents: {plan.RecommendedAgentCount} | Est. Time: {plan.TotalEstimatedMinutes} min\n");
+                sb.AppendLine("**Subtasks:**\n");
+                
+                for (int i = 0; i < plan.SubTasks.Count; i++)
+                {
+                    var subtask = plan.SubTasks[i];
+                    sb.AppendLine($"{i + 1}. **{subtask.Title}** ({subtask.Type}, ~{subtask.EstimatedMinutes}min)");
+                    sb.AppendLine($"   {subtask.Description}");
+                    if (subtask.Dependencies.Any())
+                    {
+                        sb.AppendLine($"   Dependencies: {string.Join(", ", subtask.Dependencies)}");
+                    }
+                    sb.AppendLine();
+                }
+
+                sb.AppendLine($"\n📁 Plan saved to: `{Path.GetFileName(jsonPath)}` and `{Path.GetFileName(mdPath)}`");
+                sb.AppendLine("\n*Use `/orchestrate` to execute this plan with multiple agents.*");
+                
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                return $"Error planning task: {ex.Message}";
+            }
+        }
+
+        private async Task<string> HandleOrchestrateAsync(
+            List<AgentStreamEvent> events, 
+            int agentCount, 
+            bool retryFailed, 
+            bool skipFailed,
+            CancellationToken ct)
+        {
+            try
+            {
+                var workDir = AgentConfig.GetWorkDirectory();
+                var planPath = Path.Combine(workDir, "current-plan.json");
+                
+                if (!File.Exists(planPath))
+                {
+                    return "❌ No plan found. Use `/plan <task>` first to create a plan.";
+                }
+                
+                // Load the plan
+                var planJson = await File.ReadAllTextAsync(planPath, ct);
+                var plan = JsonSerializer.Deserialize<TaskPlan>(planJson);
+                
+                if (plan == null || plan.SubTasks.Count == 0)
+                {
+                    return "❌ Invalid or empty plan. Use `/plan <task>` to create a new plan.";
+                }
+                
+                // Send plan info to UI
+                events.Add(new AgentStreamEvent 
+                { 
+                    Type = "orchestration_plan", 
+                    Data = JsonSerializer.Serialize(new 
+                    {
+                        taskId = plan.TaskId,
+                        taskName = plan.OriginalRequest,
+                        subtasks = plan.SubTasks.Select(t => new 
+                        {
+                            id = t.Id,
+                            title = t.Title,
+                            description = t.Description,
+                            status = t.Status.ToString()
+                        }).ToList()
+                    })
+                });
+                
+                var config = new OrchestratorConfig 
+                { 
+                    MaxAgents = agentCount,
+                    UseProcessIsolation = false // Use in-process for web
+                };
+                
+                using var orchestrator = new TaskOrchestrator(_http, config, workDir);
+                
+                // Wire up events
+                orchestrator.OnAgentStarted += (agentId, taskId) =>
+                {
+                    events.Add(new AgentStreamEvent 
+                    { 
+                        Type = "agent_started", 
+                        Data = JsonSerializer.Serialize(new { agentId, taskId })
+                    });
+                };
+                
+                orchestrator.OnAgentOutput += (agentId, text) =>
+                {
+                    events.Add(new AgentStreamEvent 
+                    { 
+                        Type = "agent_output", 
+                        Data = JsonSerializer.Serialize(new { agentId, text })
+                    });
+                };
+                
+                orchestrator.OnTaskCompleted += (agentId, result) =>
+                {
+                    events.Add(new AgentStreamEvent 
+                    { 
+                        Type = "agent_completed", 
+                        Data = JsonSerializer.Serialize(new 
+                        { 
+                            agentId, 
+                            taskId = result.TaskId,
+                            success = result.Success,
+                            result = result.Result,
+                            error = result.Error
+                        })
+                    });
+                };
+                
+                orchestrator.OnPhaseCompleted += (phase) =>
+                {
+                    events.Add(new AgentStreamEvent { Type = "phase_completed", Data = phase });
+                };
+                
+                orchestrator.OnPlanCompleted += (completedPlan, success) =>
+                {
+                    events.Add(new AgentStreamEvent 
+                    { 
+                        Type = "orchestration_completed", 
+                        Data = JsonSerializer.Serialize(new { success })
+                    });
+                };
+                
+                // Execute the plan
+                var result = await orchestrator.ExecutePlanAsync(plan, ct, planPath, retryFailed, skipFailed);
+                
+                // Build summary
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"## Orchestration Complete\n");
+                sb.AppendLine($"**Plan:** {plan.OriginalRequest}");
+                sb.AppendLine($"**Duration:** {result.Duration.TotalMinutes:F1} minutes");
+                sb.AppendLine($"**Tasks:** {result.TaskResults.Count(r => r.Success)} succeeded, {result.TaskResults.Count(r => !r.Success)} failed\n");
+                
+                if (!string.IsNullOrEmpty(result.Error))
+                {
+                    sb.AppendLine($"⚠️ **Error:** {result.Error}\n");
+                }
+                
+                // List results
+                sb.AppendLine("### Task Results\n");
+                foreach (var taskResult in result.TaskResults)
+                {
+                    var icon = taskResult.Success ? "✅" : "❌";
+                    sb.AppendLine($"{icon} **{taskResult.TaskId}** ({taskResult.Duration.TotalSeconds:F0}s)");
+                    if (!string.IsNullOrEmpty(taskResult.Error))
+                    {
+                        sb.AppendLine($"   Error: {taskResult.Error}");
+                    }
+                }
+                
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                return $"❌ Orchestration failed: {ex.Message}";
+            }
+        }
+
+        private static string GetHelpText()
+        {
+            return @"**Available Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show this help message |
+| `/clear` | Clear conversation history |
+| `/system [text]` | View or set system prompt |
+| `/stream on\|off` | Toggle streaming mode |
+| `/config` | Show current configuration |
+| `/status` | Show session status |
+| `/diff` | Show git diff |
+| `/test` | Run dotnet tests |
+| `/run <cmd>` | Run a shell command |
+| `/models` | List available models |
+| `/health` | Check service health |
+| `/plan <task>` | Decompose a task into subtasks |
+| `/orchestrate [opts]` | Run multi-agent orchestration |
+
+**Orchestration Options:**
+- `--agents N` - Number of agents (1-4, default: 2)
+- `--retry` - Retry failed tasks
+- `--skip` - Skip blocked tasks
+
+*Tip: Use `@filename` to reference files in your messages.*";
+        }
+
+        private static string FormatConfig(object config)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(config, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            return $"**Current Configuration:**\n```json\n{json}\n```";
+        }
+
+        private static string GetModelsInfo()
+        {
+            var models = ModelRegistry.Instance.Models;
+            var lines = new List<string> { "**Available Models:**\n" };
+            foreach (var m in models.Where(m => m.Enabled))
+            {
+                var current = m.ModelId == AgentConfig.Config.Model ? " ← current" : "";
+                lines.Add($"- **{m.DisplayName}** (`{m.ModelId}`){current}");
+                lines.Add($"  Host: {m.HostUrl}, Local: {m.IsLocal}");
+            }
+            return string.Join("\n", lines);
+        }
+
+        private static async Task<string> RunCommandAsync(Func<Task> action)
+        {
+            var output = new System.Text.StringBuilder();
+            try
+            {
+                await action();
+                return output.Length > 0 ? output.ToString() : "✓ Command completed.";
+            }
+            catch (Exception ex)
+            {
+                return $"❌ Error: {ex.Message}";
+            }
+        }
+
+        private static async Task<string> RunHealthCheckAsync(CancellationToken ct)
+        {
+            var results = new List<string>();
+            
+            // Check LLM
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                var response = await http.GetAsync($"{AgentConfig.Config.HostUrl}/v1/models", ct);
+                results.Add(response.IsSuccessStatusCode ? "✅ LLM API: Connected" : $"❌ LLM API: {response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                results.Add($"❌ LLM API: {ex.Message}");
+            }
+
+            // Check RAG
+            if (RagConfig.Instance.Enabled)
+            {
+                try
+                {
+                    // Simple check - just report config
+                    results.Add($"✅ RAG: Enabled (embedding: {RagConfig.Instance.EmbeddingModel})");
+                }
+                catch
+                {
+                    results.Add("❌ RAG: Configuration error");
+                }
+            }
+            else
+            {
+                results.Add("⚪ RAG: Disabled");
+            }
+
+            // Check MCP
+            results.Add(McpConfig.Instance.Enabled ? "✅ MCP: Enabled" : "⚪ MCP: Disabled");
+
+            return "**Health Check Results:**\n\n" + string.Join("\n", results);
+        }
+
+        /// <summary>
+        /// Delete a session
+        /// </summary>
+        public bool DeleteSession(string sessionId)
+        {
+            return _sessions.TryRemove(sessionId, out _);
+        }
+
+        /// <summary>
+        /// Get all active sessions
+        /// </summary>
+        public IEnumerable<WebAgentSession> GetAllSessions()
+        {
+            return _sessions.Values.OrderByDescending(s => s.LastActivityAt);
+        }
+
+        /// <summary>
+        /// Process @file references in a message, expanding file contents inline
+        /// </summary>
+        private async Task<string> ProcessFileReferencesAsync(string message)
+        {
+            if (string.IsNullOrEmpty(message) || !message.Contains('@'))
+                return message;
+
+            var workDir = AgentConfig.GetWorkDirectory();
+            var result = message;
+            var fileContents = new List<string>();
+            
+            // Find all @file references using regex
+            // Match @followed by path characters until whitespace or end
+            var regex = new System.Text.RegularExpressions.Regex(@"@([\w\-./\\]+\.[\w]+)");
+            var matches = regex.Matches(message);
+            
+            foreach (System.Text.RegularExpressions.Match match in matches)
+            {
+                var relativePath = match.Groups[1].Value;
+                var fullPath = Path.GetFullPath(Path.Combine(workDir, relativePath));
+                
+                // Security check - must be within work directory
+                if (!fullPath.StartsWith(workDir, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                    
+                if (File.Exists(fullPath))
+                {
+                    try
+                    {
+                        var content = await File.ReadAllTextAsync(fullPath);
+                        // Limit file size to avoid token overflow
+                        if (content.Length > 50000)
+                        {
+                            content = content[..50000] + "\n... (truncated)";
+                        }
+                        
+                        fileContents.Add($"**File: {relativePath}**\n```\n{content}\n```");
+                        
+                        // Replace @file with just the filename for cleaner display
+                        result = result.Replace(match.Value, $"`{relativePath}`");
+                    }
+                    catch
+                    {
+                        // File read error - leave reference as-is
+                    }
+                }
+            }
+            
+            // Append file contents at the end of the message
+            if (fileContents.Count > 0)
+            {
+                result += "\n\n---\n**Referenced Files:**\n\n" + string.Join("\n\n", fileContents);
+            }
+            
+            return result;
+        }
+
+        /// <summary>
+        /// Get current configuration info
+        /// </summary>
+        public object GetConfig()
+        {
+            return new
+            {
+                model = AgentConfig.Config.Model,
+                hostUrl = AgentConfig.Config.HostUrl,
+                workDirectory = AgentConfig.GetWorkDirectory(),
+                streaming = AgentConfig.Config.Stream,
+                mcpEnabled = McpConfig.Instance.Enabled,
+                ragEnabled = RagConfig.Instance.Enabled
+            };
+        }
+
+        /// <summary>
+        /// Get file suggestions for autocomplete
+        /// </summary>
+        public List<string> GetFileSuggestions(string prefix)
+        {
+            var results = new List<string>();
+            var workDir = AgentConfig.GetWorkDirectory();
+            
+            try
+            {
+                string searchDir;
+                string searchPattern;
+                
+                // Handle empty prefix - list root work directory
+                if (string.IsNullOrEmpty(prefix))
+                {
+                    searchDir = workDir;
+                    searchPattern = "*";
+                }
+                else
+                {
+                    // Normalize the prefix
+                    prefix = prefix.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                    
+                    if (prefix.StartsWith("." + Path.DirectorySeparatorChar) || prefix.StartsWith(".." + Path.DirectorySeparatorChar))
+                    {
+                        // Relative path
+                        var fullPath = Path.GetFullPath(Path.Combine(workDir, prefix));
+                        if (Directory.Exists(fullPath))
+                        {
+                            searchDir = fullPath;
+                            searchPattern = "*";
+                        }
+                        else
+                        {
+                            searchDir = Path.GetDirectoryName(fullPath) ?? workDir;
+                            searchPattern = Path.GetFileName(fullPath) + "*";
+                        }
+                    }
+                    else if (Path.IsPathRooted(prefix))
+                    {
+                        // Absolute path
+                        if (Directory.Exists(prefix))
+                        {
+                            searchDir = prefix;
+                            searchPattern = "*";
+                        }
+                        else
+                        {
+                            searchDir = Path.GetDirectoryName(prefix) ?? workDir;
+                            searchPattern = Path.GetFileName(prefix) + "*";
+                        }
+                    }
+                    else
+                    {
+                        // Just a filename or partial path - search recursively
+                        searchDir = workDir;
+                        searchPattern = "*" + prefix + "*";
+                    }
+                }
+
+                if (!Directory.Exists(searchDir))
+                    return results;
+
+                // Get directories first
+                foreach (var dir in Directory.GetDirectories(searchDir, searchPattern).Take(5))
+                {
+                    var relativePath = Path.GetRelativePath(workDir, dir);
+                    results.Add(relativePath + Path.DirectorySeparatorChar);
+                }
+
+                // Then files
+                foreach (var file in Directory.GetFiles(searchDir, searchPattern).Take(10 - results.Count))
+                {
+                    var relativePath = Path.GetRelativePath(workDir, file);
+                    results.Add(relativePath);
+                }
+            }
+            catch
+            {
+                // Ignore errors - just return empty list
+            }
+
+            return results.Take(10).ToList();
+        }
+
+        /// <summary>
+        /// Get directory contents for file tree
+        /// </summary>
+        public List<Hubs.FileTreeItem> GetDirectoryContents(string relativePath)
+        {
+            var results = new List<Hubs.FileTreeItem>();
+            var workDir = AgentConfig.GetWorkDirectory();
+            
+            try
+            {
+                var fullPath = Path.GetFullPath(Path.Combine(workDir, relativePath));
+                
+                // Security: ensure path is within work directory
+                if (!fullPath.StartsWith(workDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    return results;
+                }
+
+                if (!Directory.Exists(fullPath))
+                {
+                    return results;
+                }
+
+                // Get directories first
+                foreach (var dir in Directory.GetDirectories(fullPath))
+                {
+                    var dirInfo = new DirectoryInfo(dir);
+                    // Skip hidden and common ignored directories
+                    if (dirInfo.Name.StartsWith(".") || 
+                        dirInfo.Name == "node_modules" || 
+                        dirInfo.Name == "bin" || 
+                        dirInfo.Name == "obj" ||
+                        dirInfo.Name == "__pycache__")
+                        continue;
+
+                    results.Add(new Hubs.FileTreeItem
+                    {
+                        Name = dirInfo.Name,
+                        Path = Path.GetRelativePath(workDir, dir),
+                        IsDirectory = true,
+                        IsLoaded = false
+                    });
+                }
+
+                // Then files
+                foreach (var file in Directory.GetFiles(fullPath))
+                {
+                    var fileInfo = new FileInfo(file);
+                    // Skip hidden files
+                    if (fileInfo.Name.StartsWith(".") && fileInfo.Name != ".gitignore")
+                        continue;
+
+                    results.Add(new Hubs.FileTreeItem
+                    {
+                        Name = fileInfo.Name,
+                        Path = Path.GetRelativePath(workDir, file),
+                        IsDirectory = false
+                    });
+                }
+            }
+            catch
+            {
+                // Ignore errors
+            }
+
+            return results
+                .OrderByDescending(i => i.IsDirectory)
+                .ThenBy(i => i.Name)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Read file contents
+        /// </summary>
+        public Hubs.FileContentResult ReadFile(string relativePath)
+        {
+            var workDir = AgentConfig.GetWorkDirectory();
+            
+            try
+            {
+                var fullPath = Path.GetFullPath(Path.Combine(workDir, relativePath));
+                
+                // Security: ensure path is within work directory
+                if (!fullPath.StartsWith(workDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new Hubs.FileContentResult { Success = false, Error = "Access denied" };
+                }
+
+                if (!File.Exists(fullPath))
+                {
+                    return new Hubs.FileContentResult { Success = false, Error = "File not found" };
+                }
+
+                var fileInfo = new FileInfo(fullPath);
+                
+                // Check file size (limit to 1MB for text display)
+                if (fileInfo.Length > 1024 * 1024)
+                {
+                    return new Hubs.FileContentResult 
+                    { 
+                        Success = false, 
+                        Error = $"File too large ({fileInfo.Length / 1024}KB). Maximum 1MB."
+                    };
+                }
+
+                // Check if binary
+                var extension = fileInfo.Extension.ToLowerInvariant();
+                var binaryExtensions = new[] { ".exe", ".dll", ".pdb", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx" };
+                
+                if (binaryExtensions.Contains(extension))
+                {
+                    return new Hubs.FileContentResult { Success = true, IsBinary = true, Content = "" };
+                }
+
+                var content = File.ReadAllText(fullPath);
+                return new Hubs.FileContentResult { Success = true, Content = content };
+            }
+            catch (Exception ex)
+            {
+                return new Hubs.FileContentResult { Success = false, Error = ex.Message };
+            }
+        }
+
+        private static string TruncateResult(string result, int maxLength = 2000)
+        {
+            if (result.Length <= maxLength)
+                return result;
+            return result[..maxLength] + $"\n... (truncated, {result.Length - maxLength} more chars)";
+        }
+    }
+
+    /// <summary>
+    /// Event streamed from agent to client
+    /// </summary>
+    public class AgentStreamEvent
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("data")]
+        public string Data { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("toolName")]
+        public string? ToolName { get; set; }
+    }
+}

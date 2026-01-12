@@ -1,0 +1,127 @@
+@using System.Text.RegularExpressions
+
+<div class="diff-viewer">
+    <div class="diff-header">
+        <span class="diff-title">@Title</span>
+        @if (!string.IsNullOrEmpty(FileName))
+        {
+            <span class="diff-filename">@FileName</span>
+        }
+        <div class="diff-stats">
+            <span class="additions">+@_additions</span>
+            <span class="deletions">-@_deletions</span>
+        </div>
+    </div>
+    
+    <div class="diff-content">
+        @foreach (var line in _lines)
+        {
+            <div class="diff-line @line.Type">
+                <span class="line-number old">@(line.OldLineNumber?.ToString() ?? "")</span>
+                <span class="line-number new">@(line.NewLineNumber?.ToString() ?? "")</span>
+                <span class="line-prefix">@line.Prefix</span>
+                <pre class="line-content">@line.Content</pre>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string Title { get; set; } = "Diff";
+
+    [Parameter]
+    public string? FileName { get; set; }
+
+    [Parameter]
+    public string DiffText { get; set; } = "";
+
+    private List<DiffLine> _lines = new();
+    private int _additions;
+    private int _deletions;
+
+    protected override void OnParametersSet()
+    {
+        ParseDiff();
+    }
+
+    private void ParseDiff()
+    {
+        _lines.Clear();
+        _additions = 0;
+        _deletions = 0;
+
+        if (string.IsNullOrEmpty(DiffText))
+            return;
+
+        var lines = DiffText.Split('\n');
+        int oldLine = 0, newLine = 0;
+
+        foreach (var line in lines)
+        {
+            var diffLine = new DiffLine();
+
+            if (line.StartsWith("@@"))
+            {
+                // Hunk header
+                diffLine.Type = "hunk";
+                diffLine.Content = line;
+                diffLine.Prefix = "";
+                
+                // Parse line numbers from @@ -X,Y +A,B @@
+                var match = Regex.Match(line, @"@@ -(\d+),?\d* \+(\d+),?\d* @@");
+                if (match.Success)
+                {
+                    oldLine = int.Parse(match.Groups[1].Value);
+                    newLine = int.Parse(match.Groups[2].Value);
+                }
+            }
+            else if (line.StartsWith("+") && !line.StartsWith("+++"))
+            {
+                diffLine.Type = "addition";
+                diffLine.Prefix = "+";
+                diffLine.Content = line.Length > 1 ? line[1..] : "";
+                diffLine.NewLineNumber = newLine++;
+                _additions++;
+            }
+            else if (line.StartsWith("-") && !line.StartsWith("---"))
+            {
+                diffLine.Type = "deletion";
+                diffLine.Prefix = "-";
+                diffLine.Content = line.Length > 1 ? line[1..] : "";
+                diffLine.OldLineNumber = oldLine++;
+                _deletions++;
+            }
+            else if (line.StartsWith(" "))
+            {
+                diffLine.Type = "context";
+                diffLine.Prefix = " ";
+                diffLine.Content = line.Length > 1 ? line[1..] : "";
+                diffLine.OldLineNumber = oldLine++;
+                diffLine.NewLineNumber = newLine++;
+            }
+            else if (line.StartsWith("diff ") || line.StartsWith("index ") || 
+                     line.StartsWith("---") || line.StartsWith("+++"))
+            {
+                diffLine.Type = "header";
+                diffLine.Content = line;
+                diffLine.Prefix = "";
+            }
+            else
+            {
+                continue;
+            }
+
+            _lines.Add(diffLine);
+        }
+    }
+
+    private class DiffLine
+    {
+        public string Type { get; set; } = "context";
+        public string Prefix { get; set; } = " ";
+        public string Content { get; set; } = "";
+        public int? OldLineNumber { get; set; }
+        public int? NewLineNumber { get; set; }
+    }
+}

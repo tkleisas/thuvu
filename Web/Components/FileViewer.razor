@@ -1,0 +1,173 @@
+@inject IJSRuntime JS
+
+<div class="file-viewer @(_isOpen ? "open" : "")">
+    @if (_isOpen)
+    {
+        <div class="file-viewer-header">
+            <div class="file-info">
+                <span class="file-icon">@GetFileIcon(_currentFile)</span>
+                <span class="file-name" title="@_currentFile">@GetFileName(_currentFile)</span>
+            </div>
+            <div class="file-actions">
+                <button class="btn-icon" @onclick="CopyContent" title="Copy">📋</button>
+                <button class="btn-icon" @onclick="Close" title="Close">✕</button>
+            </div>
+        </div>
+        
+        <div class="file-viewer-content">
+            @if (_isLoading)
+            {
+                <div class="loading">Loading file...</div>
+            }
+            else if (_error != null)
+            {
+                <div class="error">@_error</div>
+            }
+            else if (_isBinary)
+            {
+                <div class="binary-notice">
+                    <span>🔒 Binary file - cannot display</span>
+                </div>
+            }
+            else
+            {
+                <div class="code-container">
+                    <div class="line-numbers">
+                        @for (int i = 1; i <= _lineCount; i++)
+                        {
+                            <span class="line-number">@i</span>
+                        }
+                    </div>
+                    <pre class="code-content @GetLanguageClass(_currentFile)"><code>@_content</code></pre>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private bool _isOpen;
+    private bool _isLoading;
+    private bool _isBinary;
+    private string? _error;
+    private string _currentFile = "";
+    private string _content = "";
+    private int _lineCount;
+
+    public async Task OpenFile(string path, string content)
+    {
+        _isOpen = true;
+        _isLoading = false;
+        _error = null;
+        _currentFile = path;
+        _isBinary = IsBinaryContent(content);
+        
+        if (!_isBinary)
+        {
+            _content = content;
+            _lineCount = content.Split('\n').Length;
+        }
+        
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    public void Close()
+    {
+        _isOpen = false;
+        _content = "";
+        _currentFile = "";
+        StateHasChanged();
+        OnClose.InvokeAsync();
+    }
+
+    private async Task CopyContent()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _content);
+        }
+        catch { }
+    }
+
+    private bool IsBinaryContent(string content)
+    {
+        // Check for null bytes or high ratio of non-printable chars
+        if (string.IsNullOrEmpty(content)) return false;
+        
+        int nonPrintable = 0;
+        int checkLength = Math.Min(content.Length, 1000);
+        
+        for (int i = 0; i < checkLength; i++)
+        {
+            char c = content[i];
+            if (c == '\0') return true;
+            if (c < 32 && c != '\n' && c != '\r' && c != '\t') nonPrintable++;
+        }
+        
+        return nonPrintable > checkLength * 0.1;
+    }
+
+    private string GetFileName(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        return System.IO.Path.GetFileName(path);
+    }
+
+    private string GetFileIcon(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "📄";
+        
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".cs" => "🟣",
+            ".ts" or ".tsx" => "🔷",
+            ".js" or ".jsx" => "🟡",
+            ".json" => "📋",
+            ".md" => "📝",
+            ".html" or ".razor" => "🌐",
+            ".css" or ".scss" => "🎨",
+            ".xml" or ".csproj" => "📄",
+            ".yml" or ".yaml" => "⚙️",
+            ".py" => "🐍",
+            ".rs" => "🦀",
+            ".go" => "🔵",
+            ".java" => "☕",
+            ".sh" or ".bash" => "🖥️",
+            ".ps1" => "💠",
+            ".sql" => "🗃️",
+            _ => "📄"
+        };
+    }
+
+    private string GetLanguageClass(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".cs" => "language-csharp",
+            ".ts" or ".tsx" => "language-typescript",
+            ".js" or ".jsx" => "language-javascript",
+            ".json" => "language-json",
+            ".md" => "language-markdown",
+            ".html" or ".razor" => "language-html",
+            ".css" or ".scss" => "language-css",
+            ".xml" or ".csproj" => "language-xml",
+            ".yml" or ".yaml" => "language-yaml",
+            ".py" => "language-python",
+            ".rs" => "language-rust",
+            ".go" => "language-go",
+            ".java" => "language-java",
+            ".sh" or ".bash" => "language-bash",
+            ".ps1" => "language-powershell",
+            ".sql" => "language-sql",
+            _ => ""
+        };
+    }
+}

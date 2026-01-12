@@ -1,0 +1,95 @@
+@using System.Text.RegularExpressions
+
+<div class="file-tree-item @(Item.IsDirectory ? "directory" : "file") @(Item.IsExpanded ? "expanded" : "")">
+    <div class="item-row" @onclick="HandleClick">
+        @if (Item.IsDirectory)
+        {
+            <span class="expand-icon">@(Item.IsExpanded ? "▼" : "▶")</span>
+            <span class="icon">📁</span>
+        }
+        else
+        {
+            <span class="expand-icon"></span>
+            <span class="icon">@GetFileIcon(Item.Name)</span>
+        }
+        <span class="name">@Item.Name</span>
+    </div>
+    
+    @if (Item.IsDirectory && Item.IsExpanded)
+    {
+        <div class="children">
+            @if (!Item.IsLoaded)
+            {
+                <div class="loading-children">Loading...</div>
+            }
+            else if (Item.Children.Any())
+            {
+                @foreach (var child in Item.Children.OrderByDescending(c => c.IsDirectory).ThenBy(c => c.Name))
+                {
+                    <FileTreeItem Item="@child" OnSelect="@OnSelect" OnExpand="@OnExpand" />
+                }
+            }
+            else
+            {
+                <div class="empty-dir">Empty</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public FileTree.FileItem Item { get; set; } = new();
+
+    [Parameter]
+    public EventCallback<string> OnSelect { get; set; }
+
+    [Parameter]
+    public EventCallback<FileTree.FileItem> OnExpand { get; set; }
+
+    private async Task HandleClick()
+    {
+        if (Item.IsDirectory)
+        {
+            Item.IsExpanded = !Item.IsExpanded;
+            if (Item.IsExpanded && !Item.IsLoaded)
+            {
+                await OnExpand.InvokeAsync(Item);
+            }
+            StateHasChanged();
+        }
+        else
+        {
+            await OnSelect.InvokeAsync(Item.Path);
+        }
+    }
+
+    private string GetFileIcon(string name)
+    {
+        var ext = System.IO.Path.GetExtension(name).ToLowerInvariant();
+        return ext switch
+        {
+            ".cs" => "🟣",
+            ".ts" or ".tsx" => "🔷",
+            ".js" or ".jsx" => "🟡",
+            ".json" => "📋",
+            ".md" => "📝",
+            ".html" or ".razor" => "🌐",
+            ".css" or ".scss" => "🎨",
+            ".xml" or ".csproj" or ".sln" => "📄",
+            ".gitignore" => "🚫",
+            ".yml" or ".yaml" => "⚙️",
+            ".py" => "🐍",
+            ".rs" => "🦀",
+            ".go" => "🔵",
+            ".java" => "☕",
+            ".sh" or ".bash" => "🖥️",
+            ".ps1" => "💠",
+            ".sql" => "🗃️",
+            ".png" or ".jpg" or ".jpeg" or ".gif" or ".svg" => "🖼️",
+            ".exe" or ".dll" => "⚙️",
+            ".zip" or ".tar" or ".gz" => "📦",
+            _ => "📄"
+        };
+    }
+}

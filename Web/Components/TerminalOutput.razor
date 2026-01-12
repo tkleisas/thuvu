@@ -1,0 +1,102 @@
+<div class="terminal-output">
+    <div class="terminal-header">
+        <span class="terminal-title">@Title</span>
+        @if (ShowCopy)
+        {
+            <button class="btn-icon" @onclick="CopyToClipboard" title="Copy">📋</button>
+        }
+        @if (ShowClear)
+        {
+            <button class="btn-icon" @onclick="Clear" title="Clear">🗑️</button>
+        }
+    </div>
+    
+    <div class="terminal-content" @ref="_contentRef">
+        @foreach (var line in _lines)
+        {
+            <div class="terminal-line @line.Type">
+                @if (ShowTimestamps)
+                {
+                    <span class="timestamp">[@line.Timestamp.ToString("HH:mm:ss")]</span>
+                }
+                <span class="prefix">@line.Prefix</span>
+                <pre class="content">@line.Content</pre>
+            </div>
+        }
+        @if (IsRunning)
+        {
+            <div class="terminal-line running">
+                <span class="spinner">⠋</span>
+                <span class="content">Running...</span>
+            </div>
+        }
+    </div>
+</div>
+
+@inject IJSRuntime JS
+
+@code {
+    [Parameter]
+    public string Title { get; set; } = "Output";
+
+    [Parameter]
+    public bool ShowTimestamps { get; set; } = true;
+
+    [Parameter]
+    public bool ShowCopy { get; set; } = true;
+
+    [Parameter]
+    public bool ShowClear { get; set; } = true;
+
+    [Parameter]
+    public bool IsRunning { get; set; }
+
+    [Parameter]
+    public bool AutoScroll { get; set; } = true;
+
+    private ElementReference _contentRef;
+    private List<TerminalLine> _lines = new();
+
+    public void AddLine(string content, string type = "output", string prefix = "$")
+    {
+        _lines.Add(new TerminalLine
+        {
+            Content = content,
+            Type = type,
+            Prefix = prefix,
+            Timestamp = DateTime.Now
+        });
+
+        if (_lines.Count > 1000)
+        {
+            _lines.RemoveAt(0);
+        }
+
+        StateHasChanged();
+    }
+
+    public void AddOutput(string content) => AddLine(content, "output", "");
+    public void AddCommand(string content) => AddLine(content, "command", "$");
+    public void AddError(string content) => AddLine(content, "error", "!");
+    public void AddInfo(string content) => AddLine(content, "info", "ℹ");
+
+    public void Clear()
+    {
+        _lines.Clear();
+        StateHasChanged();
+    }
+
+    private async Task CopyToClipboard()
+    {
+        var text = string.Join("\n", _lines.Select(l => l.Content));
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+    }
+
+    private class TerminalLine
+    {
+        public string Content { get; set; } = "";
+        public string Type { get; set; } = "output";
+        public string Prefix { get; set; } = "";
+        public DateTime Timestamp { get; set; }
+    }
+}

@@ -1,0 +1,135 @@
+@using System.Text.RegularExpressions
+@inject IJSRuntime JS
+
+<div class="markdown-content" @ref="_contentRef">
+    @((MarkupString)_renderedHtml)
+</div>
+
+@code {
+    [Parameter]
+    public string Content { get; set; } = "";
+
+    [Parameter]
+    public bool EnableSyntaxHighlight { get; set; } = true;
+
+    private ElementReference _contentRef;
+    private string _renderedHtml = "";
+
+    protected override void OnParametersSet()
+    {
+        _renderedHtml = RenderMarkdown(Content);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (EnableSyntaxHighlight)
+        {
+            await JS.InvokeVoidAsync("thuvu.highlightCode", _contentRef);
+        }
+    }
+
+    private string RenderMarkdown(string markdown)
+    {
+        if (string.IsNullOrEmpty(markdown))
+            return "";
+
+        var html = markdown;
+
+        // Escape HTML first
+        html = System.Web.HttpUtility.HtmlEncode(html);
+
+        // Code blocks (```)
+        html = Regex.Replace(html, @"```(\w*)\n([\s\S]*?)```", match =>
+        {
+            var lang = match.Groups[1].Value;
+            var code = match.Groups[2].Value.Trim();
+            var langClass = string.IsNullOrEmpty(lang) ? "" : $" language-{lang}";
+            return $"<pre class=\"code-block{langClass}\"><code>{code}</code></pre>";
+        });
+
+        // Inline code (`)
+        html = Regex.Replace(html, @"`([^`]+)`", "<code class=\"inline-code\">$1</code>");
+
+        // Tables (must be before other processing)
+        html = RenderTables(html);
+
+        // Headers
+        html = Regex.Replace(html, @"^### (.+)$", "<h3>$1</h3>", RegexOptions.Multiline);
+        html = Regex.Replace(html, @"^## (.+)$", "<h2>$1</h2>", RegexOptions.Multiline);
+        html = Regex.Replace(html, @"^# (.+)$", "<h1>$1</h1>", RegexOptions.Multiline);
+
+        // Bold
+        html = Regex.Replace(html, @"\*\*(.+?)\*\*", "<strong>$1</strong>");
+        html = Regex.Replace(html, @"__(.+?)__", "<strong>$1</strong>");
+
+        // Italic
+        html = Regex.Replace(html, @"\*(.+?)\*", "<em>$1</em>");
+        html = Regex.Replace(html, @"_(.+?)_", "<em>$1</em>");
+
+        // Links
+        html = Regex.Replace(html, @"\[([^\]]+)\]\(([^)]+)\)", "<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>");
+
+        // Unordered lists
+        html = Regex.Replace(html, @"^[\*\-] (.+)$", "<li>$1</li>", RegexOptions.Multiline);
+        html = Regex.Replace(html, @"(<li>.*</li>\n?)+", "<ul>$&</ul>");
+
+        // Ordered lists
+        html = Regex.Replace(html, @"^\d+\. (.+)$", "<li>$1</li>", RegexOptions.Multiline);
+
+        // Blockquotes
+        html = Regex.Replace(html, @"^&gt; (.+)$", "<blockquote>$1</blockquote>", RegexOptions.Multiline);
+
+        // Horizontal rule
+        html = Regex.Replace(html, @"^---+$", "<hr>", RegexOptions.Multiline);
+
+        // Line breaks (preserve double newlines as paragraphs)
+        html = Regex.Replace(html, @"\n\n+", "</p><p>");
+        html = $"<p>{html}</p>";
+
+        // Clean up empty paragraphs
+        html = Regex.Replace(html, @"<p>\s*</p>", "");
+
+        return html;
+    }
+
+    private string RenderTables(string html)
+    {
+        // Match markdown tables
+        var tablePattern = @"(\|.+\|\r?\n)(\|[-:\s|]+\|\r?\n)((?:\|.+\|\r?\n?)+)";
+        
+        return Regex.Replace(html, tablePattern, match =>
+        {
+            var headerRow = match.Groups[1].Value.Trim();
+            var dataRows = match.Groups[3].Value.Trim();
+            
+            var sb = new System.Text.StringBuilder();
+            sb.Append("<table class=\"markdown-table\">");
+            
+            // Header
+            sb.Append("<thead><tr>");
+            var headers = headerRow.Split('|', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var header in headers)
+            {
+                sb.Append($"<th>{header.Trim()}</th>");
+            }
+            sb.Append("</tr></thead>");
+            
+            // Body
+            sb.Append("<tbody>");
+            var rows = dataRows.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var row in rows)
+            {
+                sb.Append("<tr>");
+                var cells = row.Split('|', StringSplitOptions.RemoveEmptyEntries);
+                foreach (var cell in cells)
+                {
+                    sb.Append($"<td>{cell.Trim()}</td>");
+                }
+                sb.Append("</tr>");
+            }
+            sb.Append("</tbody></table>");
+            
+            return sb.ToString();
+        });
+    }
+}

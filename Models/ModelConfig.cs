@@ -136,17 +136,10 @@ namespace thuvu.Models
             // Apply authentication if configured
             if (!string.IsNullOrWhiteSpace(AuthToken))
             {
-                if (!string.IsNullOrWhiteSpace(AuthScheme))
-                {
-                    client.DefaultRequestHeaders.Authorization = 
-                        new System.Net.Http.Headers.AuthenticationHeaderValue(AuthScheme, AuthToken);
-                }
-                else
-                {
-                    client.DefaultRequestHeaders.TryAddWithoutValidation(
-                        string.IsNullOrWhiteSpace(AuthHeaderName) ? "Authorization" : AuthHeaderName, 
-                        AuthToken);
-                }
+                // Default to Bearer scheme if none specified (most common for OpenAI-compatible APIs)
+                var scheme = string.IsNullOrWhiteSpace(AuthScheme) ? "Bearer" : AuthScheme;
+                client.DefaultRequestHeaders.Authorization = 
+                    new System.Net.Http.Headers.AuthenticationHeaderValue(scheme, AuthToken);
             }
             
             return client;

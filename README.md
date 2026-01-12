@@ -36,12 +36,28 @@ THUVU works with any OpenAI-compatible API:
 2. Start LM Studio and load a model on the Developer tab (served on http://localhost:1234 by default), OR configure a cloud API in `appsettings.json`.
 3. Run `thuvu.exe` - the TUI interface will start with health checks. Type messages or use `/help` for commands.
 
+**Interface Options:**
+- **CLI Mode**: `thuvu.exe` - Default terminal interface
+- **TUI Mode**: `thuvu.exe --tui` - Terminal.GUI multi-panel interface
+- **Web Mode**: `thuvu.exe --web` - Blazor Server web interface at http://localhost:5000
+
 **TUI Interface Features:**
 - Multi-panel layout with orchestrator output, agent tabs, and input area
 - Command autocomplete (Tab key)
 - File/directory autocomplete with `@` prefix
 - Real-time tool execution progress with elapsed time
 - ESC key to cancel running operations
+
+**Web Interface Features:**
+- Modern Blazor Server UI with SignalR real-time streaming
+- Workspace file browser with file preview
+- Slash command autocomplete
+- File reference autocomplete with `@` prefix (e.g., `@src/Program.cs`)
+- Multi-agent orchestration panel with task tabs
+- Real-time tool execution progress
+- Token usage tracking
+
+<img src="images/thuvu-web.png" width="800" alt="T.H.U.V.U. Web Interface">
 
 ## How to test
 You can test the agent by requesting it to create projects. Example tasks:
@@ -61,8 +77,24 @@ secret agent school and messing up all the tasks he was assigned.
 - **Multi-Model Support**: Configure multiple models with automatic selection based on task type (thinking vs coding)
 - **Tool System**: 20+ tools for file operations, dotnet commands, git operations, NuGet, and process execution
 - **Permission System**: Granular permission control with persistence (always allow/deny per tool)
-- **TUI Interface**: Terminal.GUI-based multi-panel interface with agent tabs and progress tracking
+- **Multiple Interfaces**: CLI, TUI (Terminal.GUI), and Web (Blazor Server) interfaces
 - **Context Management**: Automatic summarization when context is near limit, token tracking
+
+### Web Interface
+Blazor Server web UI with real-time SignalR streaming:
+- **Chat Interface**: Send messages and receive streaming responses
+- **Workspace Browser**: Navigate and preview files in your work directory
+- **Slash Commands**: Full support for all THUVU commands with autocomplete
+- **File References**: Use `@filename` to include file contents in your message
+- **Orchestration Panel**: Visual multi-agent task execution with per-task output
+- **Tool Progress**: Real-time display of tool calls and results
+
+### TUI Interface
+Terminal.GUI-based multi-panel interface:
+- **Multi-panel Layout**: Orchestrator output, agent tabs, and input area
+- **Command Autocomplete**: Tab key for commands and file paths
+- **Real-time Progress**: Tool execution with elapsed time display
+- **Keyboard Navigation**: ESC to cancel, arrow keys for autocomplete
 
 ### Multi-Agent Orchestration
 Decompose complex tasks and run multiple agents in parallel:
@@ -284,7 +316,6 @@ Example `appsettings.json`:
 - Improve multi-agent coordination and conflict resolution
 - Add more intelligent task decomposition based on codebase analysis
 - Support more programming languages and frameworks beyond .NET
-- Add web UI option alongside TUI
 - Implement agent memory/learning across sessions
 - Add support for more cloud LLM providers
 
@@ -305,6 +336,16 @@ thuvu/
 │   ├── McpCodeExecutor.cs      # Deno sandbox executor
 │   └── ModelConfig.cs          # Multi-model registry
 │
+├── Web/                    # Blazor Server Web Interface
+│   ├── WebHost.cs              # ASP.NET Core host configuration
+│   ├── Services/
+│   │   └── WebAgentService.cs  # Agent service for web sessions
+│   └── Components/
+│       ├── Chat.razor          # Main chat interface
+│       ├── FileTree.razor      # Workspace file browser
+│       ├── FileViewer.razor    # File preview panel
+│       └── AgentTabs.razor     # Orchestration task tabs
+│
 ├── Tui/                    # TUI components
 │   ├── TuiOrchestrationView.cs # Multi-agent view
 │   ├── TuiMessageQueue.cs      # Thread-safe UI updates
@@ -320,6 +361,10 @@ thuvu/
 │   ├── servers/            # Tool wrappers
 │   ├── runtime/            # Sandbox execution
 │   └── catalog.ts          # Tool discovery
+│
+├── wwwroot/                # Web static assets
+│   ├── css/app.css         # Web UI styles
+│   └── js/thuvu.js         # JavaScript interop
 │
 └── skills/                 # Saved agent workflows
 ```

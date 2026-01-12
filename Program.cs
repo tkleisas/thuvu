@@ -83,11 +83,19 @@ namespace thuvu
                 ModelRegistry.InitializeFromAgentConfig();
             }
 
-            // Check if TUI mode is requested
+            // Check if TUI or Web mode is requested
             bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
+            bool useWeb = args.Length > 0 && args[0].Equals("--web", StringComparison.OrdinalIgnoreCase);
 
             // Initialize permission manager with work directory
             PermissionManager.SetCurrentRepoPath(AgentConfig.GetWorkDirectory());
+
+            // If web mode, start the web server
+            if (useWeb)
+            {
+                await thuvu.Web.WebHost.RunAsync(args);
+                return;
+            }
 
             using var http = new HttpClient();
             AgentConfig.ApplyConfig(http);
@@ -164,7 +172,7 @@ namespace thuvu
             // Original console interface - styled banner
             ConsoleHelpers.PrintHeader($"T.H.U.V.U. v{Helpers.GetCurrentGitTag()}", ConsoleColor.Cyan);
             Console.WriteLine();
-            ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("Type /exit to quit, /help for commands, or --tui for Terminal UI"));
+            ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("Type /exit to quit, /help for commands, --tui for Terminal UI, --web for Web UI"));
             Console.WriteLine();
             ConsoleHelpers.PrintKeyValue("Config", AgentConfig.GetConfigPath(), ConsoleColor.DarkGray, ConsoleColor.Gray);
             ConsoleHelpers.PrintKeyValue("Model", AgentConfig.Config.Model, ConsoleColor.DarkGray, ConsoleColor.Green);

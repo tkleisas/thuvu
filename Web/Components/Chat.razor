@@ -1,0 +1,1095 @@
+@page "/"
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>T.H.U.V.U. Chat</PageTitle>
+
+<div class="chat-container @(_fileViewerOpen ? "file-viewer-active" : "") @(_orchestrationOpen ? "orchestration-active" : "")">
+    <!-- Sidebar with file tree and config -->
+    <aside class="sidebar">
+        <!-- File Tree Section -->
+        <div class="sidebar-section file-tree-section">
+            <FileTree RootPath="." 
+                      HubConnection="@_hubConnection" 
+                      SessionId="@_sessionId"
+                      OnFileSelect="@HandleFileSelect" 
+                      @ref="_fileTree" />
+        </div>
+        
+        <div class="sidebar-section">
+            <h3>Status</h3>
+            <div class="config-item">
+                @if (_connected)
+                {
+                    <span class="badge badge-connected">● Connected</span>
+                }
+                else
+                {
+                    <span class="badge badge-disconnected">● Disconnected</span>
+                }
+            </div>
+            @if (_hasOrchestration && !_orchestrationOpen)
+            {
+                <div class="config-item">
+                    <button class="btn btn-small btn-secondary" @onclick="ShowOrchestration">
+                        🎭 Show Orchestration
+                    </button>
+                </div>
+            }
+        </div>
+        
+        <div class="sidebar-section">
+            <h3>Configuration</h3>
+            <div class="config-item">
+                <span class="config-label">Model:</span>
+                <span class="config-value">@_model</span>
+            </div>
+            <div class="config-item">
+                <span class="config-label">Host:</span>
+                <span class="config-value">@_hostUrl</span>
+            </div>
+            <div class="config-item">
+                <span class="config-label">Work Dir:</span>
+                <span class="config-value" title="@_workDir">@TruncatePath(_workDir)</span>
+            </div>
+            <div class="config-item">
+                <span class="config-label">MCP:</span>
+                <span class="config-value @(_mcpEnabled ? "enabled" : "disabled")">@(_mcpEnabled ? "Enabled" : "Disabled")</span>
+            </div>
+            <div class="config-item">
+                <span class="config-label">RAG:</span>
+                <span class="config-value @(_ragEnabled ? "enabled" : "disabled")">@(_ragEnabled ? "Enabled" : "Disabled")</span>
+            </div>
+        </div>
+        
+        <div class="sidebar-section">
+            <h3>Session</h3>
+            <div class="config-item">
+                <span class="config-label">ID:</span>
+                <span class="config-value">@_sessionId</span>
+            </div>
+            <div class="config-item">
+                <span class="config-label">Messages:</span>
+                <span class="config-value">@_messages.Count</span>
+            </div>
+        </div>
+        
+        <div class="sidebar-actions">
+            <button class="btn btn-secondary" @onclick="ClearChat" disabled="@_isProcessing">
+                🗑️ Clear Chat
+            </button>
+        </div>
+    </aside>
+    
+    <!-- Main chat area -->
+    <div class="chat-main">
+        <!-- Messages -->
+        <div class="messages-container" @ref="_messagesContainer">
+            @if (_messages.Count == 0)
+            {
+                <div class="welcome-message">
+                    <h2>Welcome to T.H.U.V.U.</h2>
+                    <p>Your local-first AI coding agent. Ask me to help with:</p>
+                    <ul>
+                        <li>Reading and analyzing code</li>
+                        <li>Writing and modifying files</li>
+                        <li>Running tests and builds</li>
+                        <li>Git operations</li>
+                        <li>And much more...</li>
+                    </ul>
+                </div>
+            }
+            
+            @foreach (var msg in _messages)
+            {
+                <div class="message @msg.Role">
+                    <div class="message-header">
+                        <span class="message-role">@GetRoleDisplay(msg.Role)</span>
+                        <span class="message-time">@msg.Timestamp.ToString("HH:mm:ss")</span>
+                        @if (msg.Role == "assistant" || msg.Role == "tool")
+                        {
+                            <button class="btn-icon copy-btn" @onclick="() => CopyContent(msg.Content)" title="Copy">📋</button>
+                        }
+                    </div>
+                    <div class="message-content">
+                        @if (msg.Role == "tool")
+                        {
+                            <div class="tool-result">
+                                <span class="tool-name">@msg.ToolName</span>
+                                <pre>@msg.Content</pre>
+                            </div>
+                        }
+                        else if (msg.Role == "assistant" || msg.Role == "system")
+                        {
+                            <MarkdownRenderer Content="@msg.Content" />
+                        }
+                        else
+                        {
+                            <pre class="message-text">@msg.Content</pre>
+                        }
+                    </div>
+                </div>
+            }
+            
+            @if (_isProcessing)
+            {
+                <div class="message assistant streaming">
+                    <div class="message-header">
+                        <span class="message-role">🤖 Assistant</span>
+                        <span class="message-status">@_currentStatus</span>
+                    </div>
+                    <div class="message-content">
+                        @if (!string.IsNullOrEmpty(_currentToolName))
+                        {
+                            <div class="tool-progress">
+                                <span class="tool-icon">🔧</span>
+                                <span class="tool-name">@_currentToolName</span>
+                                <span class="tool-status">@_currentToolStatus</span>
+                            </div>
+                        }
+                        <pre class="message-text">@_streamingContent<span class="cursor">▊</span></pre>
+                    </div>
+                </div>
+            }
+        </div>
+        
+        <!-- Input area -->
+        <div class="input-area">
+            <div class="input-wrapper">
+                @if (_showAutocomplete && _suggestions.Count > 0)
+                {
+                    <div class="autocomplete-dropdown">
+                        @for (int i = 0; i < _suggestions.Count; i++)
+                        {
+                            var idx = i;
+                            var suggestion = _suggestions[i];
+                            <div class="autocomplete-item @(idx == _selectedSuggestion ? "selected" : "")" 
+                                 @onclick="() => SelectSuggestion(idx)">
+                                <span class="autocomplete-icon">@suggestion.Icon</span>
+                                <span class="autocomplete-text">@suggestion.Text</span>
+                                @if (!string.IsNullOrEmpty(suggestion.Description))
+                                {
+                                    <span class="autocomplete-desc">@suggestion.Description</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                <textarea 
+                    @ref="_inputElement"
+                    @bind="_inputText"
+                    @bind:event="oninput"
+                    @onkeydown="HandleKeyDown"
+                    @onkeyup="HandleKeyUp"
+                    placeholder="Ask T.H.U.V.U. anything... (Enter to send, Shift+Enter for newline)"
+                    disabled="@_isProcessing"
+                    rows="3">
+                </textarea>
+                <div class="input-actions">
+                    @if (_isProcessing)
+                    {
+                        <button class="btn btn-cancel" @onclick="CancelRequest">
+                            ⏹️ Cancel
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary" @onclick="SendMessage" disabled="@string.IsNullOrWhiteSpace(_inputText)">
+                            📤 Send
+                        </button>
+                    }
+                </div>
+            </div>
+            
+            <div class="input-footer">
+                @if (_usage != null)
+                {
+                    <div class="token-usage">
+                        <span>Tokens: @_usage.Prompt prompt + @_usage.Completion completion = @_usage.Total total</span>
+                    </div>
+                }
+                <div class="shortcuts-hint">
+                    <kbd>Enter</kbd> send · <kbd>Shift+Enter</kbd> newline · <kbd>Esc</kbd> cancel
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- File Viewer Panel -->
+<FileViewer @ref="_fileViewer" OnClose="@HandleFileViewerClose" />
+
+<!-- Agent Tabs for Orchestration -->
+<AgentTabs @ref="_agentTabs" OnClose="@HandleAgentTabsClose" />
+
+<!-- Toast container for notifications -->
+<div class="toast-container">
+    @if (_showCopyToast)
+    {
+        <div class="toast success">
+            ✓ Copied to clipboard
+        </div>
+    }
+</div>
+
+@code {
+    private HubConnection? _hubConnection;
+    private ElementReference _messagesContainer;
+    private ElementReference _inputElement;
+    private FileTree? _fileTree;
+    private FileViewer? _fileViewer;
+    private AgentTabs? _agentTabs;
+    private bool _fileViewerOpen;
+    private bool _orchestrationOpen;
+    private bool _hasOrchestration;
+    
+    private string _sessionId = "";
+    private string _model = "";
+    private string _hostUrl = "";
+    private string _workDir = "";
+    private bool _mcpEnabled;
+    private bool _ragEnabled;
+    private bool _connected;
+    
+    private List<ChatMessageDisplay> _messages = new();
+    private string _inputText = "";
+    private bool _isProcessing;
+    private string _streamingContent = "";
+    private string _currentStatus = "";
+    private string _currentToolName = "";
+    private string _currentToolStatus = "";
+    private TokenUsageDisplay? _usage;
+    private bool _showCopyToast;
+
+    // Autocomplete state
+    private bool _showAutocomplete;
+    private List<AutocompleteSuggestion> _suggestions = new();
+    private int _selectedSuggestion;
+    private string _autocompletePrefix = "";
+
+    private bool _initialized = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // OnAfterRenderAsync with firstRender=true runs after interactive mode is established
+            if (!_initialized)
+            {
+                _initialized = true;
+                // Use a small delay to ensure the circuit is fully established
+                await Task.Delay(100);
+                await InitializeHubConnection();
+            }
+        }
+    }
+
+    private async Task InitializeHubConnection()
+    {
+        try
+        {
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(Navigation.ToAbsoluteUri("/agenthub"))
+                .WithAutomaticReconnect()
+                .Build();
+
+            _hubConnection.Reconnecting += _ =>
+            {
+                _connected = false;
+                InvokeAsync(StateHasChanged);
+                return Task.CompletedTask;
+            };
+
+            _hubConnection.Reconnected += _ =>
+            {
+                _connected = true;
+                InvokeAsync(StateHasChanged);
+                return Task.CompletedTask;
+            };
+            
+            _hubConnection.Closed += ex =>
+            {
+                _connected = false;
+                Console.WriteLine($"Hub connection closed: {ex?.Message}");
+                InvokeAsync(StateHasChanged);
+                return Task.CompletedTask;
+            };
+
+            await _hubConnection.StartAsync();
+            _connected = true;
+            Console.WriteLine("SignalR connected to agenthub");
+
+            // Join session
+            var result = await _hubConnection.InvokeAsync<SessionInfo>("JoinSession", null as string);
+            _sessionId = result.SessionId;
+            Console.WriteLine($"Joined session: {_sessionId}");
+            
+            if (result.Config != null)
+            {
+                _model = result.Config.Model ?? "";
+                _hostUrl = result.Config.HostUrl ?? "";
+                _workDir = result.Config.WorkDirectory ?? "";
+                _mcpEnabled = result.Config.McpEnabled;
+                _ragEnabled = result.Config.RagEnabled;
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to initialize hub connection: {ex}");
+            _connected = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task SendMessage()
+    {
+        Console.WriteLine($"SendMessage called. InputText: '{_inputText}', HubConnection: {_hubConnection != null}, Connected: {_connected}");
+        
+        if (string.IsNullOrWhiteSpace(_inputText) || _hubConnection == null)
+        {
+            Console.WriteLine("SendMessage aborted - empty input or no hub connection");
+            return;
+        }
+
+        // Hide autocomplete
+        _showAutocomplete = false;
+
+        var userMessage = _inputText.Trim();
+        _inputText = "";
+        
+        // Check for slash commands that should be handled locally
+        if (userMessage.StartsWith("/"))
+        {
+            await HandleSlashCommand(userMessage);
+            return;
+        }
+        
+        _messages.Add(new ChatMessageDisplay
+        {
+            Role = "user",
+            Content = userMessage,
+            Timestamp = DateTime.Now
+        });
+
+        _isProcessing = true;
+        _streamingContent = "";
+        _currentStatus = "Thinking...";
+        _currentToolName = "";
+        _currentToolStatus = "";
+        StateHasChanged();
+        await ScrollToBottom();
+
+        try
+        {
+            var stream = _hubConnection.StreamAsync<AgentStreamEvent>("SendMessage", _sessionId, userMessage);
+            
+            await foreach (var evt in stream)
+            {
+                switch (evt.Type)
+                {
+                    case "token":
+                        _streamingContent += evt.Data;
+                        break;
+                    case "status":
+                        _currentStatus = evt.Data;
+                        break;
+                    case "tool_progress":
+                        _currentToolName = evt.ToolName ?? "";
+                        _currentToolStatus = evt.Data;
+                        break;
+                    case "tool_complete":
+                        _currentToolName = "";
+                        _currentToolStatus = "";
+                        break;
+                    case "tool_result":
+                        _messages.Add(new ChatMessageDisplay
+                        {
+                            Role = "tool",
+                            ToolName = evt.ToolName ?? "unknown",
+                            Content = evt.Data,
+                            Timestamp = DateTime.Now
+                        });
+                        break;
+                    case "usage":
+                        _usage = System.Text.Json.JsonSerializer.Deserialize<TokenUsageDisplay>(evt.Data);
+                        break;
+                    case "done":
+                        if (!string.IsNullOrEmpty(_streamingContent))
+                        {
+                            _messages.Add(new ChatMessageDisplay
+                            {
+                                Role = "assistant",
+                                Content = _streamingContent,
+                                Timestamp = DateTime.Now
+                            });
+                        }
+                        break;
+                    case "error":
+                        _messages.Add(new ChatMessageDisplay
+                        {
+                            Role = "error",
+                            Content = evt.Data,
+                            Timestamp = DateTime.Now
+                        });
+                        break;
+                    case "cancelled":
+                        _messages.Add(new ChatMessageDisplay
+                        {
+                            Role = "system",
+                            Content = "Request cancelled",
+                            Timestamp = DateTime.Now
+                        });
+                        break;
+                }
+                StateHasChanged();
+                await ScrollToBottom();
+            }
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessageDisplay
+            {
+                Role = "error",
+                Content = $"Error: {ex.Message}",
+                Timestamp = DateTime.Now
+            });
+        }
+        finally
+        {
+            _isProcessing = false;
+            _streamingContent = "";
+            _currentStatus = "";
+            _currentToolName = "";
+            StateHasChanged();
+        }
+    }
+
+    private async Task CancelRequest()
+    {
+        if (_hubConnection != null)
+        {
+            await _hubConnection.InvokeAsync("CancelRequest", _sessionId);
+        }
+    }
+
+    private async Task ClearChat()
+    {
+        if (_hubConnection != null)
+        {
+            await _hubConnection.InvokeAsync("ClearSession", _sessionId);
+            _messages.Clear();
+            _usage = null;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        // Handle autocomplete navigation
+        if (_showAutocomplete && _suggestions.Count > 0)
+        {
+            if (e.Key == "ArrowDown")
+            {
+                _selectedSuggestion = (_selectedSuggestion + 1) % _suggestions.Count;
+                return;
+            }
+            else if (e.Key == "ArrowUp")
+            {
+                _selectedSuggestion = (_selectedSuggestion - 1 + _suggestions.Count) % _suggestions.Count;
+                return;
+            }
+            else if (e.Key == "Tab")
+            {
+                // Tab applies suggestion without sending
+                await ApplySelectedSuggestion();
+                return;
+            }
+            else if (e.Key == "Escape")
+            {
+                _showAutocomplete = false;
+                return;
+            }
+            // Note: Enter falls through to send message (autocomplete is hidden first)
+        }
+
+        if (e.Key == "Enter" && !e.ShiftKey && !_isProcessing)
+        {
+            // Hide autocomplete before sending
+            _showAutocomplete = false;
+            await SendMessage();
+        }
+        else if (e.Key == "Escape" && _isProcessing)
+        {
+            await CancelRequest();
+        }
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        // Don't trigger autocomplete for navigation keys
+        if (e.Key == "ArrowUp" || e.Key == "ArrowDown" || e.Key == "ArrowLeft" || e.Key == "ArrowRight" || 
+            e.Key == "Escape" || e.Key == "Tab" || e.Key == "Enter")
+            return;
+
+        await UpdateAutocomplete();
+    }
+
+    private async Task UpdateAutocomplete()
+    {
+        var text = _inputText ?? "";
+        
+        // Check for command autocomplete (starts with /)
+        if (text.StartsWith("/"))
+        {
+            var prefix = text;
+            _autocompletePrefix = prefix;
+            _suggestions = GetCommandSuggestions(prefix);
+            _showAutocomplete = _suggestions.Count > 0;
+            _selectedSuggestion = 0;
+            StateHasChanged();
+            return;
+        }
+
+        // Check for file path autocomplete
+        var lastWord = GetLastWord(text);
+        if (ShouldTriggerFileAutocomplete(lastWord))
+        {
+            _autocompletePrefix = lastWord;
+            if (_hubConnection != null)
+            {
+                try
+                {
+                    // Strip @ prefix for file search if present
+                    var searchPrefix = lastWord.StartsWith("@") ? lastWord[1..] : lastWord;
+                    var files = await _hubConnection.InvokeAsync<List<string>>("GetFileSuggestions", _sessionId, searchPrefix);
+                    _suggestions = files.Select(f => new AutocompleteSuggestion
+                    {
+                        Text = lastWord.StartsWith("@") ? "@" + f : f,  // Keep @ prefix in suggestion
+                        Icon = f.EndsWith("/") || f.EndsWith("\\") ? "📁" : "📄",
+                        Description = ""
+                    }).Take(10).ToList();
+                    _showAutocomplete = _suggestions.Count > 0;
+                    _selectedSuggestion = 0;
+                }
+                catch
+                {
+                    _showAutocomplete = false;
+                }
+            }
+            StateHasChanged();
+            return;
+        }
+
+        _showAutocomplete = false;
+        StateHasChanged();
+    }
+
+    private List<AutocompleteSuggestion> GetCommandSuggestions(string prefix)
+    {
+        var commands = new List<AutocompleteSuggestion>
+        {
+            new() { Text = "/help", Icon = "❓", Description = "Show available commands" },
+            new() { Text = "/clear", Icon = "🗑️", Description = "Clear conversation" },
+            new() { Text = "/exit", Icon = "🚪", Description = "Exit the agent" },
+            new() { Text = "/system", Icon = "⚙️", Description = "Set system prompt" },
+            new() { Text = "/stream", Icon = "📡", Description = "Toggle streaming" },
+            new() { Text = "/config", Icon = "🔧", Description = "View configuration" },
+            new() { Text = "/diff", Icon = "📝", Description = "Show git diff" },
+            new() { Text = "/test", Icon = "🧪", Description = "Run tests" },
+            new() { Text = "/run", Icon = "▶️", Description = "Run a command" },
+            new() { Text = "/commit", Icon = "💾", Description = "Commit changes" },
+            new() { Text = "/push", Icon = "⬆️", Description = "Push to remote" },
+            new() { Text = "/pull", Icon = "⬇️", Description = "Pull from remote" },
+            new() { Text = "/rag", Icon = "🔍", Description = "RAG operations" },
+            new() { Text = "/mcp", Icon = "🔌", Description = "MCP operations" },
+            new() { Text = "/models", Icon = "🤖", Description = "Model management" },
+            new() { Text = "/plan", Icon = "📋", Description = "Plan a task" },
+            new() { Text = "/orchestrate", Icon = "🎭", Description = "Multi-agent orchestration" },
+            new() { Text = "/health", Icon = "💚", Description = "Check service health" },
+            new() { Text = "/status", Icon = "📊", Description = "Show session status" },
+        };
+
+        return commands
+            .Where(c => c.Text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Take(8)
+            .ToList();
+    }
+
+    private string GetLastWord(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        
+        // Find the last word (after space, or the whole text)
+        var lastSpace = text.LastIndexOf(' ');
+        return lastSpace >= 0 ? text[(lastSpace + 1)..] : text;
+    }
+
+    private bool ShouldTriggerFileAutocomplete(string word)
+    {
+        if (string.IsNullOrEmpty(word)) return false;
+        
+        // Trigger on @ followed by anything (for file mentions)
+        if (word.StartsWith("@")) return true;
+        
+        // Also trigger on paths starting with ./ ../ / or containing \ /
+        if (word.Length < 2) return false;
+        return word.StartsWith("./") || 
+               word.StartsWith("../") || 
+               word.StartsWith("/") ||
+               word.Contains("\\") ||
+               word.Contains("/");
+    }
+
+    private async Task ApplySelectedSuggestion()
+    {
+        if (_selectedSuggestion < 0 || _selectedSuggestion >= _suggestions.Count)
+            return;
+
+        var suggestion = _suggestions[_selectedSuggestion];
+        
+        // Replace the prefix with the suggestion
+        if (_inputText.StartsWith("/"))
+        {
+            _inputText = suggestion.Text;
+        }
+        else
+        {
+            var lastWord = GetLastWord(_inputText);
+            var beforeLastWord = _inputText.Length > lastWord.Length 
+                ? _inputText[..^lastWord.Length] 
+                : "";
+            _inputText = beforeLastWord + suggestion.Text;
+        }
+
+        _showAutocomplete = false;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private void SelectSuggestion(int index)
+    {
+        _selectedSuggestion = index;
+        _ = ApplySelectedSuggestion();
+    }
+
+    private async Task HandleSlashCommand(string command)
+    {
+        // Add user message showing the command
+        _messages.Add(new ChatMessageDisplay 
+        { 
+            Role = "user", 
+            Content = command, 
+            Timestamp = DateTime.Now 
+        });
+        
+        _isProcessing = true;
+        _currentStatus = "Executing command...";
+        StateHasChanged();
+        await ScrollToBottom();
+
+        try
+        {
+            var stream = _hubConnection!.StreamAsync<AgentStreamEvent>("ExecuteCommand", _sessionId, command);
+            var result = new System.Text.StringBuilder();
+            
+            await foreach (var evt in stream)
+            {
+                switch (evt.Type)
+                {
+                    case "command_result":
+                        result.AppendLine(evt.Data);
+                        break;
+                    case "error":
+                        result.AppendLine($"❌ {evt.Data}");
+                        break;
+                    case "status":
+                        _currentStatus = evt.Data;
+                        StateHasChanged();
+                        break;
+                    
+                    // Orchestration events
+                    case "orchestration_start":
+                        _currentStatus = "Starting orchestration...";
+                        StateHasChanged();
+                        break;
+                        
+                    case "orchestration_plan":
+                        try
+                        {
+                            var planData = System.Text.Json.JsonSerializer.Deserialize<OrchestrationPlanData>(evt.Data);
+                            if (planData != null && _agentTabs != null)
+                            {
+                                _agentTabs.StartOrchestration(planData.TaskName, 
+                                    planData.Subtasks.Select(s => (s.Id, s.Title)).ToList());
+                                _orchestrationOpen = true;
+                                _hasOrchestration = true;
+                            }
+                        }
+                        catch { }
+                        StateHasChanged();
+                        break;
+                        
+                    case "agent_started":
+                        try
+                        {
+                            var startData = System.Text.Json.JsonSerializer.Deserialize<AgentStartData>(evt.Data);
+                            if (startData != null && _agentTabs != null)
+                            {
+                                _agentTabs.UpdateAgentStatusByTaskId(startData.TaskId, "Running");
+                                _agentTabs.AddAgentMessageByTaskId(startData.TaskId, "system", $"🚀 Starting task...");
+                                _currentStatus = $"Working on {startData.TaskId}...";
+                            }
+                        }
+                        catch { }
+                        StateHasChanged();
+                        break;
+                        
+                    case "agent_output":
+                        try
+                        {
+                            var outputData = System.Text.Json.JsonSerializer.Deserialize<AgentOutputData>(evt.Data);
+                            if (outputData != null && _agentTabs != null && !string.IsNullOrEmpty(outputData.TaskId))
+                            {
+                                // Streaming output - append to existing message
+                                _agentTabs.AppendAgentStreamingByTaskId(outputData.TaskId, outputData.Text);
+                            }
+                        }
+                        catch { }
+                        StateHasChanged();
+                        break;
+                        
+                    case "agent_tool_call":
+                        try
+                        {
+                            var toolData = System.Text.Json.JsonSerializer.Deserialize<AgentToolCallData>(evt.Data);
+                            if (toolData != null && _agentTabs != null && !string.IsNullOrEmpty(toolData.TaskId))
+                            {
+                                // Finalize any streaming message before adding tool call
+                                _agentTabs.FinalizeAgentStreamingByTaskId(toolData.TaskId);
+                                _agentTabs.AddAgentMessageByTaskId(toolData.TaskId, "tool", $"🔧 **{toolData.ToolName}**: {toolData.Status}");
+                            }
+                        }
+                        catch { }
+                        StateHasChanged();
+                        break;
+                        
+                    case "agent_completed":
+                        try
+                        {
+                            var completeData = System.Text.Json.JsonSerializer.Deserialize<AgentCompleteData>(evt.Data);
+                            if (completeData != null && _agentTabs != null)
+                            {
+                                // Finalize any streaming message
+                                _agentTabs.FinalizeAgentStreamingByTaskId(completeData.TaskId);
+                                
+                                var status = completeData.Success ? "Completed" : "Failed";
+                                _agentTabs.UpdateAgentStatusByTaskId(completeData.TaskId, status);
+                                
+                                var message = completeData.Success 
+                                    ? completeData.Result ?? "✅ Task completed successfully"
+                                    : $"❌ {completeData.Error ?? "Task failed"}";
+                                _agentTabs.AddAgentMessageByTaskId(completeData.TaskId, 
+                                    completeData.Success ? "assistant" : "error", message);
+                            }
+                        }
+                        catch { }
+                        StateHasChanged();
+                        break;
+                        
+                    case "phase_completed":
+                        _currentStatus = $"Phase completed: {evt.Data}";
+                        StateHasChanged();
+                        break;
+                        
+                    case "orchestration_completed":
+                        try
+                        {
+                            var completeInfo = System.Text.Json.JsonSerializer.Deserialize<OrchestrationCompleteData>(evt.Data);
+                            if (completeInfo != null && _agentTabs != null)
+                            {
+                                var summaryMsg = completeInfo.Success 
+                                    ? "✅ All tasks completed successfully!"
+                                    : "⚠️ Some tasks failed. See individual agent tabs for details.";
+                                _agentTabs.SetMergedResult(summaryMsg);
+                            }
+                        }
+                        catch { }
+                        _currentStatus = "";
+                        StateHasChanged();
+                        break;
+                }
+            }
+            
+            // Add result message if there's content
+            if (result.Length > 0)
+            {
+                _messages.Add(new ChatMessageDisplay 
+                { 
+                    Role = "system", 
+                    Content = result.ToString().TrimEnd(), 
+                    Timestamp = DateTime.Now 
+                });
+            }
+            
+            // Special handling for /clear - clear local messages too
+            if (command.StartsWith("/clear", StringComparison.OrdinalIgnoreCase))
+            {
+                _messages.Clear();
+            }
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessageDisplay 
+            { 
+                Role = "error", 
+                Content = $"Command failed: {ex.Message}", 
+                Timestamp = DateTime.Now 
+            });
+        }
+        finally
+        {
+            _isProcessing = false;
+            _currentStatus = "";
+            StateHasChanged();
+            await ScrollToBottom();
+        }
+    }
+
+    private async Task HandleFileSelect(string path)
+    {
+        if (_hubConnection == null) return;
+        
+        try
+        {
+            var result = await _hubConnection.InvokeAsync<FileContentResult>("ReadFile", _sessionId, path);
+            if (result.Success)
+            {
+                if (_fileViewer != null)
+                {
+                    await _fileViewer.OpenFile(path, result.Content);
+                    _fileViewerOpen = true;
+                    StateHasChanged();
+                }
+            }
+            else
+            {
+                // Show error as a message
+                _messages.Add(new ChatMessageDisplay
+                {
+                    Role = "error",
+                    Content = $"Could not open file: {result.Error}",
+                    Timestamp = DateTime.Now
+                });
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error reading file: {ex.Message}");
+        }
+    }
+
+    private void HandleFileViewerClose()
+    {
+        _fileViewerOpen = false;
+        StateHasChanged();
+    }
+
+    private void HandleAgentTabsClose()
+    {
+        _orchestrationOpen = false;
+        StateHasChanged();
+    }
+    
+    private void ShowOrchestration()
+    {
+        if (_agentTabs != null && _agentTabs.HasOrchestration)
+        {
+            _agentTabs.Show();
+            _orchestrationOpen = true;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("thuvu.scrollToBottom", _messagesContainer);
+        }
+        catch { }
+    }
+
+    private async Task CopyContent(string content)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("thuvu.copyToClipboard", content);
+            _showCopyToast = true;
+            StateHasChanged();
+            
+            // Hide toast after 2 seconds
+            await Task.Delay(2000);
+            _showCopyToast = false;
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    private string GetRoleDisplay(string role) => role switch
+    {
+        "user" => "👤 You",
+        "assistant" => "🤖 Assistant",
+        "tool" => "🔧 Tool",
+        "error" => "❌ Error",
+        "system" => "ℹ️ System",
+        _ => role
+    };
+
+    private string TruncatePath(string path, int maxLength = 25)
+    {
+        if (string.IsNullOrEmpty(path) || path.Length <= maxLength)
+            return path;
+        return "..." + path[^(maxLength - 3)..];
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    // Helper classes
+    private class ChatMessageDisplay
+    {
+        public string Role { get; set; } = "";
+        public string Content { get; set; } = "";
+        public string? ToolName { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+
+    private class TokenUsageDisplay
+    {
+        public int Prompt { get; set; }
+        public int Completion { get; set; }
+        public int Total { get; set; }
+    }
+
+    private class SessionInfo
+    {
+        public string SessionId { get; set; } = "";
+        public int MessageCount { get; set; }
+        public ConfigInfo? Config { get; set; }
+    }
+
+    private class ConfigInfo
+    {
+        public string? Model { get; set; }
+        public string? HostUrl { get; set; }
+        public string? WorkDirectory { get; set; }
+        public bool McpEnabled { get; set; }
+        public bool RagEnabled { get; set; }
+    }
+
+    private class AgentStreamEvent
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        public string Type { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("data")]
+        public string Data { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("toolName")]
+        public string? ToolName { get; set; }
+    }
+
+    private class AutocompleteSuggestion
+    {
+        public string Text { get; set; } = "";
+        public string Icon { get; set; } = "📄";
+        public string Description { get; set; } = "";
+    }
+
+    private class FileContentResult
+    {
+        public bool Success { get; set; }
+        public string Content { get; set; } = "";
+        public string? Error { get; set; }
+        public bool IsBinary { get; set; }
+    }
+
+    // Orchestration data classes
+    private class OrchestrationPlanData
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("taskId")]
+        public string TaskId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("taskName")]
+        public string TaskName { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("subtasks")]
+        public List<SubtaskInfo> Subtasks { get; set; } = new();
+    }
+
+    private class SubtaskInfo
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("title")]
+        public string Title { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        public string Description { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = "";
+    }
+
+    private class AgentStartData
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("agentId")]
+        public string AgentId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("taskId")]
+        public string TaskId { get; set; } = "";
+    }
+
+    private class AgentOutputData
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("agentId")]
+        public string AgentId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("taskId")]
+        public string TaskId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("text")]
+        public string Text { get; set; } = "";
+    }
+
+    private class AgentToolCallData
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("agentId")]
+        public string AgentId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("taskId")]
+        public string TaskId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("toolName")]
+        public string ToolName { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = "";
+    }
+
+    private class AgentCompleteData
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("agentId")]
+        public string AgentId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("taskId")]
+        public string TaskId { get; set; } = "";
+        [System.Text.Json.Serialization.JsonPropertyName("success")]
+        public bool Success { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("result")]
+        public string? Result { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; }
+    }
+
+    private class OrchestrationCompleteData
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("success")]
+        public bool Success { get; set; }
+    }
+}

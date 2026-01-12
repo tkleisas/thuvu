@@ -1,0 +1,122 @@
+@inject IJSRuntime JS
+@using Microsoft.AspNetCore.SignalR.Client
+
+<div class="file-tree">
+    <div class="file-tree-header">
+        <h3>📁 Workspace</h3>
+        <button class="btn-icon" @onclick="RefreshTree" title="Refresh">🔄</button>
+    </div>
+    
+    @if (_isLoading)
+    {
+        <div class="loading">Loading...</div>
+    }
+    else if (_error != null)
+    {
+        <div class="error">@_error</div>
+    }
+    else
+    {
+        <div class="file-tree-content">
+            @foreach (var item in _items)
+            {
+                <FileTreeItem Item="@item" OnSelect="@HandleSelect" OnExpand="@HandleExpand" />
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string RootPath { get; set; } = "";
+
+    [Parameter]
+    public EventCallback<string> OnFileSelect { get; set; }
+
+    [Parameter]
+    public HubConnection? HubConnection { get; set; }
+
+    [Parameter]
+    public string SessionId { get; set; } = "";
+
+    private List<FileItem> _items = new();
+    private bool _isLoading = true;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshTree();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (HubConnection != null && _items.Count == 0)
+        {
+            await RefreshTree();
+        }
+    }
+
+    public async Task RefreshTree()
+    {
+        _isLoading = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            if (HubConnection != null)
+            {
+                var items = await HubConnection.InvokeAsync<List<FileItem>>("GetDirectoryContents", SessionId, ".");
+                _items = items ?? new List<FileItem>();
+            }
+            else
+            {
+                _items = new List<FileItem>();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleSelect(string path)
+    {
+        await OnFileSelect.InvokeAsync(path);
+    }
+
+    private async Task HandleExpand(FileItem item)
+    {
+        if (!item.IsDirectory || item.IsLoaded) return;
+
+        try
+        {
+            if (HubConnection != null)
+            {
+                var children = await HubConnection.InvokeAsync<List<FileItem>>("GetDirectoryContents", SessionId, item.Path);
+                item.Children = children ?? new List<FileItem>();
+                item.IsLoaded = true;
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading directory: {ex.Message}");
+        }
+    }
+
+    public class FileItem
+    {
+        public string Name { get; set; } = "";
+        public string Path { get; set; } = "";
+        public bool IsDirectory { get; set; }
+        public bool IsExpanded { get; set; }
+        public bool IsLoaded { get; set; }
+        public List<FileItem> Children { get; set; } = new();
+    }
+}
