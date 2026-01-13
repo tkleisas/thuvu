@@ -160,6 +160,19 @@ namespace thuvu.Web.Services
                                         total = usage.TotalTokens
                                     })
                                 });
+                                
+                                // Also send context usage info
+                                var tokenTracker = TokenTracker.Instance;
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "context_usage",
+                                    Data = JsonSerializer.Serialize(new 
+                                    { 
+                                        totalTokens = tokenTracker.TotalTokens,
+                                        maxContextLength = tokenTracker.MaxContextLength,
+                                        usagePercent = tokenTracker.UsagePercent * 100
+                                    })
+                                });
                             },
                             onToolComplete: (name, result, elapsed) =>
                             {

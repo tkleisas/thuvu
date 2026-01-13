@@ -151,6 +151,8 @@ html, body {
 /* Sidebar */
 .sidebar {
     width: 280px;
+    min-width: 200px;
+    max-width: 500px;
     background-color: var(--bg-secondary);
     border-right: 1px solid var(--border-color);
     padding: 1rem;
@@ -158,6 +160,14 @@ html, body {
     flex-direction: column;
     gap: 1.5rem;
     overflow-y: auto;
+    overflow-x: auto;
+    resize: horizontal;
+}
+
+/* Resize handle styling */
+.sidebar::-webkit-resizer {
+    background-color: var(--accent-blue);
+    border-radius: 2px;
 }
 
 .sidebar-section h3 {
@@ -195,6 +205,57 @@ html, body {
 }
 
 .config-value.disabled {
+    color: var(--text-muted);
+}
+
+/* Context Usage Display */
+.context-usage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.context-bar {
+    height: 8px;
+    background-color: var(--bg-primary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.context-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.context-fill.normal {
+    background-color: var(--accent-green);
+}
+
+.context-fill.warning {
+    background-color: var(--accent-yellow);
+}
+
+.context-fill.critical {
+    background-color: var(--accent-red);
+}
+
+.context-stats {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+}
+
+.context-percent {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.context-tokens {
+    color: var(--text-muted);
+}
+
+.text-muted {
     color: var(--text-muted);
 }
 
@@ -613,6 +674,9 @@ html, body {
     border: 1px solid var(--border-color);
     border-radius: 8px;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 .file-tree-header {
@@ -631,9 +695,10 @@ html, body {
 }
 
 .file-tree-content {
-    max-height: 400px;
+    flex: 1;
     overflow-y: auto;
     padding: 0.5rem;
+    min-height: 0;
 }
 
 .file-tree-item {
@@ -1278,12 +1343,6 @@ html, body {
     font-weight: 500;
 }
 
-.file-tree-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.5rem;
-}
-
 .file-tree-item {
     user-select: none;
 }
@@ -1333,15 +1392,59 @@ html, body {
 
 /* File Tree in Sidebar */
 .sidebar .file-tree-section {
-    flex: 1;
-    min-height: 200px;
+    flex: 0 0 auto;
+    height: 200px;
+    min-height: 150px;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    transition: height 0.3s ease, flex 0.3s ease;
+}
+
+.sidebar .file-tree-section.expanded {
+    flex: 1 1 100%;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    overflow: visible;
+}
+
+/* Hide other sections when workspace is expanded */
+.sidebar:has(.file-tree-section.expanded) .sidebar-section:not(.file-tree-section) {
+    display: none;
+}
+
+/* Hide sidebar-actions (Clear Chat button) when workspace is expanded */
+.sidebar:has(.file-tree-section.expanded) .sidebar-actions {
+    display: none;
+}
+
+.sidebar .file-tree-section .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 0.5rem;
+    flex-shrink: 0;
+}
+
+.sidebar .file-tree-section .section-header h3 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    margin: 0;
 }
 
 .sidebar .file-tree-section .file-tree {
-    height: 100%;
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+.sidebar .file-tree-section .file-tree .file-tree-header {
+    display: none; /* Hide the duplicate header from FileTree component */
 }
 
 /* Layout adjustment when file viewer is open */

@@ -9,7 +9,13 @@
     <!-- Sidebar with file tree and config -->
     <aside class="sidebar">
         <!-- File Tree Section -->
-        <div class="sidebar-section file-tree-section">
+        <div class="sidebar-section file-tree-section @(_workspaceExpanded ? "expanded" : "")">
+            <div class="section-header">
+                <h3>📁 Workspace</h3>
+                <button class="btn-icon" @onclick="ToggleWorkspace" title="@(_workspaceExpanded ? "Shrink" : "Expand")">
+                    @(_workspaceExpanded ? "⬆️" : "⬇️")
+                </button>
+            </div>
             <FileTree RootPath="." 
                       HubConnection="@_hubConnection" 
                       SessionId="@_sessionId"
@@ -73,6 +79,28 @@
                 <span class="config-label">Messages:</span>
                 <span class="config-value">@_messages.Count</span>
             </div>
+        </div>
+        
+        <div class="sidebar-section">
+            <h3>Context Usage</h3>
+            @if (_contextUsage != null)
+            {
+                <div class="context-usage">
+                    <div class="context-bar">
+                        <div class="context-fill @GetContextBarClass()" style="width: @(_contextUsage.UsagePercent)%"></div>
+                    </div>
+                    <div class="context-stats">
+                        <span class="context-percent">@(_contextUsage.UsagePercent.ToString("F1"))%</span>
+                        <span class="context-tokens">@_contextUsage.TotalTokens.ToString("N0") / @_contextUsage.MaxContextLength.ToString("N0")</span>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="config-item">
+                    <span class="config-value text-muted">No data yet</span>
+                </div>
+            }
         </div>
         
         <div class="sidebar-actions">
@@ -260,7 +288,9 @@
     private string _currentToolName = "";
     private string _currentToolStatus = "";
     private TokenUsageDisplay? _usage;
+    private ContextUsageDisplay? _contextUsage;
     private bool _showCopyToast;
+    private bool _workspaceExpanded = false;
 
     // Autocomplete state
     private bool _showAutocomplete;
@@ -414,6 +444,9 @@
                         break;
                     case "usage":
                         _usage = System.Text.Json.JsonSerializer.Deserialize<TokenUsageDisplay>(evt.Data);
+                        break;
+                    case "context_usage":
+                        _contextUsage = System.Text.Json.JsonSerializer.Deserialize<ContextUsageDisplay>(evt.Data);
                         break;
                     case "done":
                         if (!string.IsNullOrEmpty(_streamingContent))
@@ -913,6 +946,11 @@
         }
     }
 
+    private void ToggleWorkspace()
+    {
+        _workspaceExpanded = !_workspaceExpanded;
+    }
+
     private async Task ScrollToBottom()
     {
         try
@@ -953,6 +991,17 @@
         if (string.IsNullOrEmpty(path) || path.Length <= maxLength)
             return path;
         return "..." + path[^(maxLength - 3)..];
+    }
+
+    private string GetContextBarClass()
+    {
+        if (_contextUsage == null) return "";
+        return _contextUsage.UsagePercent switch
+        {
+            >= 90 => "critical",
+            >= 70 => "warning",
+            _ => "normal"
+        };
     }
 
     public async ValueTask DisposeAsync()
@@ -1091,5 +1140,15 @@
     {
         [System.Text.Json.Serialization.JsonPropertyName("success")]
         public bool Success { get; set; }
+    }
+
+    private class ContextUsageDisplay
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("totalTokens")]
+        public int TotalTokens { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("maxContextLength")]
+        public int MaxContextLength { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("usagePercent")]
+        public double UsagePercent { get; set; }
     }
 }
