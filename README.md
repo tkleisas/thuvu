@@ -1,4 +1,4 @@
-﻿# T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage
+# T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage
 <img src="images/thuvu.png" width="300" alt="T.H.U.V.U. Logo">
 
 A **local-first AI coding agent** that performs software engineering tasks autonomously using local or cloud LLMs. It prioritizes privacy, autonomy, extensibility, and safety.
@@ -10,84 +10,93 @@ that use local LLMs and I wanted to create a simple agent that can use tools and
 the inspiration for this project is Claude Code and Gemini CLI. But I want to be able to run it locally,
 without the need for an API key or internet connection. I also wanted to see how far I can go with a local LLM.
 
+## Quick Start
+
+### Prerequisites
+- .NET 8.0 SDK
+- Local LLM server (LM Studio) OR cloud API (DeepSeek, OpenAI-compatible)
+- Optional: Docker for RAG database, Deno for MCP code execution
+
+### Running THUVU
+
+```bash
+# Build the project
+dotnet build
+
+# Run with TUI (recommended)
+dotnet run -- --tui
+
+# Run with Web UI
+dotnet run -- --web
+# Then open http://localhost:5000
+
+# Run in CLI mode
+dotnet run
+```
+
+### Docker Deployment
+
+```bash
+cd docker
+
+# Full stack with local Ollama LLM
+docker-compose --profile full up -d
+
+# With external LLM (edit .env first)
+docker-compose up -d thuvu postgres-rag
+
+# Pull models for Ollama (first time)
+docker-compose --profile setup up
+```
+
+See [docker/README.md](docker/README.md) for detailed Docker deployment instructions.
+
 ## Supported Models and Providers
 THUVU works with any OpenAI-compatible API:
 
-**Local LLMs (via LM Studio):**
+**Local LLMs (via LM Studio or Ollama):**
 - qwen/qwen3-coder-30b (recommended for coding tasks)
-- qwen/qwen3-4b-2507 (fast, runs on CPU)
-- ibm/granite-4-h-tiny
-- Any model with tool/function calling support (indicated by hammer icon in LM Studio)
+- qwen2.5-coder:14b (good balance of speed and capability)
+- mistralai/devstral-small (fast, good for simpler tasks)
+- Any model with tool/function calling support
 
 **Cloud Providers:**
 - DeepSeek API (deepseek-chat, deepseek-reasoner)
+- OpenAI API
 - Any OpenAI-compatible API endpoint
 
 **LM Studio Setup:**
 - LM Studio 0.3.23+ recommended
-- You can increase the context window to the maximum supported by the model (increases memory usage)
-- For qwen3-4b-2507, memory usage can reach 38 GB with max context
-- If low on VRAM, uncheck "Offload KV cache to GPU memory" in model settings
+- Look for models with the hammer icon (tool calling support)
+- Increase context window for complex tasks (increases memory usage)
 
 <img src="images/lmstudio_model_settings.png" width="600" alt="LM Studio Model Settings">
-
-## How to run
-1. Download the code and extract it to a folder. Build with Visual Studio 2022+, VS Code with C# extension, or JetBrains Rider (.NET 8.0 required).
-2. Start LM Studio and load a model on the Developer tab (served on http://localhost:1234 by default), OR configure a cloud API in `appsettings.json`.
-3. Run `thuvu.exe` - the TUI interface will start with health checks. Type messages or use `/help` for commands.
-
-**Interface Options:**
-- **CLI Mode**: `thuvu.exe` - Default terminal interface
-- **TUI Mode**: `thuvu.exe --tui` - Terminal.GUI multi-panel interface
-- **Web Mode**: `thuvu.exe --web` - Blazor Server web interface at http://localhost:5000
-
-**TUI Interface Features:**
-- Multi-panel layout with orchestrator output, agent tabs, and input area
-- Command autocomplete (Tab key)
-- File/directory autocomplete with `@` prefix
-- Real-time tool execution progress with elapsed time
-- ESC key to cancel running operations
-
-**Web Interface Features:**
-- Modern Blazor Server UI with SignalR real-time streaming
-- Workspace file browser with file preview
-- Slash command autocomplete
-- File reference autocomplete with `@` prefix (e.g., `@src/Program.cs`)
-- Multi-agent orchestration panel with task tabs
-- Real-time tool execution progress
-- Token usage tracking
-
-<img src="images/thuvu-web.png" width="800" alt="T.H.U.V.U. Web Interface">
-
-## How to test
-You can test the agent by requesting it to create projects. Example tasks:
-- "Create a Fibonacci calculation program"
-- "Create an ASP.NET Core web app with authentication"
-- Use `/plan` to decompose complex tasks and `/orchestrate` to run with multiple agents
-
-## Why the name thuvu?
-The name is a reference to the late and great Greek comedian Thanassis Veggos who made a 2 part film series 
-where the main character (ΘΒ) Θου Βου (Thou Vou) was an aspiring secret agent, studying at the
-secret agent school and messing up all the tasks he was assigned.
 
 ## Features
 
 ### Core Features
-- **LLM Integration**: Connect to local LLMs via LM Studio's OpenAI-compatible REST API, or cloud APIs (DeepSeek, etc.)
-- **Multi-Model Support**: Configure multiple models with automatic selection based on task type (thinking vs coding)
-- **Tool System**: 20+ tools for file operations, dotnet commands, git operations, NuGet, and process execution
-- **Permission System**: Granular permission control with persistence (always allow/deny per tool)
+- **LLM Integration**: Connect to local LLMs via LM Studio/Ollama, or cloud APIs
+- **Multi-Model Support**: Configure multiple models with automatic selection based on task type
+- **Model-Specific Prompts**: Each model can have its own system prompt template
+- **Tool System**: 25+ tools for file operations, dotnet, git, NuGet, browser automation, and more
+- **Permission System**: Granular permission control with persistence and Web UI approval dialog
 - **Multiple Interfaces**: CLI, TUI (Terminal.GUI), and Web (Blazor Server) interfaces
 - **Context Management**: Automatic summarization when context is near limit, token tracking
+- **Tool Result Compression**: Automatic compression of large tool outputs to save tokens
 
 ### Web Interface
-Blazor Server web UI with real-time SignalR streaming:
+Modern Blazor Server web UI with real-time SignalR streaming:
 - **Chat Interface**: Send messages and receive streaming responses
-- **Workspace Browser**: Navigate and preview files in your work directory
+- **Workspace Browser**: Navigate and preview files with refresh button
+- **Settings Panel**: Configure providers, agent settings, and features
+- **Permission Dialog**: Approve or deny tool calls with Always/Session/Once/Deny options
 - **Slash Commands**: Full support for all THUVU commands with autocomplete
 - **File References**: Use `@filename` to include file contents in your message
 - **Orchestration Panel**: Visual multi-agent task execution with per-task output
-- **Tool Progress**: Real-time display of tool calls and results
+- **Screenshot Display**: View browser automation screenshots inline
+- **Auto-Summarization**: Automatic context compression at 90% usage
+
+<img src="images/thuvu-web.png" width="800" alt="T.H.U.V.U. Web Interface">
 
 ### TUI Interface
 Terminal.GUI-based multi-panel interface:
@@ -95,6 +104,29 @@ Terminal.GUI-based multi-panel interface:
 - **Command Autocomplete**: Tab key for commands and file paths
 - **Real-time Progress**: Tool execution with elapsed time display
 - **Keyboard Navigation**: ESC to cancel, arrow keys for autocomplete
+
+### Browser Automation
+Playwright-based web browsing tools for research and testing:
+
+```bash
+# Install browsers (first time)
+/browser install
+
+# Navigate and interact
+/browser open https://example.com
+/browser click "button#submit"
+/browser type "#search" "query text"
+/browser screenshot
+
+# Get page elements
+/browser elements "a.nav-link"
+
+# Execute JavaScript
+/browser script "document.title"
+
+# Close browser
+/browser close
+```
 
 ### Multi-Agent Orchestration
 Decompose complex tasks and run multiple agents in parallel:
@@ -106,82 +138,76 @@ Decompose complex tasks and run multiple agents in parallel:
 # Run orchestration with multiple agents
 /orchestrate --agents 3
 
-# Resume after interruption (resets stuck tasks)
+# Resume after interruption
 /orchestrate --retry
 
 # Use TUI mode for visual progress
 /orchestrate --tui
-
-# Start fresh
-/orchestrate --reset
 ```
 
-**Orchestration Features:**
-- Task decomposition with dependency analysis
-- Parallel agent execution (configurable agent count)
-- Progress tracking with file-based persistence (`current-plan.json`)
-- Automatic retry of failed/interrupted tasks
-- Git integration for change tracking
-- Thinking model escalation for complex tasks
-
-### RAG (Retrieval-Augmented Generation)
-The agent supports RAG for semantic search across your codebase using PostgreSQL with pgvector:
+### System Prompts
+Each model can have its own system prompt for optimized behavior:
 
 ```bash
-# Enable RAG (requires PostgreSQL with pgvector)
-/rag enable
+# List available prompt templates
+/prompt list
 
-# Index your source code
-/rag index src/ --recursive --pattern *.cs
+# Apply a template to current session
+/prompt use coding
 
-# Search semantically
-/rag search "how to handle HTTP requests"
+# Show current system prompt
+/prompt show
 
-# View stats
-/rag stats
-
-# Clear index
-/rag clear
+# Reload prompt from model configuration
+/prompt reload
 ```
 
-**RAG Setup Requirements:**
-
-**Option 1: Using Docker (Recommended)**
-```bash
-cd docker
-docker-compose up -d
-```
-This starts PostgreSQL 16 with pgvector pre-installed. Connection details:
-- Host: `localhost`
-- Port: `5432`
-- Database: `thuvu_rag`
-- User: `thuvu`
-- Password: `thuvu_secret`
-
-**Option 2: Manual Setup**
-1. PostgreSQL 15+ with pgvector extension installed
-2. Create a database: `CREATE DATABASE thuvu_rag;`
-3. Run the schema: `docker/init/01-init-rag.sql`
-
-Configure connection in `appsettings.json`:
-
+Configure in `appsettings.json`:
 ```json
 {
-  "RagConfig": {
-    "ConnectionString": "Host=localhost;Port=5433;Database=thuvu_rag;Username=thuvu;Password=thuvu_secret",
-    "EmbeddingDimension": 1536,
-    "EmbeddingHostUrl": "http://127.0.0.1:1234",
-    "EmbeddingModel": "text-embedding-nomic-embed-text-v1.5",
-    "Enabled": true
+  "Models": {
+    "Models": [
+      {
+        "ModelId": "deepseek-chat",
+        "SystemPromptTemplate": "deepseek"
+      },
+      {
+        "ModelId": "custom-model",
+        "SystemPrompt": "@prompts/my-custom-prompt.md"
+      }
+    ]
   }
 }
 ```
 
-### Logging
-Structured logging with session tracking:
-- Per-agent log files in `work/logs/` directory
-- Session-based log separation for orchestration
-- Tool execution timing and progress tracking
+See [prompts/README.md](prompts/README.md) for template documentation.
+
+### RAG (Retrieval-Augmented Generation)
+Semantic search across your codebase using PostgreSQL with pgvector:
+
+```bash
+# Start RAG database
+cd docker && docker-compose up -d postgres-rag
+
+# Enable and index
+/rag enable
+/rag index src/ --recursive --pattern *.cs
+
+# Search semantically
+/rag search "how to handle HTTP requests"
+```
+
+### MCP Code Execution
+Execute TypeScript in a secure Deno sandbox with access to all tools:
+
+```bash
+# Check and enable MCP
+/mcp check
+/mcp enable
+
+# Run TypeScript code
+/mcp run "const files = await searchFiles('**/*.cs'); return files.length;"
+```
 
 ## Commands Reference
 
@@ -191,6 +217,7 @@ Structured logging with session tracking:
 | `/exit` | Quit the agent |
 | `/clear` | Reset conversation |
 | `/system <text>` | Set system prompt |
+| `/prompt [list\|use\|show\|reload]` | Manage system prompt templates |
 | `/stream on\|off` | Toggle streaming |
 | `/diff [options]` | Show git diff |
 | `/test [options]` | Run dotnet tests |
@@ -200,94 +227,14 @@ Structured logging with session tracking:
 | `/pull [options]` | Safe pull with autostash |
 | `/config` | View/manage configuration |
 | `/set key value` | Change settings |
-| `/rag subcommand` | RAG operations (index, search, stats, clear) |
-| `/mcp subcommand` | MCP code execution |
+| `/rag <subcommand>` | RAG operations (index, search, stats, clear) |
+| `/mcp <subcommand>` | MCP code execution |
+| `/browser <subcommand>` | Browser automation |
 | `/plan <task>` | Decompose task into subtasks |
-| `/orchestrate` | Run multi-agent orchestration |
-| `/models` | List and switch models |
+| `/orchestrate [options]` | Run multi-agent orchestration |
+| `/models [list\|use]` | List and switch models |
 | `/summarize` | Summarize conversation to reduce context |
-
-### MCP (Model Context Protocol) Code Execution
-
-Execute TypeScript code in a secure Deno sandbox with access to all THUVU tools. Based on [Anthropic's MCP paper](https://www.anthropic.com/engineering/code-execution-with-mcp).
-
-**Requirements:** [Deno](https://deno.land) runtime installed.
-
-```bash
-# Check MCP environment
-/mcp check
-
-# Enable MCP
-/mcp enable
-
-# Run TypeScript code
-/mcp run "const files = await searchFiles('**/*.cs'); return files.length;"
-
-# List available tools
-/mcp tools
-
-# View configuration
-/mcp config
-```
-
-**Benefits:**
-- Execute multiple tool calls in a single request
-- Process data locally in the sandbox
-- Return only relevant results (token reduction)
-- Full TypeScript/JavaScript capabilities
-
-## Configuration
-
-Example `appsettings.json`:
-
-```json
-{
-  "AgentConfig": {
-    "HostUrl": "http://127.0.0.1:1234",
-    "Model": "qwen/qwen3-coder-30b",
-    "Stream": true,
-    "TimeoutMs": 1800000,
-    "WorkDirectory": "./work",
-    "MaxContextLength": 65536
-  },
-  "Models": {
-    "DefaultModelId": "deepseek-chat",
-    "ThinkingModelId": "deepseek-reasoner",
-    "AutoSelectModel": true,
-    "Models": [
-      {
-        "ModelId": "qwen/qwen3-coder-30b",
-        "DisplayName": "Qwen3 Coder 30B",
-        "HostUrl": "http://127.0.0.1:1234",
-        "IsLocal": true,
-        "SupportsTools": true,
-        "IsThinkingModel": false
-      },
-      {
-        "ModelId": "deepseek-chat",
-        "DisplayName": "DeepSeek Chat",
-        "HostUrl": "https://api.deepseek.com",
-        "AuthToken": "your-api-key",
-        "IsLocal": false,
-        "MaxContextLength": 130000,
-        "MaxOutputTokens": 8096,
-        "SupportsTools": true
-      },
-      {
-        "ModelId": "deepseek-reasoner",
-        "DisplayName": "DeepSeek Reasoner (Thinking)",
-        "HostUrl": "https://api.deepseek.com",
-        "AuthToken": "your-api-key",
-        "IsLocal": false,
-        "MaxContextLength": 130000,
-        "MaxOutputTokens": 65536,
-        "IsThinkingModel": true,
-        "SupportsTools": false
-      }
-    ]
-  }
-}
-```
+| `/health` | Check service health |
 
 ## Available Tools
 
@@ -298,6 +245,7 @@ Example `appsettings.json`:
 | `write_file` | Write file with checksum validation | Write |
 | `apply_patch` | Apply unified diff patches | Write |
 | `run_process` | Execute whitelisted commands | Write |
+| `execute_code` | Run TypeScript in Deno sandbox | Write |
 | `dotnet_restore` | NuGet restore | Write |
 | `dotnet_build` | Build solution/project | Write |
 | `dotnet_test` | Run tests | Write |
@@ -311,13 +259,55 @@ Example `appsettings.json`:
 | `rag_search` | Query indexed content | ReadOnly |
 | `rag_stats` | Index statistics | ReadOnly |
 | `rag_clear` | Clear index | Write |
+| `browser_navigate` | Navigate to URL | Write |
+| `browser_click` | Click element | Write |
+| `browser_type` | Type text into element | Write |
+| `browser_get_elements` | Query page elements | ReadOnly |
+| `browser_screenshot` | Capture screenshot | ReadOnly |
+| `browser_script` | Execute JavaScript | Write |
+| `browser_close` | Close browser | Write |
 
-## Next steps
-- Improve multi-agent coordination and conflict resolution
-- Add more intelligent task decomposition based on codebase analysis
-- Support more programming languages and frameworks beyond .NET
-- Implement agent memory/learning across sessions
-- Add support for more cloud LLM providers
+## Configuration
+
+See [docs/configuration.md](docs/configuration.md) for detailed configuration options.
+
+Basic `appsettings.json`:
+
+```json
+{
+  "AgentConfig": {
+    "HostUrl": "http://127.0.0.1:1234",
+    "Model": "qwen/qwen3-coder-30b",
+    "Stream": true,
+    "TimeoutMs": 1800000,
+    "WorkDirectory": "./work",
+    "MaxContextLength": 130000,
+    "MaxIterations": 50
+  },
+  "Models": {
+    "DefaultModelId": "qwen/qwen3-coder-30b",
+    "Models": [
+      {
+        "ModelId": "qwen/qwen3-coder-30b",
+        "DisplayName": "Qwen3 Coder 30B",
+        "HostUrl": "http://127.0.0.1:1234",
+        "IsLocal": true,
+        "SupportsTools": true,
+        "MaxContextLength": 130000,
+        "SystemPromptTemplate": "coding"
+      }
+    ]
+  },
+  "RagConfig": {
+    "ConnectionString": "Host=localhost;Port=5433;Database=thuvu_rag;...",
+    "Enabled": true
+  },
+  "McpConfig": {
+    "Enabled": true,
+    "DenoPath": "deno"
+  }
+}
+```
 
 ## Architecture
 
@@ -327,47 +317,78 @@ thuvu/
 ├── AgentLoop.cs            # LLM conversation loop with tool calling
 ├── ToolExecutor.cs         # Tool dispatch and execution
 ├── TuiInterface.cs         # Terminal.GUI main interface
+├── Dockerfile              # Production Docker image
 │
 ├── Models/                 # Data models and core logic
-│   ├── TaskDecomposition.cs    # Task planning and breakdown
+│   ├── AgentConfig.cs          # Main configuration
+│   ├── ModelConfig.cs          # Multi-model registry
+│   ├── SystemPromptManager.cs  # Model-specific prompts
+│   ├── TaskDecomposition.cs    # Task planning
 │   ├── TaskOrchestrator.cs     # Multi-agent coordination
-│   ├── PermissionManager.cs    # Security permissions with persistence
-│   ├── TokenTracker.cs         # Context length tracking
-│   ├── McpCodeExecutor.cs      # Deno sandbox executor
-│   └── ModelConfig.cs          # Multi-model registry
+│   ├── PermissionManager.cs    # Security permissions
+│   ├── TokenTracker.cs         # Context tracking
+│   └── McpCodeExecutor.cs      # Deno sandbox
 │
 ├── Web/                    # Blazor Server Web Interface
-│   ├── WebHost.cs              # ASP.NET Core host configuration
+│   ├── WebHost.cs              # ASP.NET Core host
+│   ├── Hubs/AgentHub.cs        # SignalR hub
 │   ├── Services/
-│   │   └── WebAgentService.cs  # Agent service for web sessions
+│   │   └── WebAgentService.cs  # Agent service
 │   └── Components/
-│       ├── Chat.razor          # Main chat interface
-│       ├── FileTree.razor      # Workspace file browser
-│       ├── FileViewer.razor    # File preview panel
-│       └── AgentTabs.razor     # Orchestration task tabs
-│
-├── Tui/                    # TUI components
-│   ├── TuiOrchestrationView.cs # Multi-agent view
-│   ├── TuiMessageQueue.cs      # Thread-safe UI updates
-│   └── TuiAutocomplete.cs      # Command/file autocomplete
+│       ├── Chat.razor          # Main chat UI
+│       ├── Settings.razor      # Configuration panel
+│       ├── PermissionDialog.razor  # Tool approval
+│       ├── FileTree.razor      # Workspace browser
+│       └── AgentTabs.razor     # Orchestration tabs
 │
 ├── Tools/                  # Tool implementations
-│   ├── SearchFilesToolImpl.cs
+│   ├── BrowserToolImpl.cs      # Playwright browser
 │   ├── ReadFileToolImpl.cs
 │   ├── WriteFileToolImpl.cs
 │   └── ...
 │
+├── prompts/                # System prompt templates
+│   ├── README.md
+│   ├── deepseek.md
+│   └── qwen.md
+│
+├── docker/                 # Docker deployment
+│   ├── docker-compose.yml      # Multi-container setup
+│   ├── Dockerfile.thuvu        # App container
+│   ├── Dockerfile.postgres     # RAG database
+│   └── README.md
+│
 ├── mcp/                    # MCP TypeScript ecosystem
 │   ├── servers/            # Tool wrappers
-│   ├── runtime/            # Sandbox execution
-│   └── catalog.ts          # Tool discovery
+│   └── runtime/            # Sandbox execution
 │
 ├── wwwroot/                # Web static assets
-│   ├── css/app.css         # Web UI styles
-│   └── js/thuvu.js         # JavaScript interop
+│   └── css/app.css         # Web UI styles
 │
-└── skills/                 # Saved agent workflows
+└── docs/                   # Documentation
+    ├── configuration.md
+    └── orchestration.md
 ```
+
+## Documentation
+
+- [Configuration Guide](docs/configuration.md) - Detailed configuration options
+- [Docker Deployment](docker/README.md) - Multi-container Docker setup
+- [System Prompts](prompts/README.md) - Custom prompt templates
+- [Multi-Agent Orchestration](docs/orchestration.md) - Task decomposition and parallel execution
+
+## Why the name THUVU?
+The name is a reference to the late and great Greek comedian Thanassis Veggos who made a 2-part film series 
+where the main character (ΘΒ) Θου Βου (Thou Vou) was an aspiring secret agent, studying at the
+secret agent school and messing up all the tasks he was assigned.
+
+## Next Steps
+- Improve multi-agent coordination and conflict resolution
+- Add more intelligent task decomposition based on codebase analysis
+- Support more programming languages and frameworks beyond .NET
+- Implement agent memory/learning across sessions
+- Add support for more cloud LLM providers
+- Improve browser automation with more actions
 
 ## Performance
 Tested on ThinkPad L14 with Ryzen 5 Pro 4650U and 64GB RAM running Windows 11. Works well with local LLMs running mainly on CPU, though cloud APIs (DeepSeek) provide faster responses for complex tasks.

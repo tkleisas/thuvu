@@ -121,6 +121,14 @@ namespace thuvu.Web
 
             // Map SignalR hub
             app.MapHub<AgentHub>("/agenthub");
+            
+            // Health check endpoint for Docker/Kubernetes
+            app.MapGet("/health", () => Results.Ok(new 
+            { 
+                status = "healthy",
+                timestamp = DateTime.UtcNow,
+                version = "1.0.0"
+            }));
 
             // Map Blazor
             app.MapRazorComponents<Components.App>()

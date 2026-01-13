@@ -516,6 +516,7 @@ namespace thuvu
             PrintHelpCommand("/exit", "Quit");
             PrintHelpCommand("/clear", "Reset conversation (keeps current system prompt)");
             PrintHelpCommand("/system <text>", "Set system prompt");
+            PrintHelpCommand("/prompt [list|use|show]", "Manage system prompt templates");
             PrintHelpCommand("/stream on|off", "Toggle token-by-token streaming");
             Console.WriteLine();
 

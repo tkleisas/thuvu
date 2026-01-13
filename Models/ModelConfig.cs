@@ -121,6 +121,18 @@ namespace thuvu.Models
         
         /// <summary>Whether this model is enabled</summary>
         public bool Enabled { get; set; } = true;
+        
+        /// <summary>
+        /// Custom system prompt for this model. If empty, uses default based on model purpose.
+        /// Can also be a file path prefixed with "@" (e.g., "@prompts/coding.md")
+        /// </summary>
+        public string SystemPrompt { get; set; } = "";
+        
+        /// <summary>
+        /// System prompt template ID to use (e.g., "coding", "thinking", "general").
+        /// Only used if SystemPrompt is empty.
+        /// </summary>
+        public string SystemPromptTemplate { get; set; } = "";
 
         /// <summary>
         /// Creates an HttpClient configured for this model endpoint

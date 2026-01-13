@@ -1,30 +1,74 @@
-**/.classpath
-**/.dockerignore
-**/.env
-**/.git
-**/.gitignore
-**/.project
-**/.settings
-**/.toolstarget
+# T.H.U.V.U. Docker Ignore
+# =========================
+
+# Build outputs
+**/bin
+**/obj
+**/out
+
+# IDE files
 **/.vs
 **/.vscode
 **/*.*proj.user
 **/*.dbmdl
 **/*.jfm
-**/azds.yaml
-**/bin
-**/charts
-**/docker-compose*
-**/Dockerfile*
-**/node_modules
-**/npm-debug.log
-**/obj
-**/secrets.dev.yaml
-**/values.dev.yaml
-LICENSE
-README.md
+**/*.suo
+
+# Git (keep some for version info)
+**/.git
+**/.gitignore
+**/.gitattributes
 !**/.gitignore
 !.git/HEAD
 !.git/config
 !.git/packed-refs
 !.git/refs/heads/**
+
+# Docker (avoid recursive copy in nested builds)
+**/docker-compose*
+**/Dockerfile*
+**/.dockerignore
+!docker/Dockerfile.postgres
+!docker/init/**
+
+# Documentation (keep README for reference)
+**/docs
+**/images
+**/*.md
+!README.md
+
+# Test files
+**/Tests
+**/*.Tests
+**/TestResults
+
+# Logs and temp files
+**/*.log
+**/stream_debug.log
+**/*.tmp
+
+# Work directory (mounted at runtime)
+**/work
+
+# OS files
+**/.DS_Store
+**/Thumbs.db
+
+# Node modules
+**/node_modules
+**/npm-debug.log
+
+# Python
+**/venv
+**/__pycache__
+**/*.pyc
+
+# Secrets and environment
+**/.env
+**/secrets.dev.yaml
+**/values.dev.yaml
+
+# Misc
+**/azds.yaml
+**/charts
+LICENSE

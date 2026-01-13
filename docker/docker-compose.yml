@@ -1,6 +1,65 @@
 version: '3.8'
 
+# T.H.U.V.U. Multi-Container Architecture
+# =========================================
+# Services:
+#   - thuvu:        Main application (Web UI + Agent)
+#   - postgres-rag: PostgreSQL with pgvector for RAG
+#   - ollama:       Local LLM server (optional)
+#
+# Usage:
+#   Full stack:     docker-compose up -d
+#   Without Ollama: docker-compose up -d thuvu postgres-rag
+#   RAG only:       docker-compose up -d postgres-rag
+
 services:
+  # ===========================================
+  # T.H.U.V.U. Main Application
+  # ===========================================
+  thuvu:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.thuvu
+    container_name: thuvu-app
+    ports:
+      - "5000:5000"
+    environment:
+      # LLM Configuration - point to Ollama or external API
+      - THUVU_LLM_HOST=${LLM_HOST:-http://ollama:11434}
+      - THUVU_LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:14b}
+      # RAG Database
+      - THUVU_RAG_CONNECTION=Host=postgres-rag;Port=5432;Database=thuvu_rag;Username=thuvu;Password=${POSTGRES_PASSWORD:-thuvu_secret}
+      # Embedding service (can use Ollama or external)
+      - THUVU_EMBEDDING_HOST=${EMBEDDING_HOST:-http://ollama:11434}
+      - THUVU_EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      # MCP Configuration
+      - THUVU_MCP_ENABLED=true
+      - THUVU_WORK_DIR=/app/work
+    volumes:
+      # Persist work directory
+      - thuvu_work:/app/work
+      # Mount host projects (optional - for development)
+      # - /path/to/your/projects:/projects:rw
+      # Custom config (optional)
+      # - ./appsettings.docker.json:/app/appsettings.json:ro
+    depends_on:
+      postgres-rag:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    networks:
+      - thuvu-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================
+  # PostgreSQL with pgvector for RAG
+  # ===========================================
   postgres-rag:
     build:
       context: .
@@ -8,13 +67,15 @@ services:
     container_name: thuvu-postgres-rag
     environment:
       POSTGRES_USER: thuvu
-      POSTGRES_PASSWORD: thuvu_secret
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-thuvu_secret}
       POSTGRES_DB: thuvu_rag
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init:/docker-entrypoint-initdb.d
+    networks:
+      - thuvu-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U thuvu -d thuvu_rag"]
       interval: 10s
@@ -22,5 +83,68 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ===========================================
+  # Ollama - Local LLM Server (Optional)
+  # ===========================================
+  # Provides local inference for privacy-focused deployments
+  # GPU support: Set OLLAMA_GPU=nvidia in .env file
+  ollama:
+    image: ollama/ollama:latest
+    container_name: thuvu-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=*
+    networks:
+      - thuvu-network
+    # Uncomment for NVIDIA GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+    profiles:
+      - with-ollama
+      - full
+
+  # ===========================================
+  # Ollama Model Puller (one-time setup)
+  # ===========================================
+  ollama-setup:
+    image: ollama/ollama:latest
+    container_name: thuvu-ollama-setup
+    depends_on:
+      - ollama
+    networks:
+      - thuvu-network
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Ollama to be ready..."
+        sleep 10
+        echo "Pulling coding model: ${LLM_MODEL:-qwen2.5-coder:14b}..."
+        ollama pull ${LLM_MODEL:-qwen2.5-coder:14b}
+        echo "Pulling embedding model: ${EMBEDDING_MODEL:-nomic-embed-text}..."
+        ollama pull ${EMBEDDING_MODEL:-nomic-embed-text}
+        echo "Models ready!"
+    profiles:
+      - setup
+
+networks:
+  thuvu-network:
+    driver: bridge
+
 volumes:
   postgres_data:
+    name: thuvu-postgres-data
+  ollama_data:
+    name: thuvu-ollama-data
+  thuvu_work:
+    name: thuvu-work-data
+

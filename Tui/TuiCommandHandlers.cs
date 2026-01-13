@@ -45,7 +45,7 @@ namespace thuvu.Tui
             if (command.StartsWith("/clear", StringComparison.OrdinalIgnoreCase))
             {
                 messages.Clear();
-                messages.Add(new ChatMessage("system", McpSystemPrompts.GetSystemPrompt(McpConfig.Instance.Enabled)));
+                messages.Add(new ChatMessage("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.Enabled)));
                 _appendText("[OK] Conversation cleared.", false);
                 return true;
             }

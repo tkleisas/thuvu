@@ -152,10 +152,10 @@ namespace thuvu
                 TokenTracker.Instance.MaxContextLength = _currentContextLength;
             }
 
-            // Conversation state - use appropriate system prompt
+            // Conversation state - use appropriate system prompt based on model
             var messages = new List<ChatMessage>
             {
-                new("system", McpSystemPrompts.GetSystemPrompt(McpConfig.Instance.McpModeActive))
+                new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive))
             };
 
             // Tools you expose to the model
@@ -396,6 +396,12 @@ namespace thuvu
                     return true;
                 }
                 Console.WriteLine($"Streaming is now {(AgentConfig.Config.Stream ? "ON" : "OFF")}.");
+                return true;
+            }
+            
+            if (user.StartsWith("/prompt", StringComparison.OrdinalIgnoreCase))
+            {
+                await CommandHandlers.HandlePromptCommandAsync(user, messages);
                 return true;
             }
 

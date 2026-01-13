@@ -480,6 +480,138 @@ namespace thuvu
         }
         
         /// <summary>
+        /// /prompt [list|use|show|reload] - Manage system prompt templates
+        /// </summary>
+        public static Task HandlePromptCommandAsync(string line, List<ChatMessage> messages)
+        {
+            var parts = ConsoleHelpers.TokenizeArgs(line);
+            var subCommand = parts.Count > 1 ? parts[1].ToLowerInvariant() : "show";
+            
+            switch (subCommand)
+            {
+                case "list":
+                    {
+                        var templates = SystemPromptManager.Instance.GetAvailableTemplates();
+                        Console.WriteLine("\n📝 Available System Prompt Templates:\n");
+                        foreach (var template in templates)
+                        {
+                            Console.WriteLine($"  • {template}");
+                        }
+                        Console.WriteLine("\nUsage:");
+                        Console.WriteLine("  /prompt use <template>  - Apply a template to current session");
+                        Console.WriteLine("  /prompt show            - Show current system prompt");
+                        Console.WriteLine("  /prompt reload          - Reload prompt from model config");
+                        break;
+                    }
+                    
+                case "use":
+                    {
+                        if (parts.Count < 3)
+                        {
+                            Console.WriteLine("Usage: /prompt use <template-name>");
+                            Console.WriteLine("Use '/prompt list' to see available templates.");
+                            break;
+                        }
+                        
+                        var templateName = parts[2];
+                        var template = SystemPromptManager.Instance.GetTemplate(templateName);
+                        
+                        if (string.IsNullOrEmpty(template))
+                        {
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine($"Template '{templateName}' not found.");
+                            Console.ResetColor();
+                            Console.WriteLine("Use '/prompt list' to see available templates.");
+                            break;
+                        }
+                        
+                        // Get current model to apply variables
+                        var model = ModelRegistry.Instance.GetModel(AgentConfig.Config.Model);
+                        string finalPrompt;
+                        
+                        if (model != null)
+                        {
+                            // Create a temporary model with the template
+                            var tempModel = new ModelEndpoint
+                            {
+                                ModelId = model.ModelId,
+                                DisplayName = model.DisplayName,
+                                MaxContextLength = model.MaxContextLength,
+                                MaxOutputTokens = model.MaxOutputTokens,
+                                SupportsTools = model.SupportsTools,
+                                IsThinkingModel = model.IsThinkingModel,
+                                SystemPromptTemplate = templateName
+                            };
+                            finalPrompt = SystemPromptManager.Instance.GetSystemPrompt(tempModel, McpConfig.Instance.Enabled);
+                        }
+                        else
+                        {
+                            finalPrompt = template;
+                        }
+                        
+                        // Update the system message
+                        var systemMsg = messages.FirstOrDefault(m => m.Role == "system");
+                        if (systemMsg != null)
+                        {
+                            messages.Remove(systemMsg);
+                        }
+                        messages.Insert(0, new ChatMessage("system", finalPrompt));
+                        
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"✓ Applied template '{templateName}' to current session.");
+                        Console.ResetColor();
+                        break;
+                    }
+                    
+                case "show":
+                    {
+                        var systemMsg = messages.FirstOrDefault(m => m.Role == "system");
+                        if (systemMsg != null)
+                        {
+                            Console.WriteLine("\n📝 Current System Prompt:\n");
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine("─".PadRight(60, '─'));
+                            Console.ResetColor();
+                            Console.WriteLine(systemMsg.Content);
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine("─".PadRight(60, '─'));
+                            Console.ResetColor();
+                            Console.WriteLine($"\nLength: {systemMsg.Content?.Length ?? 0} chars");
+                        }
+                        else
+                        {
+                            Console.WriteLine("No system prompt currently set.");
+                        }
+                        break;
+                    }
+                    
+                case "reload":
+                    {
+                        SystemPromptManager.Instance.ClearCache();
+                        var newPrompt = SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.Enabled);
+                        
+                        var systemMsg = messages.FirstOrDefault(m => m.Role == "system");
+                        if (systemMsg != null)
+                        {
+                            messages.Remove(systemMsg);
+                        }
+                        messages.Insert(0, new ChatMessage("system", newPrompt));
+                        
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine("✓ System prompt reloaded from model configuration.");
+                        Console.ResetColor();
+                        break;
+                    }
+                    
+                default:
+                    Console.WriteLine("Unknown subcommand. Usage: /prompt [list|use|show|reload]");
+                    break;
+            }
+            
+            return Task.CompletedTask;
+        }
+        
+        /// <summary>
         /// /plan [task description] - Decompose a task into subtasks and estimate agent count
         /// /plan load [file] - Load an existing plan from file
         /// /plan show - Show the current plan

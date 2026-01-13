@@ -147,7 +147,7 @@ namespace thuvu.Web.Services
             {
                 Messages = new List<ChatMessage>
                 {
-                    new("system", McpSystemPrompts.GetSystemPrompt(McpConfig.Instance.McpModeActive))
+                    new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive))
                 },
                 Tools = BuildTools.GetBuildTools()
             };
@@ -418,7 +418,7 @@ namespace thuvu.Web.Services
             if (session != null)
             {
                 session.Messages.Clear();
-                session.Messages.Add(new ChatMessage("system", McpSystemPrompts.GetSystemPrompt(McpConfig.Instance.McpModeActive)));
+                session.Messages.Add(new ChatMessage("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)));
             }
         }
 
