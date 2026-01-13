@@ -8,6 +8,18 @@ using thuvu.Tools;
 namespace thuvu.Web.Services
 {
     /// <summary>
+    /// Represents a pending permission request waiting for user response
+    /// </summary>
+    public class PendingPermissionRequest
+    {
+        public string RequestId { get; set; } = Guid.NewGuid().ToString("N")[..8];
+        public string ToolName { get; set; } = "";
+        public string ArgsJson { get; set; } = "";
+        public TaskCompletionSource<char> ResponseTcs { get; set; } = new();
+        public DateTime RequestedAt { get; set; } = DateTime.Now;
+    }
+
+    /// <summary>
     /// Represents a web-based agent session
     /// </summary>
     public class WebAgentSession
@@ -19,6 +31,7 @@ namespace thuvu.Web.Services
         public DateTime LastActivityAt { get; set; } = DateTime.Now;
         public bool IsProcessing { get; set; }
         public CancellationTokenSource? CurrentCts { get; set; }
+        public ConcurrentDictionary<string, PendingPermissionRequest> PendingPermissions { get; } = new();
     }
 
     /// <summary>
@@ -28,30 +41,95 @@ namespace thuvu.Web.Services
     {
         private readonly HttpClient _http;
         private readonly ConcurrentDictionary<string, WebAgentSession> _sessions = new();
+        
+        // Event raised when permission is needed - subscribers should send SignalR event
+        public event Action<string, PendingPermissionRequest>? OnPermissionRequired;
 
         public WebAgentService(HttpClient http)
         {
             _http = http;
             
-            // Set up permission handler for web - auto-allow based on stored permissions
-            // This prevents console prompts from blocking the web UI
-            PermissionManager.CustomPermissionPrompt = (toolName, argsJson) =>
+            // Clear any existing handlers
+            PermissionManager.CustomPermissionPrompt = null;
+            PermissionManager.AsyncPermissionPrompt = null;
+        }
+        
+        /// <summary>
+        /// Set up async permission handler for a specific session.
+        /// Called when starting message processing to wire up the permission callback.
+        /// </summary>
+        private void SetupAsyncPermissionHandler(string sessionId)
+        {
+            PermissionManager.AsyncPermissionPrompt = async (toolName, argsJson) =>
             {
-                // Auto-allow if already in config, otherwise deny (require CLI setup)
+                // Check if auto-approve is enabled
+                if (AgentConfig.Config.AutoApproveTuiTools)
+                {
+                    SessionLogger.Instance.LogInfo($"Auto-approving tool {toolName} (auto-approve enabled)");
+                    return 'S'; // Session allow
+                }
+                
+                // Check if already in persistent permissions
                 var repoPath = Path.GetFullPath(AgentConfig.GetWorkDirectory())
                     .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 var permissionKey = $"{repoPath}:{toolName}";
                 
                 if (AgentConfig.Config.ToolPermissions.ContainsKey(permissionKey))
                 {
-                    return 'A'; // Allow
+                    return 'A'; // Already allowed
                 }
                 
-                // For web, auto-allow session permissions to avoid blocking
-                // User should set persistent permissions via CLI if needed
-                SessionLogger.Instance.LogInfo($"Auto-allowing tool {toolName} for web session");
-                return 'S'; // Session allow
+                // Get session and create pending request
+                if (!_sessions.TryGetValue(sessionId, out var session))
+                {
+                    SessionLogger.Instance.LogInfo($"Session {sessionId} not found for permission request");
+                    return 'N'; // Deny if session not found
+                }
+                
+                var request = new PendingPermissionRequest
+                {
+                    ToolName = toolName,
+                    ArgsJson = argsJson
+                };
+                
+                session.PendingPermissions[request.RequestId] = request;
+                
+                try
+                {
+                    // Notify UI that permission is needed
+                    OnPermissionRequired?.Invoke(sessionId, request);
+                    
+                    // Wait for response with timeout (5 minutes)
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+                    using var linkedCts = session.CurrentCts != null 
+                        ? CancellationTokenSource.CreateLinkedTokenSource(cts.Token, session.CurrentCts.Token)
+                        : cts;
+                    
+                    linkedCts.Token.Register(() => request.ResponseTcs.TrySetResult('N'));
+                    
+                    var result = await request.ResponseTcs.Task;
+                    return result;
+                }
+                finally
+                {
+                    session.PendingPermissions.TryRemove(request.RequestId, out _);
+                }
             };
+        }
+        
+        /// <summary>
+        /// Handle permission response from UI
+        /// </summary>
+        public bool RespondToPermission(string sessionId, string requestId, char choice)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var session))
+                return false;
+                
+            if (!session.PendingPermissions.TryGetValue(requestId, out var request))
+                return false;
+                
+            request.ResponseTcs.TrySetResult(choice);
+            return true;
         }
 
         /// <summary>
@@ -110,6 +188,13 @@ namespace thuvu.Web.Services
             session.IsProcessing = true;
             session.CurrentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var linkedCt = session.CurrentCts.Token;
+            
+            // Set up async permission handler for this session
+            SetupAsyncPermissionHandler(sessionId);
+            
+            // Declare handler outside try block so we can unsubscribe in finally
+            Action<string, PendingPermissionRequest>? permissionHandler = null;
+            System.Threading.Channels.ChannelWriter<AgentStreamEvent>? channelWriter = null;
 
             try
             {
@@ -124,6 +209,27 @@ namespace thuvu.Web.Services
                 // Use a channel to collect events from callbacks
                 var channel = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
                 var writer = channel.Writer;
+                channelWriter = writer;
+                
+                // Subscribe to permission requests for this processing run
+                permissionHandler = (sid, request) =>
+                {
+                    if (sid == sessionId)
+                    {
+                        writer.TryWrite(new AgentStreamEvent 
+                        { 
+                            Type = "permission_request",
+                            ToolName = request.ToolName,
+                            Data = JsonSerializer.Serialize(new 
+                            {
+                                requestId = request.RequestId,
+                                toolName = request.ToolName,
+                                args = request.ArgsJson
+                            })
+                        });
+                    }
+                };
+                OnPermissionRequired += permissionHandler;
 
                 var completionTask = Task.Run(async () =>
                 {
@@ -281,6 +387,8 @@ namespace thuvu.Web.Services
             }
             finally
             {
+                if (permissionHandler != null)
+                    OnPermissionRequired -= permissionHandler;
                 session.IsProcessing = false;
                 session.CurrentCts?.Dispose();
                 session.CurrentCts = null;

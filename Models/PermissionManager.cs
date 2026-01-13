@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace thuvu.Models
 {
@@ -28,6 +29,13 @@ namespace thuvu.Models
         /// If null, uses default console prompt.
         /// </summary>
         public static Func<string, string, char>? CustomPermissionPrompt { get; set; }
+        
+        /// <summary>
+        /// Async permission prompt handler for Web UI.
+        /// Takes toolName, argsJson, and returns a Task with the choice character.
+        /// If set, takes precedence over CustomPermissionPrompt.
+        /// </summary>
+        public static Func<string, string, Task<char>>? AsyncPermissionPrompt { get; set; }
 
         // Tool categorization by risk level
         private static readonly HashSet<string> ReadOnlyTools = new(StringComparer.OrdinalIgnoreCase)
@@ -89,6 +97,47 @@ namespace thuvu.Models
                 toolName, permissionKey, string.Join(", ", AgentConfig.Config.ToolPermissions.Keys));
 
             // Need to ask user
+            return PromptForPermission(toolName, argsJson, permissionKey);
+        }
+        
+        /// <summary>
+        /// Async version of CheckPermission for Web UI
+        /// </summary>
+        public static async Task<bool> CheckPermissionAsync(string toolName, string argsJson)
+        {
+            var riskLevel = GetToolRiskLevel(toolName);
+            
+            // Always allow read-only tools
+            if (riskLevel == ToolRiskLevel.ReadOnly)
+                return true;
+
+            // Check for existing permissions
+            string permissionKey = GetPermissionKey(toolName);
+            
+            // Check persistent permissions first
+            if (AgentConfig.Config.ToolPermissions.ContainsKey(permissionKey))
+            {
+                AgentLogger.LogDebug("Tool {Tool} allowed by persistent permission (key: {Key})", toolName, permissionKey);
+                return true;
+            }
+
+            // Check session permissions
+            if (SessionPermissions.ContainsKey(permissionKey))
+            {
+                AgentLogger.LogDebug("Tool {Tool} allowed by session permission (key: {Key})", toolName, permissionKey);
+                return true;
+            }
+
+            AgentLogger.LogDebug("Tool {Tool} requires permission prompt (key: {Key})", toolName, permissionKey);
+
+            // Use async handler if available (for Web UI)
+            if (AsyncPermissionPrompt != null)
+            {
+                var choice = await AsyncPermissionPrompt(toolName, argsJson);
+                return HandlePermissionChoice(choice, permissionKey);
+            }
+            
+            // Fall back to sync prompt
             return PromptForPermission(toolName, argsJson, permissionKey);
         }
 

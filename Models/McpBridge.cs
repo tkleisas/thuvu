@@ -204,8 +204,8 @@ namespace thuvu.Models
                     };
                 }
 
-                // Check permissions
-                if (!PermissionManager.CheckPermission(toolName, argsJson))
+                // Check permissions (use async version for Web UI support)
+                if (!await PermissionManager.CheckPermissionAsync(toolName, argsJson))
                 {
                     return new JsonRpcResponse
                     {

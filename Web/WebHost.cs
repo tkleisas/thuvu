@@ -75,6 +75,26 @@ namespace thuvu.Web
 
             var app = builder.Build();
 
+            // Initialize TokenTracker with context length from config
+            // Priority: 1) Model-specific config, 2) AgentConfig setting, 3) Default 32768
+            try
+            {
+                var currentModel = ModelRegistry.Instance.GetModel(AgentConfig.Config.Model);
+                if (currentModel?.MaxContextLength > 0)
+                {
+                    TokenTracker.Instance.MaxContextLength = currentModel.MaxContextLength;
+                }
+                else if (AgentConfig.Config.MaxContextLength > 0)
+                {
+                    TokenTracker.Instance.MaxContextLength = AgentConfig.Config.MaxContextLength;
+                }
+                // else keep default 32768
+            }
+            catch
+            {
+                // Keep default if config fails
+            }
+
             // Log all requests for debugging
             app.Use(async (context, next) =>
             {

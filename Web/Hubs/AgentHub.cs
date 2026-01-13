@@ -61,6 +61,20 @@ namespace thuvu.Web.Hubs
         {
             _agentService.ClearSession(sessionId);
         }
+        
+        /// <summary>
+        /// Respond to a permission request
+        /// </summary>
+        /// <param name="sessionId">Session ID</param>
+        /// <param name="requestId">Permission request ID</param>
+        /// <param name="choice">A=Always, S=Session, O=Once, N=No</param>
+        public bool RespondToPermission(string sessionId, string requestId, string choice)
+        {
+            if (string.IsNullOrEmpty(choice) || choice.Length < 1)
+                return false;
+                
+            return _agentService.RespondToPermission(sessionId, requestId, char.ToUpper(choice[0]));
+        }
 
         /// <summary>
         /// Get session history

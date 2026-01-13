@@ -44,6 +44,12 @@ namespace thuvu.Models
         /// </summary>
         public int MaxContextLength { get; set; } = 0;
         
+        /// <summary>
+        /// Maximum number of tool-calling iterations before the agent stops.
+        /// Default is 50. Set higher for complex multi-step tasks.
+        /// </summary>
+        public int MaxIterations { get; set; } = 50;
+        
         public static AgentConfig Config = new();
         
         /// <summary>

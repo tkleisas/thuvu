@@ -1,0 +1,512 @@
+@inject IJSRuntime JS
+
+<div class="settings-overlay @(IsOpen ? "open" : "")" @onclick="Close">
+    <div class="settings-panel" @onclick:stopPropagation="true">
+        <div class="settings-header">
+            <h2>⚙️ Settings</h2>
+            <button class="btn-icon" @onclick="Close">✕</button>
+        </div>
+        
+        <div class="settings-content">
+            <!-- Tabs -->
+            <div class="settings-tabs">
+                <button class="tab @(_activeTab == "providers" ? "active" : "")" @onclick="@(() => SetTab("providers"))">
+                    🔌 Providers
+                </button>
+                <button class="tab @(_activeTab == "agent" ? "active" : "")" @onclick="@(() => SetTab("agent"))">
+                    🤖 Agent
+                </button>
+                <button class="tab @(_activeTab == "features" ? "active" : "")" @onclick="@(() => SetTab("features"))">
+                    ✨ Features
+                </button>
+            </div>
+
+            <!-- Providers Tab -->
+            @if (_activeTab == "providers")
+            {
+                <div class="settings-section">
+                    <h3>Model Providers</h3>
+                    <p class="settings-hint">Configure LLM endpoints. Changes are saved to appsettings.json.</p>
+                    
+                    <div class="provider-list">
+                        @foreach (var model in _models)
+                        {
+                            <div class="provider-card @(model.ModelId == _currentModelId ? "active" : "")">
+                                <div class="provider-header">
+                                    <span class="provider-name">@model.DisplayName</span>
+                                    @if (model.ModelId == _currentModelId)
+                                    {
+                                        <span class="badge badge-active">Active</span>
+                                    }
+                                </div>
+                                <div class="provider-details">
+                                    <div class="detail-row">
+                                        <span class="detail-label">Model ID:</span>
+                                        <span class="detail-value">@model.ModelId</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">Host:</span>
+                                        <span class="detail-value">@model.HostUrl</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">Context:</span>
+                                        <span class="detail-value">@(model.MaxContextLength > 0 ? model.MaxContextLength.ToString("N0") : "Auto")</span>
+                                    </div>
+                                </div>
+                                <div class="provider-actions">
+                                    @if (model.ModelId != _currentModelId)
+                                    {
+                                        <button class="btn btn-small btn-primary" @onclick="() => SetActiveModel(model.ModelId)">
+                                            Use
+                                        </button>
+                                    }
+                                    <button class="btn btn-small btn-secondary" @onclick="() => EditProvider(model)">
+                                        Edit
+                                    </button>
+                                    <button class="btn btn-small btn-danger" @onclick="() => RemoveProvider(model.ModelId)">
+                                        Remove
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                    
+                    <button class="btn btn-primary" @onclick="ShowAddProvider">
+                        ➕ Add Provider
+                    </button>
+                </div>
+                
+                <!-- Add/Edit Provider Form -->
+                @if (_showProviderForm)
+                {
+                    <div class="settings-section provider-form">
+                        <h3>@(_editingProvider != null ? "Edit" : "Add") Provider</h3>
+                        <div class="form-group">
+                            <label>Model ID</label>
+                            <input type="text" @bind="_formModelId" placeholder="e.g., qwen/qwen3-coder-30b" />
+                        </div>
+                        <div class="form-group">
+                            <label>Display Name</label>
+                            <input type="text" @bind="_formDisplayName" placeholder="e.g., Qwen3 Coder 30B" />
+                        </div>
+                        <div class="form-group">
+                            <label>Host URL</label>
+                            <input type="text" @bind="_formHostUrl" placeholder="http://127.0.0.1:1234" />
+                        </div>
+                        <div class="form-group">
+                            <label>Max Context Length (0 = auto-detect)</label>
+                            <input type="number" @bind="_formMaxContext" min="0" step="1024" />
+                        </div>
+                        <div class="form-group checkbox">
+                            <label>
+                                <input type="checkbox" @bind="_formSupportsTools" />
+                                Supports Tool Calling
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button class="btn btn-secondary" @onclick="CancelProviderForm">Cancel</button>
+                            <button class="btn btn-primary" @onclick="SaveProvider">Save</button>
+                        </div>
+                    </div>
+                }
+            }
+
+            <!-- Agent Tab -->
+            @if (_activeTab == "agent")
+            {
+                <div class="settings-section">
+                    <h3>Agent Behavior</h3>
+                    
+                    <div class="form-group">
+                        <label>Max Iterations (Loop Bailout)</label>
+                        <input type="number" @bind="_maxIterations" min="1" max="200" />
+                        <span class="form-hint">Maximum tool call loops before stopping. Default: 50</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Process Timeout (seconds)</label>
+                        <input type="number" @bind="_processTimeoutSeconds" min="10" max="3600" />
+                        <span class="form-hint">Timeout for external processes (build, test). Default: 1800</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>HTTP Request Timeout (minutes)</label>
+                        <input type="number" @bind="_httpTimeoutMinutes" min="1" max="120" />
+                        <span class="form-hint">Timeout for LLM API requests. Default: 60</span>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Context Management</h3>
+                    
+                    <div class="form-group">
+                        <label>Max Context Length</label>
+                        <input type="number" @bind="_maxContextLength" min="0" step="1024" />
+                        <span class="form-hint">0 = auto-detect from API. Set manually for APIs that don't report it.</span>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Auto-Summarize Threshold (%)</label>
+                        <input type="number" @bind="_autoSummarizeThreshold" min="50" max="99" />
+                        <span class="form-hint">Summarize conversation when context exceeds this %. Default: 90</span>
+                    </div>
+                    
+                    <div class="form-group checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_autoSummarizeEnabled" />
+                            Enable Auto-Summarization
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="form-actions">
+                    <button class="btn btn-primary" @onclick="SaveAgentSettings">Save Agent Settings</button>
+                </div>
+            }
+
+            <!-- Features Tab -->
+            @if (_activeTab == "features")
+            {
+                <div class="settings-section">
+                    <h3>Feature Toggles</h3>
+                    
+                    <div class="feature-toggle">
+                        <div class="toggle-info">
+                            <span class="toggle-name">🔌 MCP Code Execution</span>
+                            <span class="toggle-desc">Execute TypeScript in Deno sandbox</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" @bind="_mcpEnabled" @bind:after="ToggleMcp" />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    
+                    <div class="feature-toggle">
+                        <div class="toggle-info">
+                            <span class="toggle-name">📚 RAG (Vector Search)</span>
+                            <span class="toggle-desc">Semantic search with PostgreSQL/pgvector</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" @bind="_ragEnabled" @bind:after="ToggleRag" />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    
+                    <div class="feature-toggle">
+                        <div class="toggle-info">
+                            <span class="toggle-name">🌐 Browser Tools</span>
+                            <span class="toggle-desc">Web browsing with Playwright</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" checked disabled />
+                            <span class="slider"></span>
+                        </label>
+                        <span class="toggle-status">Always enabled</span>
+                    </div>
+                </div>
+                
+                <div class="settings-section">
+                    <h3>Permissions</h3>
+                    <div class="form-group checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_autoApproveTools" />
+                            Auto-approve tool calls (no confirmation prompts)
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="form-actions">
+                    <button class="btn btn-primary" @onclick="SaveFeatureSettings">Save Feature Settings</button>
+                </div>
+            }
+        </div>
+        
+        @if (!string.IsNullOrEmpty(_statusMessage))
+        {
+            <div class="settings-status @_statusType">
+                @_statusMessage
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnSettingsChanged { get; set; }
+    
+    private string _activeTab = "providers";
+    private string _statusMessage = "";
+    private string _statusType = "";
+    
+    private void SetTab(string tab) => _activeTab = tab;
+    
+    // Provider form state
+    private bool _showProviderForm;
+    private ModelEndpointDisplay? _editingProvider;
+    private string _formModelId = "";
+    private string _formDisplayName = "";
+    private string _formHostUrl = "http://127.0.0.1:1234";
+    private int _formMaxContext = 0;
+    private bool _formSupportsTools = true;
+    
+    // Current state
+    private string _currentModelId = "";
+    private List<ModelEndpointDisplay> _models = new();
+    
+    // Agent settings
+    private int _maxIterations = 50;
+    private int _processTimeoutSeconds = 1800;
+    private int _httpTimeoutMinutes = 60;
+    private int _maxContextLength = 0;
+    private int _autoSummarizeThreshold = 90;
+    private bool _autoSummarizeEnabled = true;
+    
+    // Feature toggles
+    private bool _mcpEnabled;
+    private bool _ragEnabled;
+    private bool _autoApproveTools = true;
+
+    protected override void OnInitialized()
+    {
+        LoadCurrentSettings();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (IsOpen)
+        {
+            LoadCurrentSettings();
+        }
+    }
+
+    private void LoadCurrentSettings()
+    {
+        try
+        {
+            // Load models
+            _models.Clear();
+            var registry = thuvu.Models.ModelRegistry.Instance;
+            foreach (var model in registry.GetAllModels())
+            {
+                _models.Add(new ModelEndpointDisplay
+                {
+                    ModelId = model.ModelId,
+                    DisplayName = model.DisplayName,
+                    HostUrl = model.HostUrl,
+                    MaxContextLength = model.MaxContextLength,
+                    SupportsTools = model.SupportsTools
+                });
+            }
+            
+            _currentModelId = thuvu.Models.AgentConfig.Config.Model;
+            
+            // Load agent settings
+            _processTimeoutSeconds = thuvu.Models.AgentConfig.Config.TimeoutMs / 1000;
+            _httpTimeoutMinutes = thuvu.Models.AgentConfig.Config.HttpRequestTimeout;
+            _maxContextLength = thuvu.Models.AgentConfig.Config.MaxContextLength;
+            _maxIterations = thuvu.Models.AgentConfig.Config.MaxIterations;
+            _autoSummarizeThreshold = (int)(thuvu.Models.TokenTracker.Instance.AutoSummarizeThreshold * 100);
+            _autoSummarizeEnabled = thuvu.Models.TokenTracker.Instance.AutoSummarizeEnabled;
+            
+            // Load feature toggles
+            _mcpEnabled = thuvu.Models.McpConfig.Instance.Enabled;
+            _ragEnabled = thuvu.Models.RagConfig.Instance.Enabled;
+            _autoApproveTools = thuvu.Models.AgentConfig.Config.AutoApproveTuiTools;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading settings: {ex.Message}");
+            _statusMessage = $"Error loading settings: {ex.Message}";
+            _statusType = "error";
+        }
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+
+    private void ShowAddProvider()
+    {
+        _editingProvider = null;
+        _formModelId = "";
+        _formDisplayName = "";
+        _formHostUrl = "http://127.0.0.1:1234";
+        _formMaxContext = 0;
+        _formSupportsTools = true;
+        _showProviderForm = true;
+    }
+
+    private void EditProvider(ModelEndpointDisplay model)
+    {
+        _editingProvider = model;
+        _formModelId = model.ModelId;
+        _formDisplayName = model.DisplayName;
+        _formHostUrl = model.HostUrl;
+        _formMaxContext = model.MaxContextLength;
+        _formSupportsTools = model.SupportsTools;
+        _showProviderForm = true;
+    }
+
+    private void CancelProviderForm()
+    {
+        _showProviderForm = false;
+        _editingProvider = null;
+    }
+
+    private async Task SaveProvider()
+    {
+        if (string.IsNullOrWhiteSpace(_formModelId))
+        {
+            ShowStatus("Model ID is required", "error");
+            return;
+        }
+
+        var registry = thuvu.Models.ModelRegistry.Instance;
+        
+        // If editing, remove old entry first
+        if (_editingProvider != null && _editingProvider.ModelId != _formModelId)
+        {
+            registry.RemoveModel(_editingProvider.ModelId);
+        }
+
+        // Add/update the model
+        var newModel = new thuvu.Models.ModelEndpoint
+        {
+            ModelId = _formModelId,
+            DisplayName = string.IsNullOrWhiteSpace(_formDisplayName) ? _formModelId : _formDisplayName,
+            HostUrl = _formHostUrl,
+            MaxContextLength = _formMaxContext,
+            SupportsTools = _formSupportsTools,
+            IsLocal = _formHostUrl.Contains("127.0.0.1") || _formHostUrl.Contains("localhost"),
+            Purposes = new List<thuvu.Models.ModelPurpose> { thuvu.Models.ModelPurpose.Default }
+        };
+        
+        registry.AddOrUpdateModel(newModel);
+        
+        // Save to config
+        await SaveConfigToFile();
+        
+        _showProviderForm = false;
+        _editingProvider = null;
+        LoadCurrentSettings();
+        ShowStatus("Provider saved successfully", "success");
+        await OnSettingsChanged.InvokeAsync();
+    }
+
+    private async Task RemoveProvider(string modelId)
+    {
+        if (modelId == _currentModelId)
+        {
+            ShowStatus("Cannot remove the active model", "error");
+            return;
+        }
+
+        var registry = thuvu.Models.ModelRegistry.Instance;
+        registry.RemoveModel(modelId);
+        
+        await SaveConfigToFile();
+        LoadCurrentSettings();
+        ShowStatus("Provider removed", "success");
+        await OnSettingsChanged.InvokeAsync();
+    }
+
+    private async Task SetActiveModel(string modelId)
+    {
+        var registry = thuvu.Models.ModelRegistry.Instance;
+        var model = registry.GetModel(modelId);
+        
+        if (model != null)
+        {
+            thuvu.Models.AgentConfig.Config.Model = modelId;
+            thuvu.Models.AgentConfig.Config.HostUrl = model.HostUrl;
+            
+            if (model.MaxContextLength > 0)
+            {
+                thuvu.Models.TokenTracker.Instance.MaxContextLength = model.MaxContextLength;
+            }
+            
+            _currentModelId = modelId;
+            await SaveConfigToFile();
+            ShowStatus($"Switched to {model.DisplayName}", "success");
+            await OnSettingsChanged.InvokeAsync();
+        }
+    }
+
+    private async Task SaveAgentSettings()
+    {
+        thuvu.Models.AgentConfig.Config.TimeoutMs = _processTimeoutSeconds * 1000;
+        thuvu.Models.AgentConfig.Config.HttpRequestTimeout = _httpTimeoutMinutes;
+        thuvu.Models.AgentConfig.Config.MaxContextLength = _maxContextLength;
+        thuvu.Models.AgentConfig.Config.MaxIterations = _maxIterations;
+        
+        if (_maxContextLength > 0)
+        {
+            thuvu.Models.TokenTracker.Instance.MaxContextLength = _maxContextLength;
+        }
+        
+        thuvu.Models.TokenTracker.Instance.AutoSummarizeThreshold = _autoSummarizeThreshold / 100.0;
+        thuvu.Models.TokenTracker.Instance.AutoSummarizeEnabled = _autoSummarizeEnabled;
+        
+        await SaveConfigToFile();
+        ShowStatus("Agent settings saved", "success");
+        await OnSettingsChanged.InvokeAsync();
+    }
+
+    private async Task ToggleMcp()
+    {
+        thuvu.Models.McpConfig.Instance.Enabled = _mcpEnabled;
+    }
+
+    private async Task ToggleRag()
+    {
+        thuvu.Models.RagConfig.Instance.Enabled = _ragEnabled;
+    }
+
+    private async Task SaveFeatureSettings()
+    {
+        thuvu.Models.McpConfig.Instance.Enabled = _mcpEnabled;
+        thuvu.Models.RagConfig.Instance.Enabled = _ragEnabled;
+        thuvu.Models.AgentConfig.Config.AutoApproveTuiTools = _autoApproveTools;
+        
+        await SaveConfigToFile();
+        ShowStatus("Feature settings saved", "success");
+        await OnSettingsChanged.InvokeAsync();
+    }
+
+    private async Task SaveConfigToFile()
+    {
+        try
+        {
+            thuvu.Models.AgentConfig.SaveConfig();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error saving config: {ex.Message}", "error");
+        }
+    }
+
+    private void ShowStatus(string message, string type)
+    {
+        _statusMessage = message;
+        _statusType = type;
+        StateHasChanged();
+        
+        // Clear after 3 seconds
+        _ = Task.Delay(3000).ContinueWith(_ =>
+        {
+            _statusMessage = "";
+            InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private class ModelEndpointDisplay
+    {
+        public string ModelId { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string HostUrl { get; set; } = "";
+        public int MaxContextLength { get; set; }
+        public bool SupportsTools { get; set; }
+    }
+}

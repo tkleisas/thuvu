@@ -12,9 +12,12 @@
         <div class="sidebar-section file-tree-section @(_workspaceExpanded ? "expanded" : "")">
             <div class="section-header">
                 <h3>📁 Workspace</h3>
-                <button class="btn-icon" @onclick="ToggleWorkspace" title="@(_workspaceExpanded ? "Shrink" : "Expand")">
-                    @(_workspaceExpanded ? "⬆️" : "⬇️")
-                </button>
+                <div class="header-buttons">
+                    <button class="btn-icon" @onclick="RefreshFileTree" title="Refresh">🔄</button>
+                    <button class="btn-icon" @onclick="ToggleWorkspace" title="@(_workspaceExpanded ? "Shrink" : "Expand")">
+                        @(_workspaceExpanded ? "⬆️" : "⬇️")
+                    </button>
+                </div>
             </div>
             <FileTree RootPath="." 
                       HubConnection="@_hubConnection" 
@@ -46,7 +49,10 @@
         </div>
         
         <div class="sidebar-section">
-            <h3>Configuration</h3>
+            <div class="section-header">
+                <h3>Configuration</h3>
+                <button class="btn-icon" @onclick="@(() => OpenSettings())" title="Open Settings">⚙️</button>
+            </div>
             <div class="config-item">
                 <span class="config-label">Model:</span>
                 <span class="config-value">@_model</span>
@@ -257,6 +263,17 @@
 <!-- Agent Tabs for Orchestration -->
 <AgentTabs @ref="_agentTabs" OnClose="@HandleAgentTabsClose" />
 
+<!-- Settings Panel -->
+<Settings IsOpen="@_settingsOpen" OnClose="@CloseSettings" OnSettingsChanged="@HandleSettingsChanged" />
+
+<!-- Permission Dialog -->
+<PermissionDialog 
+    IsOpen="@_permissionDialogOpen" 
+    RequestId="@_pendingPermissionRequestId"
+    ToolName="@_pendingPermissionToolName"
+    Args="@_pendingPermissionArgs"
+    OnResponse="@HandlePermissionResponse" />
+
 <!-- Toast container for notifications -->
 <div class="toast-container">
     @if (_showCopyToast)
@@ -275,8 +292,15 @@
     private FileViewer? _fileViewer;
     private AgentTabs? _agentTabs;
     private bool _fileViewerOpen;
+    private bool _settingsOpen;
     private bool _orchestrationOpen;
     private bool _hasOrchestration;
+    
+    // Permission dialog state
+    private bool _permissionDialogOpen;
+    private string _pendingPermissionRequestId = "";
+    private string _pendingPermissionToolName = "";
+    private string _pendingPermissionArgs = "";
     
     private string _sessionId = "";
     private string _model = "";
@@ -479,6 +503,9 @@
                             ScreenshotBase64 = evt.Data,
                             Timestamp = DateTime.Now
                         });
+                        break;
+                    case "permission_request":
+                        await HandlePermissionRequest(evt.Data);
                         break;
                     case "done":
                         if (!string.IsNullOrEmpty(_streamingContent))
@@ -978,9 +1005,83 @@
         }
     }
 
+    private async Task OpenSettings()
+    {
+        await JS.InvokeVoidAsync("console.log", "OpenSettings called from Blazor");
+        _settingsOpen = true;
+        StateHasChanged();
+    }
+
+    private void CloseSettings()
+    {
+        Console.WriteLine("CloseSettings called");
+        _settingsOpen = false;
+        StateHasChanged();
+    }
+
+    private async Task HandleSettingsChanged()
+    {
+        // Reload configuration display
+        _model = thuvu.Models.AgentConfig.Config.Model;
+        _hostUrl = thuvu.Models.AgentConfig.Config.HostUrl;
+        _mcpEnabled = thuvu.Models.McpConfig.Instance.Enabled;
+        _ragEnabled = thuvu.Models.RagConfig.Instance.Enabled;
+        StateHasChanged();
+    }
+    
+    private async Task HandlePermissionRequest(string? data)
+    {
+        if (string.IsNullOrEmpty(data)) return;
+        
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(data);
+            var root = doc.RootElement;
+            
+            _pendingPermissionRequestId = root.GetProperty("requestId").GetString() ?? "";
+            _pendingPermissionToolName = root.GetProperty("toolName").GetString() ?? "";
+            _pendingPermissionArgs = root.GetProperty("args").GetString() ?? "";
+            _permissionDialogOpen = true;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error parsing permission request: {ex.Message}");
+        }
+    }
+    
+    private async Task HandlePermissionResponse(string choice)
+    {
+        if (_hubConnection != null && !string.IsNullOrEmpty(_pendingPermissionRequestId))
+        {
+            try
+            {
+                await _hubConnection.InvokeAsync("RespondToPermission", _sessionId, _pendingPermissionRequestId, choice);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error responding to permission: {ex.Message}");
+            }
+        }
+        
+        _permissionDialogOpen = false;
+        _pendingPermissionRequestId = "";
+        _pendingPermissionToolName = "";
+        _pendingPermissionArgs = "";
+        StateHasChanged();
+    }
+
     private void ToggleWorkspace()
     {
         _workspaceExpanded = !_workspaceExpanded;
+    }
+    
+    private async Task RefreshFileTree()
+    {
+        if (_fileTree != null)
+        {
+            await _fileTree.RefreshTree();
+        }
     }
 
     private async Task ScrollToBottom()

@@ -94,8 +94,8 @@ namespace thuvu
             
             try
             {
-                // Check permissions before executing
-                if (!PermissionManager.CheckPermission(name, argsJson))
+                // Check permissions before executing (use async version for Web UI support)
+                if (!await PermissionManager.CheckPermissionAsync(name, argsJson))
                 {
                     var error = "Permission denied by user";
                     SessionLogger.Instance.LogToolError(name, error);

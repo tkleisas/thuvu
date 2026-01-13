@@ -254,6 +254,29 @@ namespace thuvu.Models
         public ModelEndpoint? GetCodingModel() => GetModelForPurpose(ModelPurpose.Coding);
         
         /// <summary>
+        /// Get all configured models
+        /// </summary>
+        public IEnumerable<ModelEndpoint> GetAllModels() => Models.AsReadOnly();
+        
+        /// <summary>
+        /// Add or update a model endpoint
+        /// </summary>
+        public void AddOrUpdateModel(ModelEndpoint model)
+        {
+            // Remove existing with same ID
+            Models.RemoveAll(m => m.ModelId.Equals(model.ModelId, StringComparison.OrdinalIgnoreCase));
+            Models.Add(model);
+        }
+        
+        /// <summary>
+        /// Remove a model endpoint by ID
+        /// </summary>
+        public bool RemoveModel(string modelId)
+        {
+            return Models.RemoveAll(m => m.ModelId.Equals(modelId, StringComparison.OrdinalIgnoreCase)) > 0;
+        }
+        
+        /// <summary>
         /// Add a model endpoint
         /// </summary>
         public void AddModel(ModelEndpoint model)

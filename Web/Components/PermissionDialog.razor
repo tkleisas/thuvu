@@ -1,0 +1,65 @@
+@* Permission request dialog for WebUI tool approval *@
+
+<div class="permission-overlay @(IsOpen ? "open" : "")" @onclick="Deny">
+    <div class="permission-dialog" @onclick:stopPropagation="true">
+        <div class="permission-header">
+            <span class="permission-icon">⚠️</span>
+            <h3>Permission Required</h3>
+        </div>
+        
+        <div class="permission-content">
+            <div class="permission-tool">
+                <span class="label">Tool:</span>
+                <span class="value">@ToolName</span>
+            </div>
+            
+            @if (!string.IsNullOrEmpty(Args))
+            {
+                <div class="permission-args">
+                    <span class="label">Arguments:</span>
+                    <pre class="args-value">@TruncateArgs(Args)</pre>
+                </div>
+            }
+            
+            <p class="permission-question">Allow this tool to execute?</p>
+        </div>
+        
+        <div class="permission-actions">
+            <button class="btn btn-success" @onclick="Always" title="Always allow this tool in this workspace">
+                ✓ Always
+            </button>
+            <button class="btn btn-primary" @onclick="Session" title="Allow for this session only">
+                ✓ Session
+            </button>
+            <button class="btn btn-secondary" @onclick="Once" title="Allow just this once">
+                ✓ Once
+            </button>
+            <button class="btn btn-danger" @onclick="Deny" title="Deny this request">
+                ✕ Deny
+            </button>
+        </div>
+        
+        <div class="permission-hint">
+            <kbd>A</kbd> Always · <kbd>S</kbd> Session · <kbd>O</kbd> Once · <kbd>N</kbd> Deny
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public string RequestId { get; set; } = "";
+    [Parameter] public string ToolName { get; set; } = "";
+    [Parameter] public string Args { get; set; } = "";
+    [Parameter] public EventCallback<string> OnResponse { get; set; }
+    
+    private string TruncateArgs(string args)
+    {
+        if (string.IsNullOrEmpty(args)) return "";
+        return args.Length > 200 ? args.Substring(0, 197) + "..." : args;
+    }
+    
+    private async Task Always() => await OnResponse.InvokeAsync("A");
+    private async Task Session() => await OnResponse.InvokeAsync("S");
+    private async Task Once() => await OnResponse.InvokeAsync("O");
+    private async Task Deny() => await OnResponse.InvokeAsync("N");
+}

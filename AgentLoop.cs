@@ -28,8 +28,15 @@ namespace thuvu
         }
 
         // Loop detection settings
-        public const int DefaultMaxIterations = 50;
+        public const int DefaultMaxIterations = 50; // Fallback default
         private const int MaxConsecutiveFailures = 3;
+        
+        /// <summary>
+        /// Gets the configured max iterations from AgentConfig, falling back to default.
+        /// </summary>
+        private static int GetMaxIterations() => AgentConfig.Config.MaxIterations > 0 
+            ? AgentConfig.Config.MaxIterations 
+            : DefaultMaxIterations;
         
         /// <summary>
         /// Sends the current conversation to LM Studio. If the assistant requests tools,
@@ -47,7 +54,7 @@ namespace thuvu
             ToolProgressCallback? onToolProgress = null,
             int? maxIterations = null)
         {
-            int maxIter = maxIterations ?? DefaultMaxIterations;
+            int maxIter = maxIterations ?? GetMaxIterations();
             int iteration = 0;
             var failureTracker = new Dictionary<string, int>(); // Track consecutive failures per tool
             
@@ -183,7 +190,7 @@ namespace thuvu
             ToolProgressCallback? onToolProgress = null,
             int? maxIterations = null)
         {
-            int maxIter = maxIterations ?? DefaultMaxIterations;
+            int maxIter = maxIterations ?? GetMaxIterations();
             int iteration = 0;
             var failureTracker = new Dictionary<string, int>();
             var executedToolCalls = new HashSet<string>(); // Track tool call signatures to detect loops
