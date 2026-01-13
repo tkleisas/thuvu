@@ -363,6 +363,167 @@ namespace thuvu.Tools
                     }
                     """).RootElement
                 }
+            },
+
+            // --- Code execution (MCP/TypeScript sandbox) ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "execute_code",
+                    Description = @"Execute TypeScript code in a sandboxed Deno environment. Use this to batch multiple operations in a single call to reduce token usage. The code has access to:
+- searchFiles(glob: string, query?: string): Promise<string[]> - Search files with glob pattern
+- readFile(path: string): Promise<{content: string, sha256: string}> - Read file contents  
+- writeFile(path: string, content: string, expectedSha256?: string): Promise<{success: boolean}> - Write file
+- runCommand(cmd: string, args: string[]): Promise<{stdout: string, stderr: string, exitCode: number}> - Run shell command
+
+Example: Read multiple files and analyze them in one call instead of multiple read_file calls.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "code":{"type":"string","description":"TypeScript code to execute. Must export or return a value to get results."},
+                        "timeout_ms":{"type":"integer","minimum":1000,"maximum":300000,"default":30000,"description":"Execution timeout in milliseconds"}
+                      },
+                      "required":["code"]
+                    }
+                    """).RootElement
+                }
+            },
+
+            // --- Browser/Web tools (Playwright) ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "browser_navigate",
+                    Description = "Navigate to a URL and get page content. Use for web research, reading documentation, or testing web applications.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "url":{"type":"string","description":"URL to navigate to"},
+                        "extract_text":{"type":"boolean","default":true,"description":"If true, extracts clean text. If false, returns HTML."},
+                        "screenshot":{"type":"boolean","default":false,"description":"Take a screenshot of the page"},
+                        "wait_for":{"type":"string","description":"CSS selector to wait for before returning"},
+                        "timeout_ms":{"type":"integer","minimum":1000,"maximum":60000,"default":30000}
+                      },
+                      "required":["url"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "browser_click",
+                    Description = "Click an element on the current page. Requires browser_navigate to be called first.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "selector":{"type":"string","description":"CSS selector of element to click"},
+                        "timeout_ms":{"type":"integer","minimum":1000,"maximum":30000,"default":10000}
+                      },
+                      "required":["selector"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "browser_type",
+                    Description = "Type text into an input element. Requires browser_navigate to be called first.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "selector":{"type":"string","description":"CSS selector of input element"},
+                        "text":{"type":"string","description":"Text to type"},
+                        "clear":{"type":"boolean","default":true,"description":"Clear existing text before typing"},
+                        "press_enter":{"type":"boolean","default":false,"description":"Press Enter after typing"}
+                      },
+                      "required":["selector","text"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "browser_get_elements",
+                    Description = "Get elements matching a CSS selector. Useful for finding links, buttons, or form fields.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "selector":{"type":"string","description":"CSS selector to match"},
+                        "max":{"type":"integer","minimum":1,"maximum":100,"default":20,"description":"Maximum elements to return"}
+                      },
+                      "required":["selector"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "browser_screenshot",
+                    Description = "Take a screenshot of the current page or a specific element.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "full_page":{"type":"boolean","default":false,"description":"Capture the full scrollable page"},
+                        "selector":{"type":"string","description":"CSS selector of element to screenshot (optional)"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "browser_script",
+                    Description = "Execute JavaScript on the current page. Use for advanced interactions or data extraction.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "script":{"type":"string","description":"JavaScript code to execute. Use 'return' to get a result."}
+                      },
+                      "required":["script"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "browser_close",
+                    Description = "Close the browser. Call when done with web browsing to free resources.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{}
+                    }
+                    """).RootElement
+                }
             }
         };
 

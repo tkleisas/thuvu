@@ -212,6 +212,49 @@ namespace thuvu.Web.Services
                             session.Messages.Add(new ChatMessage("assistant", result));
                         }
 
+                        // Check if auto-summarization is needed
+                        var tracker = TokenTracker.Instance;
+                        if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= 0.90)
+                        {
+                            writer.TryWrite(new AgentStreamEvent 
+                            { 
+                                Type = "context_summarizing",
+                                Data = $"Context at {tracker.UsagePercent:P0}, auto-summarizing..."
+                            });
+
+                            var summarized = await AgentLoop.HandleContextSizeAsync(
+                                _http,
+                                AgentConfig.Config.Model,
+                                session.Messages,
+                                linkedCt,
+                                status => writer.TryWrite(new AgentStreamEvent { Type = "status", Data = status })
+                            );
+
+                            if (summarized)
+                            {
+                                // Reset token tracker after summarization
+                                tracker.Reset();
+                                
+                                // Send updated context usage
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "context_usage",
+                                    Data = JsonSerializer.Serialize(new 
+                                    { 
+                                        totalTokens = tracker.TotalTokens,
+                                        maxContextLength = tracker.MaxContextLength,
+                                        usagePercent = tracker.UsagePercent * 100
+                                    })
+                                });
+
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "context_summarized",
+                                    Data = "Conversation summarized to reduce context size"
+                                });
+                            }
+                        }
+
                         writer.TryWrite(new AgentStreamEvent { Type = "done", Data = result ?? "" });
                     }
                     catch (OperationCanceledException)
@@ -627,6 +670,10 @@ namespace thuvu.Web.Services
                         events.Add(new AgentStreamEvent { Type = "error", Data = "Orchestration routing error" });
                         break;
 
+                    case "/browser":
+                        await HandleBrowserCommandAsync(command, events, ct);
+                        break;
+
                     default:
                         events.Add(new AgentStreamEvent { Type = "error", Data = $"Unknown command: {cmdName}\nType /help for available commands." });
                         break;
@@ -729,6 +776,130 @@ The agent will analyze the task and suggest a decomposition into subtasks.";
             catch (Exception ex)
             {
                 return $"Error planning task: {ex.Message}";
+            }
+        }
+
+        private async Task HandleBrowserCommandAsync(string command, List<AgentStreamEvent> events, CancellationToken ct)
+        {
+            var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var subCommand = parts.Length > 1 ? parts[1].ToLowerInvariant() : "help";
+
+            switch (subCommand)
+            {
+                case "install":
+                    events.Add(new AgentStreamEvent { Type = "status", Data = "Installing Playwright browsers..." });
+                    var installResult = await thuvu.Tools.BrowserToolImpl.InstallBrowsersAsync();
+                    events.Add(new AgentStreamEvent { Type = "command_result", Data = installResult });
+                    break;
+
+                case "open":
+                    if (parts.Length < 3)
+                    {
+                        events.Add(new AgentStreamEvent { Type = "error", Data = "Usage: /browser open <url>" });
+                        return;
+                    }
+                    var url = parts[2];
+                    events.Add(new AgentStreamEvent { Type = "status", Data = $"Navigating to {url}..." });
+                    
+                    var browseResult = await thuvu.Tools.BrowserToolImpl.BrowseUrlAsync(
+                        JsonSerializer.Serialize(new { url, extract_text = true, screenshot = true }), ct);
+                    
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(browseResult);
+                        var root = doc.RootElement;
+                        
+                        if (root.TryGetProperty("error", out var err))
+                        {
+                            events.Add(new AgentStreamEvent { Type = "error", Data = $"Error: {err.GetString()}" });
+                        }
+                        else
+                        {
+                            var title = root.TryGetProperty("title", out var t) ? t.GetString() : "Untitled";
+                            var pageUrl = root.TryGetProperty("url", out var u) ? u.GetString() : url;
+                            
+                            var sb = new System.Text.StringBuilder();
+                            sb.AppendLine($"**{title}**");
+                            sb.AppendLine($"*{pageUrl}*\n");
+                            
+                            // Include screenshot if available
+                            if (root.TryGetProperty("screenshot_base64", out var screenshotProp))
+                            {
+                                var screenshot = screenshotProp.GetString();
+                                events.Add(new AgentStreamEvent 
+                                { 
+                                    Type = "browser_screenshot", 
+                                    Data = screenshot ?? ""
+                                });
+                            }
+                            
+                            if (root.TryGetProperty("text", out var text))
+                            {
+                                var content = text.GetString() ?? "";
+                                if (content.Length > 3000)
+                                    content = content.Substring(0, 3000) + "\n\n... [truncated]";
+                                sb.AppendLine(content);
+                            }
+                            
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = sb.ToString() });
+                        }
+                    }
+                    catch
+                    {
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = browseResult });
+                    }
+                    break;
+
+                case "screenshot":
+                    events.Add(new AgentStreamEvent { Type = "status", Data = "Taking screenshot..." });
+                    var ssResult = await thuvu.Tools.BrowserToolImpl.ScreenshotAsync("{}", ct);
+                    
+                    try
+                    {
+                        using var ssDoc = JsonDocument.Parse(ssResult);
+                        var ssRoot = ssDoc.RootElement;
+                        
+                        if (ssRoot.TryGetProperty("screenshot_base64", out var ssData))
+                        {
+                            events.Add(new AgentStreamEvent 
+                            { 
+                                Type = "browser_screenshot", 
+                                Data = ssData.GetString() ?? ""
+                            });
+                            events.Add(new AgentStreamEvent { Type = "command_result", Data = "Screenshot captured." });
+                        }
+                        else if (ssRoot.TryGetProperty("error", out var ssErr))
+                        {
+                            events.Add(new AgentStreamEvent { Type = "error", Data = ssErr.GetString() ?? "Unknown error" });
+                        }
+                    }
+                    catch
+                    {
+                        events.Add(new AgentStreamEvent { Type = "command_result", Data = ssResult });
+                    }
+                    break;
+
+                case "close":
+                    await thuvu.Tools.BrowserToolImpl.CloseBrowserAsync();
+                    events.Add(new AgentStreamEvent { Type = "command_result", Data = "✓ Browser closed." });
+                    break;
+
+                default:
+                    events.Add(new AgentStreamEvent 
+                    { 
+                        Type = "command_result", 
+                        Data = @"**Browser Commands**
+
+| Command | Description |
+|---------|-------------|
+| `/browser install` | Install Playwright browsers (required first time) |
+| `/browser open <url>` | Navigate to URL and show content with screenshot |
+| `/browser screenshot` | Take screenshot of current page |
+| `/browser close` | Close the browser |
+
+The LLM can also use browser tools directly: `browser_navigate`, `browser_click`, `browser_type`, `browser_get_elements`, `browser_screenshot`, `browser_script`"
+                    });
+                    break;
             }
         }
 

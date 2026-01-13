@@ -141,7 +141,13 @@
                         }
                     </div>
                     <div class="message-content">
-                        @if (msg.Role == "tool")
+                        @if (msg.IsScreenshot && !string.IsNullOrEmpty(msg.ScreenshotBase64))
+                        {
+                            <div class="screenshot-container">
+                                <img src="data:image/png;base64,@msg.ScreenshotBase64" alt="Browser Screenshot" class="browser-screenshot" />
+                            </div>
+                        }
+                        else if (msg.Role == "tool")
                         {
                             <div class="tool-result">
                                 <span class="tool-name">@msg.ToolName</span>
@@ -447,6 +453,32 @@
                         break;
                     case "context_usage":
                         _contextUsage = System.Text.Json.JsonSerializer.Deserialize<ContextUsageDisplay>(evt.Data);
+                        break;
+                    case "context_summarizing":
+                        _messages.Add(new ChatMessageDisplay
+                        {
+                            Role = "system",
+                            Content = $"⚡ {evt.Data}",
+                            Timestamp = DateTime.Now
+                        });
+                        break;
+                    case "context_summarized":
+                        _messages.Add(new ChatMessageDisplay
+                        {
+                            Role = "system",
+                            Content = $"✅ {evt.Data}",
+                            Timestamp = DateTime.Now
+                        });
+                        break;
+                    case "browser_screenshot":
+                        _messages.Add(new ChatMessageDisplay
+                        {
+                            Role = "system",
+                            Content = $"![Screenshot](data:image/png;base64,{evt.Data})",
+                            IsScreenshot = true,
+                            ScreenshotBase64 = evt.Data,
+                            Timestamp = DateTime.Now
+                        });
                         break;
                     case "done":
                         if (!string.IsNullOrEmpty(_streamingContent))
@@ -1019,6 +1051,8 @@
         public string Content { get; set; } = "";
         public string? ToolName { get; set; }
         public DateTime Timestamp { get; set; }
+        public bool IsScreenshot { get; set; }
+        public string? ScreenshotBase64 { get; set; }
     }
 
     private class TokenUsageDisplay

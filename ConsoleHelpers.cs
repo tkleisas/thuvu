@@ -561,6 +561,13 @@ namespace thuvu
             PrintHelpCommand("/mcp skill list|run|save|delete", "Manage saved skills");
             Console.WriteLine();
 
+            // Browser/Web
+            PrintDivider("Browser (Playwright)", ConsoleColor.Magenta);
+            PrintHelpCommand("/browser install", "Install Playwright browsers");
+            PrintHelpCommand("/browser open <url>", "Navigate to URL and show content");
+            PrintHelpCommand("/browser close", "Close the browser");
+            Console.WriteLine();
+
             // Task/Session Management (MVP)
             PrintDivider("Task Management", ConsoleColor.Magenta);
             PrintHelpCommand("/task start <description>", "Start new task with git branch isolation");

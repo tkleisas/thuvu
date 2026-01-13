@@ -213,8 +213,74 @@ namespace thuvu
                 "rag_clear" => await RagToolImpl.RagClearTool(argsJson, ct).ConfigureAwait(false),
                 "rag_stats" => await RagToolImpl.RagStatsTool(argsJson, ct).ConfigureAwait(false),
                 
+                // MCP code execution
+                "execute_code" => await ExecuteCodeToolAsync(argsJson, ct).ConfigureAwait(false),
+                
+                // Browser tools (Playwright)
+                "browser_navigate" => await BrowserToolImpl.BrowseUrlAsync(argsJson, ct).ConfigureAwait(false),
+                "browser_click" => await BrowserToolImpl.ClickElementAsync(argsJson, ct).ConfigureAwait(false),
+                "browser_type" => await BrowserToolImpl.TypeTextAsync(argsJson, ct).ConfigureAwait(false),
+                "browser_get_elements" => await BrowserToolImpl.GetElementsAsync(argsJson, ct).ConfigureAwait(false),
+                "browser_screenshot" => await BrowserToolImpl.ScreenshotAsync(argsJson, ct).ConfigureAwait(false),
+                "browser_script" => await BrowserToolImpl.ExecuteScriptAsync(argsJson, ct).ConfigureAwait(false),
+                "browser_close" => await BrowserToolImpl.CloseBrowserAsync().ConfigureAwait(false),
+                
                 _ => JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" })
             };
+        }
+        
+        /// <summary>
+        /// Execute TypeScript code in Deno sandbox
+        /// </summary>
+        private static async Task<string> ExecuteCodeToolAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                if (!root.TryGetProperty("code", out var codeProp))
+                    return JsonSerializer.Serialize(new { error = "Missing 'code' parameter" });
+                    
+                var code = codeProp.GetString() ?? "";
+                var timeoutMs = root.TryGetProperty("timeout_ms", out var tp) ? tp.GetInt32() : 30000;
+                
+                // Check if MCP is enabled
+                if (!McpConfig.Instance.Enabled)
+                    return JsonSerializer.Serialize(new { error = "MCP code execution is disabled. Enable it with /mcp enable" });
+                
+                // Check if Deno is available
+                if (!await McpCodeExecutor.IsDenoAvailableAsync())
+                    return JsonSerializer.Serialize(new { error = "Deno runtime not found. Install Deno to use execute_code" });
+                
+                using var executor = new McpCodeExecutor();
+                var result = await executor.ExecuteAsync(code, ct, TimeSpan.FromMilliseconds(timeoutMs));
+                
+                if (result.Success)
+                {
+                    return JsonSerializer.Serialize(new 
+                    { 
+                        success = true,
+                        result = result.Result,
+                        execution_time_ms = (int)result.Duration.TotalMilliseconds,
+                        tool_calls = result.ToolCalls.Count
+                    });
+                }
+                else
+                {
+                    return JsonSerializer.Serialize(new 
+                    { 
+                        success = false,
+                        error = result.Error,
+                        result = result.Result,
+                        execution_time_ms = (int)result.Duration.TotalMilliseconds
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { error = ex.Message });
+            }
         }
     }
 }

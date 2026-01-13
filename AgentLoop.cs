@@ -153,7 +153,7 @@ namespace thuvu
 
                         messages.Add(new ChatMessage(
                             role: "tool",
-                            content: toolResult,
+                            content: CompressToolResult(name, toolResult),
                             name: name,
                             toolCallId: call.Id
                         ));
@@ -328,7 +328,7 @@ namespace thuvu
 
                         messages.Add(new ChatMessage(
                             role: "tool",
-                            content: toolResult,
+                            content: CompressToolResult(name, toolResult),
                             name: name,
                             toolCallId: call.Id
                         ));
@@ -546,6 +546,140 @@ namespace thuvu
             }
 
             return summarized || tracker.UsagePercent >= TruncationThreshold;
+        }
+
+        /// <summary>
+        /// Maximum characters for tool results in context (to prevent token bloat)
+        /// </summary>
+        private const int MaxToolResultLength = 8000;
+        
+        /// <summary>
+        /// Compress/truncate tool results to reduce token usage.
+        /// Smart compression based on tool type and content.
+        /// </summary>
+        private static string CompressToolResult(string toolName, string result)
+        {
+            if (string.IsNullOrEmpty(result))
+                return result;
+                
+            // Already small enough
+            if (result.Length <= MaxToolResultLength)
+                return result;
+            
+            LogAgent($"Compressing {toolName} result from {result.Length} chars");
+            
+            // Try to parse as JSON to handle structured results
+            try
+            {
+                using var doc = JsonDocument.Parse(result);
+                var root = doc.RootElement;
+                
+                // For search_files with many matches, truncate the matches array
+                if (toolName == "search_files" && root.TryGetProperty("matches", out var matches))
+                {
+                    if (matches.ValueKind == JsonValueKind.Array)
+                    {
+                        var matchCount = matches.GetArrayLength();
+                        if (matchCount > 50)
+                        {
+                            // Take first 50 matches and add summary
+                            var truncated = new List<string>();
+                            int i = 0;
+                            foreach (var m in matches.EnumerateArray())
+                            {
+                                if (i >= 50) break;
+                                truncated.Add(m.GetString() ?? "");
+                                i++;
+                            }
+                            return JsonSerializer.Serialize(new 
+                            { 
+                                matches = truncated,
+                                truncated = true,
+                                total_matches = matchCount,
+                                showing = 50
+                            });
+                        }
+                    }
+                }
+                
+                // For read_file, truncate content but keep metadata
+                if (toolName == "read_file" && root.TryGetProperty("content", out var content))
+                {
+                    var contentStr = content.GetString() ?? "";
+                    if (contentStr.Length > MaxToolResultLength - 500)
+                    {
+                        var truncatedContent = contentStr.Substring(0, MaxToolResultLength - 500);
+                        // Find last newline to avoid cutting mid-line
+                        var lastNewline = truncatedContent.LastIndexOf('\n');
+                        if (lastNewline > MaxToolResultLength / 2)
+                            truncatedContent = truncatedContent.Substring(0, lastNewline);
+                        
+                        return JsonSerializer.Serialize(new 
+                        { 
+                            content = truncatedContent,
+                            sha256 = root.TryGetProperty("sha256", out var sha) ? sha.GetString() : null,
+                            truncated = true,
+                            original_length = contentStr.Length,
+                            showing_chars = truncatedContent.Length
+                        });
+                    }
+                }
+                
+                // For build/test output with stdout/stderr, compress those
+                if (toolName.StartsWith("dotnet_") || toolName == "run_process")
+                {
+                    root.TryGetProperty("stdout", out var stdout);
+                    root.TryGetProperty("stderr", out var stderr);
+                    
+                    var stdoutStr = stdout.ValueKind == JsonValueKind.String ? stdout.GetString() ?? "" : "";
+                    var stderrStr = stderr.ValueKind == JsonValueKind.String ? stderr.GetString() ?? "" : "";
+                    
+                    // Keep errors/warnings, truncate verbose output
+                    if (stdoutStr.Length + stderrStr.Length > MaxToolResultLength - 200)
+                    {
+                        // Extract important lines (errors, warnings, test results)
+                        var importantPatterns = new[] { "error", "warning", "fail", "pass", "succeed", "Error:", "FAIL:", "PASS:" };
+                        var importantLines = new List<string>();
+                        
+                        foreach (var line in (stdoutStr + "\n" + stderrStr).Split('\n'))
+                        {
+                            foreach (var pattern in importantPatterns)
+                            {
+                                if (line.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    importantLines.Add(line.Trim());
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        var compressed = string.Join("\n", importantLines.Take(100));
+                        if (compressed.Length < 100)
+                        {
+                            // If no important lines found, just truncate
+                            compressed = (stdoutStr + "\n" + stderrStr);
+                            if (compressed.Length > MaxToolResultLength - 200)
+                                compressed = compressed.Substring(0, MaxToolResultLength - 200);
+                        }
+                        
+                        return JsonSerializer.Serialize(new 
+                        { 
+                            output = compressed,
+                            exit_code = root.TryGetProperty("exit_code", out var ec) ? ec.GetInt32() : 0,
+                            truncated = true,
+                            original_length = stdoutStr.Length + stderrStr.Length
+                        });
+                    }
+                }
+            }
+            catch
+            {
+                // Not JSON or parse error, fall through to simple truncation
+            }
+            
+            // Default: simple truncation with note
+            var truncLen = MaxToolResultLength - 100;
+            return result.Substring(0, truncLen) + $"\n\n[... truncated, original {result.Length} chars]";
         }
 
         /// <summary>

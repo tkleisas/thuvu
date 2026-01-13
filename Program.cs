@@ -466,6 +466,12 @@ namespace thuvu
                 return true;
             }
 
+            if (user.StartsWith("/browser", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleBrowserCommandAsync(user, ct);
+                return true;
+            }
+
             if (user.StartsWith("/models", StringComparison.OrdinalIgnoreCase))
             {
                 HandleModelsCommand(user);
@@ -537,6 +543,87 @@ namespace thuvu
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Handle /browser command for web browsing
+        /// </summary>
+        private static async Task HandleBrowserCommandAsync(string command, CancellationToken ct)
+        {
+            var args = ConsoleHelpers.TokenizeArgs(command);
+            var subCommand = args.Count > 1 ? args[1].ToLowerInvariant() : "help";
+
+            switch (subCommand)
+            {
+                case "install":
+                    Console.WriteLine("Installing Playwright browsers...");
+                    var installResult = await thuvu.Tools.BrowserToolImpl.InstallBrowsersAsync();
+                    Console.WriteLine(installResult);
+                    break;
+
+                case "open":
+                    if (args.Count < 3)
+                    {
+                        Console.WriteLine("Usage: /browser open <url>");
+                        return;
+                    }
+                    var url = args[2];
+                    Console.WriteLine($"Navigating to {url}...");
+                    var browseResult = await thuvu.Tools.BrowserToolImpl.BrowseUrlAsync(
+                        System.Text.Json.JsonSerializer.Serialize(new { url, extract_text = true }), ct);
+                    
+                    // Parse and display result nicely
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(browseResult);
+                        var root = doc.RootElement;
+                        
+                        if (root.TryGetProperty("error", out var err))
+                        {
+                            ConsoleHelpers.WithColor(ConsoleColor.Red, () => Console.WriteLine($"Error: {err.GetString()}"));
+                        }
+                        else
+                        {
+                            var title = root.TryGetProperty("title", out var t) ? t.GetString() : "Untitled";
+                            var pageUrl = root.TryGetProperty("url", out var u) ? u.GetString() : url;
+                            
+                            Console.WriteLine();
+                            ConsoleHelpers.WithColor(ConsoleColor.Cyan, () => Console.WriteLine($"Title: {title}"));
+                            ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () => Console.WriteLine($"URL: {pageUrl}"));
+                            Console.WriteLine();
+                            
+                            if (root.TryGetProperty("text", out var text))
+                            {
+                                var content = text.GetString() ?? "";
+                                // Truncate for console display
+                                if (content.Length > 2000)
+                                    content = content.Substring(0, 2000) + "\n... [truncated]";
+                                Console.WriteLine(content);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        Console.WriteLine(browseResult);
+                    }
+                    break;
+
+                case "close":
+                    var closeResult = await thuvu.Tools.BrowserToolImpl.CloseBrowserAsync();
+                    Console.WriteLine("Browser closed.");
+                    break;
+
+                default:
+                    Console.WriteLine("Browser commands:");
+                    Console.WriteLine("  /browser install    - Install Playwright browsers (required first time)");
+                    Console.WriteLine("  /browser open <url> - Navigate to URL and show content");
+                    Console.WriteLine("  /browser close      - Close the browser");
+                    Console.WriteLine();
+                    Console.WriteLine("The LLM can also use browser tools directly:");
+                    Console.WriteLine("  browser_navigate, browser_click, browser_type,");
+                    Console.WriteLine("  browser_get_elements, browser_screenshot, browser_script");
+                    break;
+            }
         }
 
         /// <summary>
