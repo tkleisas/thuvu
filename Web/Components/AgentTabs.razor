@@ -7,7 +7,7 @@
         <div class="tabs-header">
             <div class="tabs-title">
                 <span class="icon">🎭</span>
-                <span>Orchestration: @_taskName</span>
+                <span>Orchestration</span>
             </div>
             <div class="tabs-actions">
                 <button class="btn-icon" @onclick="ToggleMinimize" title="@(_isMinimized ? "Expand" : "Minimize")">
@@ -19,6 +19,11 @@
 
         @if (!_isMinimized)
         {
+            <!-- Plan description section - scrollable, limited height -->
+            <div class="plan-description">
+                <div class="plan-text">@_taskName</div>
+            </div>
+            
             <div class="tabs-container">
                 <div class="tab-buttons">
                     @foreach (var agent in _agents)
