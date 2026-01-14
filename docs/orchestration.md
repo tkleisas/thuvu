@@ -78,39 +78,39 @@ Executes the plan from file with multiple agents.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      User Request                                │
-│                "Create user API with auth"                       │
+│                      User Request                               │
+│                "Create user API with auth"                      │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    TaskDecomposer                                │
-│  - Analyzes task complexity                                      │
-│  - Identifies subtasks and dependencies                          │
-│  - Estimates time and resources                                  │
-│  - Recommends agent count                                        │
+│                    TaskDecomposer                               │
+│  - Analyzes task complexity                                     │
+│  - Identifies subtasks and dependencies                         │
+│  - Estimates time and resources                                 │
+│  - Recommends agent count                                       │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                       TaskPlan                                   │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐            │
-│  │ Task t1 │  │ Task t2 │  │ Task t3 │  │ Task t4 │            │
-│  │ Analyze │→ │ Model   │→ │ Service │→ │ Tests   │            │
-│  └─────────┘  └─────────┘  └─────────┘  └─────────┘            │
-│       │            │            │            │                   │
-│       │      ┌─────┴─────┐      │            │                   │
-│       │      │ Parallel  │      │            │                   │
-│       │      └───────────┘      │            │                   │
+│                       TaskPlan                                  │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐             │
+│  │ Task t1 │  │ Task t2 │  │ Task t3 │  │ Task t4 │             │
+│  │ Analyze │→ │ Model   │→ │ Service │→ │ Tests   │             │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────┘             │
+│       │            │            │            │                  │
+│       │      ┌─────┴─────┐      │            │                  │
+│       │      │ Parallel  │      │            │                  │
+│       │      └───────────┘      │            │                  │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    TaskOrchestrator                              │
-│  - Manages agent pool                                            │
-│  - Assigns tasks to agents                                       │
-│  - Handles phase transitions                                     │
-│  - Collects and merges results                                   │
+│                    TaskOrchestrator                             │
+│  - Manages agent pool                                           │
+│  - Assigns tasks to agents                                      │
+│  - Handles phase transitions                                    │
+│  - Collects and merges results                                  │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
           ┌────────────────┼────────────────┐
@@ -243,8 +243,8 @@ After successful completion:
 ║   Low risk - new files only, no modifications to existing code               ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║ Parallelization Strategy:                                                    ║
-║   Phase 2 and Phase 3 can each run 2 tasks in parallel. Use 2 agents for    ║
-║   optimal throughput. Single agent would take ~29 min, 2 agents ~17 min.    ║
+║   Phase 2 and Phase 3 can each run 2 tasks in parallel. Use 2 agents for     ║
+║   optimal throughput. Single agent would take ~29 min, 2 agents ~17 min.     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 Task decomposed into 5 subtasks. Recommended agents: 2. Estimated time: 25 min.

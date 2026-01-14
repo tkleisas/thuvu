@@ -124,17 +124,17 @@ Create a secure sandbox environment to execute agent-generated TypeScript code.
          │
          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Deno Sandbox                              │
+│                    Deno Sandbox                             │
 ├─────────────────────────────────────────────────────────────┤
 │  import { readFile } from './servers/filesystem/readFile';  │
 │  import { searchFiles } from './servers/filesystem/search'; │
-│                                                              │
-│  // Agent-generated code                                     │
+│                                                             │
+│  // Agent-generated code                                    │
 │  const files = await searchFiles({ glob: '**/*.cs' });      │
-│  const contents = await Promise.all(                         │
+│  const contents = await Promise.all(                        │
 │    files.slice(0, 5).map(f => readFile(f))                  │
-│  );                                                          │
-│  return { fileCount: files.length, preview: contents };      │
+│  );                                                         │
+│  return { fileCount: files.length, preview: contents };     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
