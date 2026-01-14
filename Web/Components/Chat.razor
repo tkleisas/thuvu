@@ -464,6 +464,17 @@
                         _currentToolStatus = "";
                         break;
                     case "tool_result":
+                        // Finalize any streaming content before adding tool result
+                        if (!string.IsNullOrEmpty(_streamingContent))
+                        {
+                            _messages.Add(new ChatMessageDisplay
+                            {
+                                Role = "assistant",
+                                Content = _streamingContent,
+                                Timestamp = DateTime.Now
+                            });
+                            _streamingContent = "";
+                        }
                         _messages.Add(new ChatMessageDisplay
                         {
                             Role = "tool",

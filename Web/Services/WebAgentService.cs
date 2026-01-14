@@ -267,8 +267,10 @@ namespace thuvu.Web.Services
                                     })
                                 });
                                 
-                                // Also send context usage info
+                                // Update TokenTracker first, then send context usage info
                                 var tokenTracker = TokenTracker.Instance;
+                                tokenTracker.UpdateFromUsage(usage);
+                                
                                 writer.TryWrite(new AgentStreamEvent 
                                 { 
                                     Type = "context_usage",
