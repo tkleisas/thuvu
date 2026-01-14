@@ -390,5 +390,57 @@ secret agent school and messing up all the tasks he was assigned.
 - Add support for more cloud LLM providers
 - Improve browser automation with more actions
 
+## Recent Changes (January 2026)
+
+### Vision/Image Analysis
+Added support for analyzing images using vision-capable LLMs:
+
+- **Image Paste/Drop**: Paste images (Ctrl+V) or drag-drop into the Web UI chat input
+- **Vision Model Configuration**: Configure a vision model in `appsettings.json`:
+  ```json
+  {
+    "Models": {
+      "VisionModelId": "qwen3-vl-8b",
+      "Models": [
+        {
+          "ModelId": "qwen3-vl-8b",
+          "DisplayName": "Qwen3 VL 8B",
+          "HostUrl": "http://127.0.0.1:1234",
+          "SupportsVision": true,
+          "Purposes": ["Vision"]
+        }
+      ]
+    }
+  }
+  ```
+- **Automatic Image Resizing**: Large images are automatically resized to prevent vision model errors
+- **Context Integration**: Vision analysis results are added to conversation history for follow-up questions
+
+New tool: `analyze_image` - Analyze images via vision-capable LLM (available in `Tools/VisionToolImpl.cs`)
+
+### MCP/Execute Code Fixes
+Fixed critical issues with the TypeScript sandbox execution:
+
+- **Deno Permission Fix**: Fixed `--allow-read` to include both work directory and MCP directory
+- **MCP Context for Permissions**: Added `PermissionManager.EnterMcpContext()`/`ExitMcpContext()` to auto-grant permissions for nested tool calls within MCP sandbox
+- **Console.log Capture**: Fixed console.log output capture in sandbox - now returned in result instead of breaking JSON-RPC protocol
+
+### Web UI Improvements
+- **Tool Arguments Display**: Tool calls now show their arguments in the Web UI
+- **Smart JSON Truncation**: Tool results truncate individual JSON field values (500 chars) instead of truncating entire JSON
+- **Image Attachment Preview**: Shows attached image thumbnail with remove button above chat input
+
+### Files Changed
+- `Tools/VisionToolImpl.cs` (new) - Vision/image analysis tool
+- `Models/ModelConfig.cs` - Added `Vision` purpose, `SupportsVision` property, `VisionModelId`
+- `Models/McpCodeExecutor.cs` - Fixed Deno permissions, MCP context
+- `Models/PermissionManager.cs` - Added MCP context (AsyncLocal) for auto-granting nested permissions
+- `Web/Components/Chat.razor` - Image paste/drop, tool arguments display
+- `Web/Services/WebAgentService.cs` - `SendMessageWithImageAsync`, smart JSON truncation
+- `Web/Hubs/AgentHub.cs` - `SendMessageWithImage` hub method
+- `wwwroot/js/thuvu.js` - Image clipboard/file reading, auto-resize
+- `wwwroot/css/app.css` - Image attachment preview styles
+- `mcp/runtime/sandbox.ts` - Console.log capture fix
+
 ## Performance
 Tested on ThinkPad L14 with Ryzen 5 Pro 4650U and 64GB RAM running Windows 11. Works well with local LLMs running mainly on CPU, though cloud APIs (DeepSeek) provide faster responses for complex tasks.

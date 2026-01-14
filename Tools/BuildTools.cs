@@ -43,12 +43,16 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "read_file",
-                    Description = "Read a file by absolute or relative path.",
+                    Description = "Read a file by absolute or relative path. Returns file content with SHA256 checksum. Supports reading specific line ranges for large files.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
                       "properties":{
-                        "path":{"type":"string","description":"Path to file"}
+                        "path":{"type":"string","description":"Path to file (absolute or relative to work directory)"},
+                        "start_line":{"type":"integer","minimum":1,"description":"First line to read (1-indexed). Use for large files."},
+                        "end_line":{"type":"integer","minimum":1,"description":"Last line to read (1-indexed). Use for large files."},
+                        "line_numbers":{"type":"boolean","default":false,"description":"If true, prefix each line with its line number"},
+                        "max_lines":{"type":"integer","default":2000,"description":"Maximum lines to return if no range specified"}
                       },
                       "required":["path"]
                     }
@@ -63,15 +67,16 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "write_file",
-                    Description = "Write an entire file. Rejects if checksum mismatches when expected_sha256 is provided.",
+                    Description = "Write an entire file. Returns new SHA256 checksum. Use expected_sha256 to prevent overwriting concurrent changes.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
                       "properties":{
-                        "path":{"type":"string"},
-                        "content":{"type":"string"},
-                        "expected_sha256":{"type":["string","null"],"description":"Checksum from read_file to prevent clobbering"},
-                        "create_intermediate_dirs":{"type":"boolean","default":true}
+                        "path":{"type":"string","description":"Path to file (absolute or relative to work directory)"},
+                        "content":{"type":"string","description":"Full file content to write"},
+                        "expected_sha256":{"type":"string","description":"SHA256 from read_file to prevent clobbering. If file changed, write is rejected."},
+                        "create_intermediate_dirs":{"type":"boolean","default":true,"description":"Create parent directories if they don't exist"},
+                        "backup":{"type":"boolean","default":false,"description":"Create a .bak backup before overwriting"}
                       },
                       "required":["path","content"]
                     }
@@ -183,14 +188,16 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "dotnet_run",
-                    Description = "Run 'dotnet run'.",
+                    Description = "Run a .NET project. WARNING: GUI/game apps (MonoGame, WPF, etc.) will timeout as they don't exit automatically. Use for console apps only, or set a short timeout.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
                       "properties":{
-                        "solution_or_project":{"type":"string"},
-                        "filter":{"type":"string","description":"Run filter expression"},
-                        "logger":{"type":"string","enum":["trx","console"],"default":"trx"}
+                        "solution_or_project":{"type":"string","description":"Path to project file or directory"},
+                        "configuration":{"type":"string","description":"Build configuration (Debug/Release)"},
+                        "no_build":{"type":"boolean","default":false,"description":"Skip build before running"},
+                        "args":{"type":"array","items":{"type":"string"},"description":"Arguments to pass to the application"},
+                        "timeout_ms":{"type":"integer","default":30000,"description":"Timeout in ms. Default 30s. GUI apps will always timeout."}
                       }
                     }
                     """).RootElement
@@ -202,7 +209,7 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "dotnet_new",
-                    Description = "Run 'dotnet new'.",
+                    Description = "Create a new .NET project from template.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
@@ -372,19 +379,35 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "execute_code",
-                    Description = @"Execute TypeScript code in a sandboxed Deno environment. Use this to batch multiple operations in a single call to reduce token usage. The code has access to:
-- searchFiles(glob: string, query?: string): Promise<string[]> - Search files with glob pattern
-- readFile(path: string): Promise<{content: string, sha256: string}> - Read file contents  
-- writeFile(path: string, content: string, expectedSha256?: string): Promise<{success: boolean}> - Write file
-- runCommand(cmd: string, args: string[]): Promise<{stdout: string, stderr: string, exitCode: number}> - Run shell command
+                    Description = @"Execute TypeScript code in a sandboxed Deno environment. 
 
-Example: Read multiple files and analyze them in one call instead of multiple read_file calls.",
+WHEN TO USE: Use for complex batch operations that would require many sequential tool calls, like:
+- Reading and processing 5+ files together
+- Complex file transformations
+- Data analysis across multiple files
+
+WHEN NOT TO USE: Prefer native tools for simple operations:
+- Use read_file for reading 1-3 files
+- Use write_file for writing files
+- Use search_files for searching
+- Use dotnet_build/dotnet_test for .NET operations
+
+Available functions (auto-imported):
+- searchFiles(glob: string, query?: string): Promise<string[]>
+- readFile(path: string): Promise<{content: string, sha256: string}>
+- writeFile(path: string, content: string, expectedSha256?: string): Promise<{success: boolean}>
+- applyPatch(patch: string, root?: string): Promise<{applied: boolean}>
+- runCommand(cmd: string, args: string[]): Promise<{stdout: string, stderr: string, exitCode: number}>
+- git(args: string[]): Promise<{stdout: string, stderr: string, exitCode: number}>
+- dotnet(args: string[]): Promise<{stdout: string, stderr: string, exitCode: number}>
+
+NOTE: Avoid running long commands like 'dotnet build' inside execute_code - use native tools instead.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
                       "properties":{
-                        "code":{"type":"string","description":"TypeScript code to execute. Must export or return a value to get results."},
-                        "timeout_ms":{"type":"integer","minimum":1000,"maximum":300000,"default":30000,"description":"Execution timeout in milliseconds"}
+                        "code":{"type":"string","description":"TypeScript code to execute. Must return a value to get results."},
+                        "timeout_ms":{"type":"integer","minimum":1000,"maximum":600000,"description":"Execution timeout in milliseconds. Default from McpConfig.DefaultTimeout (5 minutes)."}
                       },
                       "required":["code"]
                     }
@@ -521,6 +544,33 @@ Example: Read multiple files and analyze them in one call instead of multiple re
                     {
                       "type":"object",
                       "properties":{}
+                    }
+                    """).RootElement
+                }
+            },
+            
+            // --- Vision/Image Analysis ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "analyze_image",
+                    Description = @"Analyze an image using a vision-capable LLM. Use to:
+- Verify UI/screenshot appearance
+- Check if visual elements are displayed correctly
+- Get textual descriptions of images or screenshots
+- Validate app visual output
+
+The image can be provided as a file path or base64 data.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "image_path":{"type":"string","description":"Path to image file (absolute or relative to work directory)"},
+                        "image_base64":{"type":"string","description":"Base64-encoded image data (alternative to image_path)"},
+                        "prompt":{"type":"string","description":"What to analyze or check in the image. Default: 'Describe this image in detail.'"}
+                      }
                     }
                     """).RootElement
                 }

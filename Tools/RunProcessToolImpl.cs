@@ -12,7 +12,19 @@ namespace thuvu.Tools
     {
         // --- run_process (whitelisted) ---
         public static readonly HashSet<string> AllowedCmds = new(StringComparer.OrdinalIgnoreCase)
-        { "dotnet", "git", "bash", "powershell" };
+        { 
+            // Build tools
+            "dotnet", "npm", "npx", "node", "yarn", "pnpm",
+            "cargo", "rustc", "go", "python", "python3", "pip", "pip3",
+            "make", "cmake", "gradle", "mvn",
+            // Version control
+            "git", "svn",
+            // Shell
+            "bash", "sh", "powershell", "pwsh", "cmd",
+            // Utilities
+            "cat", "head", "tail", "grep", "find", "ls", "dir", "tree",
+            "curl", "wget"
+        };
 
         public static Task<string> RunProcessToolAsync(string rawArgs) 
             => RunProcessToolAsync(rawArgs, CancellationToken.None);

@@ -52,6 +52,7 @@ namespace thuvu
             Action<string, string>? onToolResult = null,
             Action<string, string, TimeSpan>? onToolComplete = null,
             ToolProgressCallback? onToolProgress = null,
+            Action<string, string>? onToolCall = null,
             int? maxIterations = null)
         {
             int maxIter = maxIterations ?? GetMaxIterations();
@@ -72,7 +73,8 @@ namespace thuvu
                     Messages = messages,
                     Tools = tools,
                     ToolChoice = "auto",
-                    Temperature = 0.2
+                    Temperature = 0.2,
+                    Max_Tokens = AgentConfig.Config.MaxOutputTokens > 0 ? AgentConfig.Config.MaxOutputTokens : null
                 };
                 
                 // Log message summary for debugging
@@ -133,6 +135,7 @@ namespace thuvu
                     {
                         var name = call.Function.Name;
                         var argsJson = call.Function.Arguments ?? "{}";
+                        onToolCall?.Invoke(name, argsJson);
                         var toolStart = DateTime.Now;
                         var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct, onToolProgress);
                         var toolElapsed = DateTime.Now - toolStart;
@@ -150,6 +153,15 @@ namespace thuvu
                             if (failureTracker[name] >= MaxConsecutiveFailures)
                             {
                                 LogAgent($"Tool {name} failed {MaxConsecutiveFailures} times consecutively. Stopping.");
+                                
+                                // Add the tool result to keep conversation state valid
+                                messages.Add(new ChatMessage(
+                                    role: "tool",
+                                    content: CompressToolResult(name, toolResult),
+                                    name: name,
+                                    toolCallId: call.Id
+                                ));
+                                
                                 return $"[Agent stopped: Tool '{name}' failed {MaxConsecutiveFailures} times consecutively. Please check the tool configuration or try a different approach.]";
                             }
                         }
@@ -188,6 +200,7 @@ namespace thuvu
             Action<Usage>? onUsage = null,
             Action<string, string, TimeSpan>? onToolComplete = null,
             ToolProgressCallback? onToolProgress = null,
+            Action<string, string>? onToolCall = null,
             int? maxIterations = null)
         {
             int maxIter = maxIterations ?? GetMaxIterations();
@@ -214,7 +227,8 @@ namespace thuvu
                     Messages = messages,
                     Tools = tools,
                     ToolChoice = "auto",
-                    Temperature = 0.2
+                    Temperature = 0.2,
+                    Max_Tokens = AgentConfig.Config.MaxOutputTokens > 0 ? AgentConfig.Config.MaxOutputTokens : null
                 };
                 
                 // Log message summary for debugging
@@ -305,6 +319,7 @@ namespace thuvu
                         executedToolCalls.Add(callSignature);
                         
                         LogAgent($"Executing tool: {name}");
+                        onToolCall?.Invoke(name, argsJson);
                         var toolStart = DateTime.Now;
                         var toolResult = await ToolExecutor.ExecuteToolAsync(name, argsJson, ct, onToolProgress);
                         var toolElapsed = DateTime.Now - toolStart;
@@ -323,6 +338,15 @@ namespace thuvu
                             if (failureTracker[name] >= MaxConsecutiveFailures)
                             {
                                 LogAgent($"Tool {name} failed {MaxConsecutiveFailures} times consecutively. Stopping.");
+                                
+                                // Add the tool result to keep conversation state valid
+                                messages.Add(new ChatMessage(
+                                    role: "tool",
+                                    content: CompressToolResult(name, toolResult),
+                                    name: name,
+                                    toolCallId: call.Id
+                                ));
+                                
                                 var msg = $"[Agent stopped: Tool '{name}' failed {MaxConsecutiveFailures} times consecutively. Please check the tool or try a different approach.]";
                                 onToken?.Invoke(msg);
                                 return msg;

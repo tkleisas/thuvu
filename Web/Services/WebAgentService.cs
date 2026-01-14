@@ -312,6 +312,15 @@ namespace thuvu.Web.Services
                                         Data = progress.Message ?? progress.Status.ToString()
                                     });
                                 }
+                            },
+                            onToolCall: (name, argsJson) =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "tool_call",
+                                    ToolName = name,
+                                    Data = argsJson
+                                });
                             }
                         );
 
@@ -395,6 +404,116 @@ namespace thuvu.Web.Services
                 session.CurrentCts?.Dispose();
                 session.CurrentCts = null;
             }
+        }
+
+        /// <summary>
+        /// Send a message with an image and stream the response
+        /// </summary>
+        public async IAsyncEnumerable<AgentStreamEvent> SendMessageWithImageAsync(
+            string sessionId,
+            string message,
+            string imageBase64,
+            string imageMimeType,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            var session = GetSession(sessionId);
+            if (session == null)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "Session not found" };
+                yield break;
+            }
+
+            if (session.IsProcessing)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "Session is already processing a request" };
+                yield break;
+            }
+
+            // Check vision model early before setting processing state
+            var visionModel = Models.ModelRegistry.Instance.GetVisionModel();
+            if (visionModel == null)
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = "No vision model configured. Add a model with SupportsVision: true and set VisionModelId in appsettings.json" };
+                yield break;
+            }
+
+            session.IsProcessing = true;
+            session.CurrentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var linkedCt = session.CurrentCts.Token;
+
+            // Use channel pattern to avoid yield in try-catch
+            var channel = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
+            var writer = channel.Writer;
+
+            var completionTask = Task.Run(async () =>
+            {
+                try
+                {
+                    writer.TryWrite(new AgentStreamEvent { Type = "status", Data = $"Analyzing image with {visionModel.DisplayName}..." });
+
+                    // Call vision model directly
+                    var visionResult = await Tools.VisionToolImpl.AnalyzeImageAsync(
+                        imageBase64,
+                        imageMimeType,
+                        string.IsNullOrWhiteSpace(message) ? "Describe this image in detail" : message,
+                        linkedCt);
+
+                    // Add to conversation history with clear context
+                    var userPrompt = string.IsNullOrWhiteSpace(message) 
+                        ? "Please analyze the attached image and describe what you see."
+                        : message;
+                    var userMsg = $"[User attached an image and asked: {userPrompt}]";
+                    session.Messages.Add(new ChatMessage("user", userMsg));
+                    
+                    if (visionResult.Success)
+                    {
+                        // Add the vision description as assistant response with clear labeling
+                        var assistantResponse = $"I analyzed the image. Here's what I found:\n\n{visionResult.Description}";
+                        session.Messages.Add(new ChatMessage("assistant", assistantResponse));
+                        
+                        // Update last activity
+                        session.LastActivityAt = DateTime.Now;
+                        
+                        // Stream the result token by token for consistency
+                        foreach (var token in (visionResult.Description ?? "").Split(' '))
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "token", Data = token + " " });
+                            await Task.Delay(10, linkedCt); // Small delay for visual effect
+                        }
+                        
+                        writer.TryWrite(new AgentStreamEvent { Type = "done", Data = visionResult.Description ?? "" });
+                    }
+                    else
+                    {
+                        writer.TryWrite(new AgentStreamEvent { Type = "error", Data = visionResult.Error ?? "Vision analysis failed" });
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    writer.TryWrite(new AgentStreamEvent { Type = "cancelled", Data = "Request cancelled" });
+                }
+                catch (Exception ex)
+                {
+                    writer.TryWrite(new AgentStreamEvent { Type = "error", Data = ex.Message });
+                }
+                finally
+                {
+                    writer.Complete();
+                }
+            }, linkedCt);
+
+            // Stream events as they come
+            await foreach (var evt in channel.Reader.ReadAllAsync(linkedCt))
+            {
+                yield return evt;
+            }
+
+            await completionTask;
+
+            // Cleanup
+            session.IsProcessing = false;
+            session.CurrentCts?.Dispose();
+            session.CurrentCts = null;
         }
 
         /// <summary>
@@ -1549,11 +1668,81 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
             }
         }
 
-        private static string TruncateResult(string result, int maxLength = 2000)
+        /// <summary>
+        /// Truncate tool result by truncating individual JSON field values rather than the whole string.
+        /// This preserves the JSON structure while limiting very long field values.
+        /// </summary>
+        private static string TruncateResult(string result, int maxFieldLength = 500)
         {
-            if (result.Length <= maxLength)
+            if (string.IsNullOrWhiteSpace(result))
                 return result;
-            return result[..maxLength] + $"\n... (truncated, {result.Length - maxLength} more chars)";
+            
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(result);
+                var truncated = TruncateJsonElement(doc.RootElement, maxFieldLength);
+                return JsonSerializer.Serialize(truncated, new System.Text.Json.JsonSerializerOptions 
+                { 
+                    WriteIndented = true 
+                });
+            }
+            catch
+            {
+                // Not valid JSON - truncate plain text if too long
+                if (result.Length > 5000)
+                {
+                    return result[..5000] + $"\n... (truncated, {result.Length - 5000} more chars)";
+                }
+                return result;
+            }
+        }
+        
+        /// <summary>
+        /// Recursively truncate long string values in a JSON element
+        /// </summary>
+        private static object? TruncateJsonElement(System.Text.Json.JsonElement element, int maxFieldLength)
+        {
+            switch (element.ValueKind)
+            {
+                case System.Text.Json.JsonValueKind.Object:
+                    var obj = new Dictionary<string, object?>();
+                    foreach (var prop in element.EnumerateObject())
+                    {
+                        obj[prop.Name] = TruncateJsonElement(prop.Value, maxFieldLength);
+                    }
+                    return obj;
+                    
+                case System.Text.Json.JsonValueKind.Array:
+                    var arr = new List<object?>();
+                    foreach (var item in element.EnumerateArray())
+                    {
+                        arr.Add(TruncateJsonElement(item, maxFieldLength));
+                    }
+                    return arr;
+                    
+                case System.Text.Json.JsonValueKind.String:
+                    var str = element.GetString() ?? "";
+                    if (str.Length > maxFieldLength)
+                    {
+                        return str[..maxFieldLength] + $"... ({str.Length - maxFieldLength} more chars)";
+                    }
+                    return str;
+                    
+                case System.Text.Json.JsonValueKind.Number:
+                    if (element.TryGetInt64(out var longVal)) return longVal;
+                    if (element.TryGetDouble(out var doubleVal)) return doubleVal;
+                    return element.GetRawText();
+                    
+                case System.Text.Json.JsonValueKind.True:
+                    return true;
+                    
+                case System.Text.Json.JsonValueKind.False:
+                    return false;
+                    
+                case System.Text.Json.JsonValueKind.Null:
+                default:
+                    return null;
+            }
         }
     }
 

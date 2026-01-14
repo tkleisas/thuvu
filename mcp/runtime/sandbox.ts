@@ -13,6 +13,7 @@ interface ExecutionRequest {
 interface ExecutionResult {
   success: boolean;
   result?: unknown;
+  output?: string;  // Captured console.log output
   error?: string;
   duration: number;
 }
@@ -26,12 +27,14 @@ async function executeCode(code: string): Promise<unknown> {
   const mcpUrl = new URL('..', runtimeUrl);
   const fsUrl = new URL('servers/filesystem/index.ts', mcpUrl).href;
   const gitUrl = new URL('servers/git/index.ts', mcpUrl).href;
+  const processUrl = new URL('servers/process/index.ts', mcpUrl).href;
   
   // Wrap the code so it exports its result as default
   // Auto-inject tool imports so users don't need to import them
   const wrappedCode = `
     import { searchFiles, readFile, writeFile, applyPatch } from '${fsUrl}';
     import { status, diff, diffStaged, diffUnstaged, commit } from '${gitUrl}';
+    import { run as runCommand, git, dotnet } from '${processUrl}';
     
     const __result__ = await (async () => {
       ${code}
@@ -66,20 +69,35 @@ async function main(): Promise<void> {
 
   const startTime = performance.now();
   let result: ExecutionResult;
+  
+  // Capture console output by overriding console.log
+  const capturedOutput: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    const line = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+    capturedOutput.push(line);
+    // Also write to stderr so it appears in debug output
+    console.error('[CODE OUTPUT]', line);
+  };
 
   try {
     const output = await executeCode(request.code);
     result = {
       success: true,
       result: output,
+      output: capturedOutput.length > 0 ? capturedOutput.join('\n') : undefined,
       duration: performance.now() - startTime,
     };
   } catch (error) {
     result = {
       success: false,
       error: error instanceof Error ? error.message : String(error),
+      output: capturedOutput.length > 0 ? capturedOutput.join('\n') : undefined,
       duration: performance.now() - startTime,
     };
+  } finally {
+    // Restore original console.log
+    console.log = originalLog;
   }
 
   // Write result to stdout

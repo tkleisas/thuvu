@@ -47,6 +47,22 @@ namespace thuvu.Web.Hubs
         }
 
         /// <summary>
+        /// Send a message with an image attachment and stream the response
+        /// </summary>
+        public async IAsyncEnumerable<AgentStreamEvent> SendMessageWithImage(
+            string sessionId, 
+            string message,
+            string imageBase64,
+            string imageMimeType,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await foreach (var evt in _agentService.SendMessageWithImageAsync(sessionId, message, imageBase64, imageMimeType, ct))
+            {
+                yield return evt;
+            }
+        }
+
+        /// <summary>
         /// Cancel the current request
         /// </summary>
         public bool CancelRequest(string sessionId)

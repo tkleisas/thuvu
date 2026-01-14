@@ -436,6 +436,17 @@ html, body {
     font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 
+.tool-result .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.tool-result .tool-icon {
+    font-size: 1rem;
+}
+
 .tool-result .tool-name {
     display: inline-block;
     background-color: var(--accent-purple);
@@ -443,7 +454,61 @@ html, body {
     padding: 0.125rem 0.5rem;
     border-radius: 4px;
     font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.tool-result .tool-truncated {
+    font-size: 0.7rem;
+    color: var(--accent-yellow);
+    font-style: italic;
+}
+
+.tool-result .tool-args {
     margin-bottom: 0.5rem;
+}
+
+.tool-result .tool-args-label,
+.tool-result .tool-output-label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tool-result .tool-args-content {
+    background-color: var(--bg-tertiary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.75rem;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    border: 1px solid var(--border-color);
+    margin: 0;
+}
+
+.tool-result .tool-output-section {
+    margin-top: 0.5rem;
+}
+
+.tool-result .tool-output {
+    background-color: var(--bg-primary);
+    padding: 0.75rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.8rem;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    border: 1px solid var(--border-color);
+    margin: 0;
 }
 
 .tool-result pre {
@@ -475,17 +540,29 @@ html, body {
 /* Tool Progress */
 .tool-progress {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 0.5rem;
-    padding: 0.5rem;
+    padding: 0.75rem;
     background-color: var(--bg-secondary);
     border-radius: 6px;
     margin-bottom: 0.75rem;
     font-size: 0.875rem;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.tool-progress .tool-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
 }
 
 .tool-progress .tool-icon {
     animation: spin 2s linear infinite;
+    flex-shrink: 0;
 }
 
 @keyframes spin {
@@ -494,13 +571,52 @@ html, body {
 }
 
 .tool-progress .tool-name {
-    color: var(--accent-yellow);
-    font-weight: 500;
+    display: inline-block;
+    background-color: var(--accent-purple);
+    color: var(--bg-primary);
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    flex-shrink: 0;
 }
 
 .tool-progress .tool-status {
     color: var(--text-muted);
     font-size: 0.8rem;
+    flex-shrink: 0;
+}
+
+.tool-progress .tool-args {
+    display: block;
+    width: 100%;
+}
+
+.tool-progress .tool-args-label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tool-progress .tool-args-content {
+    display: block;
+    background-color: var(--bg-tertiary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.75rem;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    border: 1px solid var(--border-color);
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 /* Input Area */
@@ -596,6 +712,84 @@ html, body {
 
 .input-wrapper textarea::placeholder {
     color: var(--text-muted);
+}
+
+/* Image attachment wrapper */
+.textarea-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.textarea-wrapper textarea {
+    flex: 1;
+    resize: none;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    min-height: 80px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.textarea-wrapper.has-attachment textarea {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.textarea-wrapper textarea:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(122, 162, 247, 0.2);
+}
+
+.attached-image-preview {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+}
+
+.attached-image-preview img {
+    max-height: 60px;
+    max-width: 100px;
+    border-radius: 4px;
+    object-fit: contain;
+    background-color: var(--bg-secondary);
+}
+
+.attached-image-preview .attachment-name {
+    flex: 1;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.attached-image-preview .remove-attachment {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 1rem;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.attached-image-preview .remove-attachment:hover {
+    background-color: var(--accent-red);
+    color: white;
 }
 
 .input-actions {

@@ -225,6 +225,9 @@ namespace thuvu
                 "browser_script" => await BrowserToolImpl.ExecuteScriptAsync(argsJson, ct).ConfigureAwait(false),
                 "browser_close" => await BrowserToolImpl.CloseBrowserAsync().ConfigureAwait(false),
                 
+                // Vision/Image Analysis
+                "analyze_image" => await VisionToolImpl.AnalyzeImageAsync(argsJson, ct).ConfigureAwait(false),
+                
                 _ => JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" })
             };
         }
@@ -243,15 +246,24 @@ namespace thuvu
                     return JsonSerializer.Serialize(new { error = "Missing 'code' parameter" });
                     
                 var code = codeProp.GetString() ?? "";
-                var timeoutMs = root.TryGetProperty("timeout_ms", out var tp) ? tp.GetInt32() : 30000;
+                var timeoutMs = root.TryGetProperty("timeout_ms", out var tp) 
+                    ? tp.GetInt32() 
+                    : McpConfig.Instance.DefaultTimeout;
                 
                 // Check if MCP is enabled
                 if (!McpConfig.Instance.Enabled)
-                    return JsonSerializer.Serialize(new { error = "MCP code execution is disabled. Enable it with /mcp enable" });
+                    return JsonSerializer.Serialize(new { 
+                        success = false,
+                        error = "MCP code execution is disabled. Enable it with /mcp enable" 
+                    });
                 
                 // Check if Deno is available
                 if (!await McpCodeExecutor.IsDenoAvailableAsync())
-                    return JsonSerializer.Serialize(new { error = "Deno runtime not found. Install Deno to use execute_code" });
+                    return JsonSerializer.Serialize(new { 
+                        success = false,
+                        error = "Deno runtime not found. Install Deno to use execute_code.",
+                        hint = "Install from https://deno.land or run: irm https://deno.land/install.ps1 | iex"
+                    });
                 
                 using var executor = new McpCodeExecutor();
                 var result = await executor.ExecuteAsync(code, ct, TimeSpan.FromMilliseconds(timeoutMs));
@@ -273,13 +285,19 @@ namespace thuvu
                         success = false,
                         error = result.Error,
                         result = result.Result,
-                        execution_time_ms = (int)result.Duration.TotalMilliseconds
+                        execution_time_ms = (int)result.Duration.TotalMilliseconds,
+                        hint = result.Error?.Contains("Module not found") == true 
+                            ? "MCP runtime not found. Ensure 'mcp/runtime/sandbox.ts' exists relative to the thuvu executable."
+                            : null
                     });
                 }
             }
             catch (Exception ex)
             {
-                return JsonSerializer.Serialize(new { error = ex.Message });
+                return JsonSerializer.Serialize(new { 
+                    success = false,
+                    error = ex.Message 
+                });
             }
         }
     }

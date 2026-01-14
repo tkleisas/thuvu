@@ -14,11 +14,13 @@
     <script>
         Blazor.start({
             configureSignalR: function (builder) {
-                builder.withServerTimeout(300000);  // 5 minutes server timeout
-                builder.withKeepAliveInterval(60000); // 1 minute keep-alive
+                let c = builder.build();
+                c.serverTimeoutInMilliseconds = 600000;  // 10 minutes
+                c.keepAliveIntervalInMilliseconds = 30000; // 30 seconds
+                builder.build = () => c;
             }
         });
     </script>
-    <script src="js/thuvu.js?v=3"></script>
+    <script src="js/thuvu.js?v=5"></script>
 </body>
 </html>

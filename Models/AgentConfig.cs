@@ -50,6 +50,12 @@ namespace thuvu.Models
         /// </summary>
         public int MaxIterations { get; set; } = 50;
         
+        /// <summary>
+        /// Maximum output tokens for LLM responses. If 0 or null, no limit is set (model default).
+        /// Set to a high value (e.g., 16384) if tool calls are being truncated for large files.
+        /// </summary>
+        public int MaxOutputTokens { get; set; } = 16384;
+        
         public static AgentConfig Config = new();
         
         /// <summary>

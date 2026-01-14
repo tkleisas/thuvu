@@ -22,15 +22,42 @@ namespace thuvu.Models
         {
             _bridge = bridge ?? new McpBridge();
             
-            // Find MCP directory relative to executable or current directory
-            var baseDir = AppContext.BaseDirectory;
-            _mcpPath = Path.Combine(baseDir, "mcp");
-            
-            if (!Directory.Exists(_mcpPath))
+            // Find MCP directory - search multiple locations
+            _mcpPath = FindMcpDirectory();
+        }
+        
+        /// <summary>
+        /// Finds the MCP directory by searching multiple locations
+        /// </summary>
+        private static string FindMcpDirectory()
+        {
+            var candidates = new[]
             {
-                // Try current directory
-                _mcpPath = Path.Combine(Directory.GetCurrentDirectory(), "mcp");
+                // 1. Relative to executable (for deployed builds)
+                Path.Combine(AppContext.BaseDirectory, "mcp"),
+                // 2. Parent of executable (for bin/Debug/net8.0 structure)
+                Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "mcp"),
+                // 3. Current directory (legacy)
+                Path.Combine(Directory.GetCurrentDirectory(), "mcp"),
+                // 4. Environment variable override
+                Environment.GetEnvironmentVariable("THUVU_MCP_PATH") ?? ""
+            };
+            
+            foreach (var candidate in candidates)
+            {
+                if (string.IsNullOrEmpty(candidate)) continue;
+                
+                var fullPath = Path.GetFullPath(candidate);
+                var sandboxPath = Path.Combine(fullPath, "runtime", "sandbox.ts");
+                
+                if (File.Exists(sandboxPath))
+                {
+                    return fullPath;
+                }
             }
+            
+            // Default fallback - will likely fail but provides meaningful error
+            return Path.Combine(AppContext.BaseDirectory, "mcp");
         }
 
         /// <summary>
@@ -73,6 +100,9 @@ namespace thuvu.Models
             var sw = Stopwatch.StartNew();
             var effectiveTimeout = timeout ?? TimeSpan.FromMilliseconds(McpConfig.Instance.DefaultTimeout);
 
+            // Enter MCP context so nested tool calls are auto-granted permission
+            PermissionManager.EnterMcpContext();
+            
             try
             {
                 // Check if Deno is available
@@ -124,8 +154,25 @@ namespace thuvu.Models
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(effectiveTimeout);
 
-                // Start reading stderr in background
-                var stderrTask = ReadOutputAsync(_denoProcess.StandardError, cts.Token);
+                // Start reading stderr in background (for debug/error output)
+                var stderrLines = new List<string>();
+                var stderrTask = Task.Run(async () => 
+                {
+                    try
+                    {
+                        while (!_denoProcess.StandardError.EndOfStream)
+                        {
+                            var line = await _denoProcess.StandardError.ReadLineAsync(cts.Token);
+                            if (line != null)
+                            {
+                                stderrLines.Add(line);
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                    catch { }
+                    return string.Join("\n", stderrLines);
+                }, cts.Token);
 
                 // Send execution request
                 var executionRequest = new
@@ -138,13 +185,12 @@ namespace thuvu.Models
                 await _denoProcess.StandardInput.FlushAsync();
 
                 // Process stdout: handle both JSON-RPC requests and collect output
-                // Use single unified reader to avoid stream conflicts
                 string? resultLine = null;
                 var stdoutLines = new List<string>();
                 
                 try
                 {
-                    while (!_denoProcess.HasExited || !_denoProcess.StandardOutput.EndOfStream)
+                    while (true)
                     {
                         cts.Token.ThrowIfCancellationRequested();
                         
@@ -184,7 +230,11 @@ namespace thuvu.Models
                             }
                             catch (JsonException)
                             {
-                                // Not a JSON-RPC request, ignore
+                                // Not a valid JSON-RPC request, ignore
+                            }
+                            catch (Exception ex)
+                            {
+                                AgentLogger.LogError("[MCP] Error handling request: {Error}", ex.Message);
                             }
                         }
                     }
@@ -215,15 +265,28 @@ namespace thuvu.Models
                     var result = root.TryGetProperty("result", out var resultEl) 
                         ? resultEl.ToString() 
                         : null;
+                    var output = root.TryGetProperty("output", out var outputEl)
+                        ? outputEl.GetString()
+                        : null;
                     var error = root.TryGetProperty("error", out var errorEl)
                         ? errorEl.GetString()
                         : null;
 
                     sw.Stop();
+                    
+                    // Combine result and output for display
+                    var combinedResult = result;
+                    if (!string.IsNullOrEmpty(output))
+                    {
+                        combinedResult = string.IsNullOrEmpty(result) 
+                            ? output 
+                            : $"{result}\n\nConsole output:\n{output}";
+                    }
+                    
                     return new McpExecutionResult
                     {
                         Success = success,
-                        Result = result,
+                        Result = combinedResult,
                         Error = error,
                         Duration = sw.Elapsed,
                         ToolCalls = _bridge.GetAndClearLogs()
@@ -253,6 +316,9 @@ namespace thuvu.Models
             }
             finally
             {
+                // Exit MCP context
+                PermissionManager.ExitMcpContext();
+                
                 _denoProcess?.Dispose();
                 _denoProcess = null;
             }
@@ -282,20 +348,23 @@ namespace thuvu.Models
         {
             var config = McpConfig.Instance;
             var flags = new StringBuilder();
+            
+            // Always need to read the MCP directory for sandbox and tool scripts
+            var mcpDir = _mcpPath;
 
             switch (config.PermissionLevel.ToLowerInvariant())
             {
                 case "readonly":
-                    flags.Append($"--allow-read=\"{projectRoot}\" ");
+                    flags.Append($"--allow-read=\"{projectRoot}\",\"{mcpDir}\" ");
                     break;
 
                 case "readwrite":
-                    flags.Append($"--allow-read=\"{projectRoot}\" ");
+                    flags.Append($"--allow-read=\"{projectRoot}\",\"{mcpDir}\" ");
                     flags.Append($"--allow-write=\"{projectRoot}\" ");
                     break;
 
                 case "execute":
-                    flags.Append($"--allow-read=\"{projectRoot}\" ");
+                    flags.Append($"--allow-read=\"{projectRoot}\",\"{mcpDir}\" ");
                     flags.Append($"--allow-write=\"{projectRoot}\" ");
                     flags.Append("--allow-run=dotnet,git,npm,node ");
                     break;
@@ -305,7 +374,7 @@ namespace thuvu.Models
                     break;
 
                 default:
-                    flags.Append($"--allow-read=\"{projectRoot}\" ");
+                    flags.Append($"--allow-read=\"{projectRoot}\",\"{mcpDir}\" ");
                     flags.Append($"--allow-write=\"{projectRoot}\" ");
                     break;
             }

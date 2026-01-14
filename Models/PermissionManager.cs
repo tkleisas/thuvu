@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace thuvu.Models
@@ -22,6 +23,27 @@ namespace thuvu.Models
     {
         private static readonly Dictionary<string, PermissionScope> SessionPermissions = new();
         private static string? _currentRepoPath;
+        
+        /// <summary>
+        /// Thread-local flag indicating we're inside MCP sandbox execution.
+        /// When true, permissions are auto-granted since the outer execute_code already got permission.
+        /// </summary>
+        private static readonly AsyncLocal<bool> _inMcpContext = new();
+        
+        /// <summary>
+        /// Set MCP context flag - permissions will be auto-granted for nested tool calls
+        /// </summary>
+        public static void EnterMcpContext() => _inMcpContext.Value = true;
+        
+        /// <summary>
+        /// Clear MCP context flag
+        /// </summary>
+        public static void ExitMcpContext() => _inMcpContext.Value = false;
+        
+        /// <summary>
+        /// Check if we're inside MCP context
+        /// </summary>
+        public static bool IsInMcpContext => _inMcpContext.Value;
         
         /// <summary>
         /// Custom permission prompt handler for TUI or other UI modes.
@@ -110,6 +132,14 @@ namespace thuvu.Models
             // Always allow read-only tools
             if (riskLevel == ToolRiskLevel.ReadOnly)
                 return true;
+            
+            // Auto-grant permissions when inside MCP context (nested tool calls)
+            // The outer execute_code already got permission, so nested calls are allowed
+            if (IsInMcpContext)
+            {
+                AgentLogger.LogDebug("Tool {Tool} auto-allowed in MCP context", toolName);
+                return true;
+            }
 
             // Check for existing permissions
             string permissionKey = GetPermissionKey(toolName);

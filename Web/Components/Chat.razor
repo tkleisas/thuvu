@@ -161,9 +161,28 @@
                         }
                         else if (msg.Role == "tool")
                         {
+                            var (formattedContent, isTruncated) = FormatToolResult(msg.Content);
+                            var (formattedArgs, _) = FormatToolResult(msg.ToolArgs ?? "");
                             <div class="tool-result">
-                                <span class="tool-name">@msg.ToolName</span>
-                                <pre>@msg.Content</pre>
+                                <div class="tool-header">
+                                    <span class="tool-icon">🔧</span>
+                                    <span class="tool-name">@msg.ToolName</span>
+                                    @if (isTruncated)
+                                    {
+                                        <span class="tool-truncated">(truncated)</span>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrEmpty(formattedArgs))
+                                {
+                                    <div class="tool-args">
+                                        <span class="tool-args-label">Arguments:</span>
+                                        <pre class="tool-args-content">@formattedArgs</pre>
+                                    </div>
+                                }
+                                <div class="tool-output-section">
+                                    <span class="tool-output-label">Result:</span>
+                                    <pre class="tool-output">@formattedContent</pre>
+                                </div>
                             </div>
                         }
                         else if (msg.Role == "assistant" || msg.Role == "system")
@@ -188,10 +207,20 @@
                     <div class="message-content">
                         @if (!string.IsNullOrEmpty(_currentToolName))
                         {
+                            var (formattedArgs, _) = FormatToolResult(_currentToolArgs);
                             <div class="tool-progress">
-                                <span class="tool-icon">🔧</span>
-                                <span class="tool-name">@_currentToolName</span>
-                                <span class="tool-status">@_currentToolStatus</span>
+                                <div class="tool-header">
+                                    <span class="tool-icon">🔧</span>
+                                    <span class="tool-name">@_currentToolName</span>
+                                    <span class="tool-status">@_currentToolStatus</span>
+                                </div>
+                                @if (!string.IsNullOrEmpty(formattedArgs))
+                                {
+                                    <div class="tool-args">
+                                        <span class="tool-args-label">Arguments:</span>
+                                        <pre class="tool-args-content">@formattedArgs</pre>
+                                    </div>
+                                }
                             </div>
                         }
                         <pre class="message-text">@_streamingContent<span class="cursor">▊</span></pre>
@@ -222,16 +251,30 @@
                         }
                     </div>
                 }
-                <textarea 
-                    @ref="_inputElement"
-                    @bind="_inputText"
-                    @bind:event="oninput"
-                    @onkeydown="HandleKeyDown"
-                    @onkeyup="HandleKeyUp"
-                    placeholder="Ask T.H.U.V.U. anything... (Enter to send, Shift+Enter for newline)"
-                    disabled="@_isProcessing"
-                    rows="3">
-                </textarea>
+                <div class="textarea-wrapper @(_attachedImageBase64 != null ? "has-attachment" : "")"
+                     @ondrop="HandleDrop"
+                     @ondrop:preventDefault="true"
+                     @ondragover:preventDefault="true">
+                    @if (_attachedImageBase64 != null)
+                    {
+                        <div class="attached-image-preview">
+                            <img src="data:@_attachedImageMimeType;base64,@_attachedImageBase64" alt="Attached image" />
+                            <button class="remove-attachment" @onclick="RemoveAttachedImage" title="Remove image">✕</button>
+                            <span class="attachment-name">@_attachedImageName</span>
+                        </div>
+                    }
+                    <textarea 
+                        @ref="_inputElement"
+                        @bind="_inputText"
+                        @bind:event="oninput"
+                        @onkeydown="HandleKeyDown"
+                        @onkeyup="HandleKeyUp"
+                        @onpaste="HandlePaste"
+                        placeholder="@(_attachedImageBase64 != null ? "Describe what to analyze in the image..." : "Ask T.H.U.V.U. anything... (Enter to send, Shift+Enter for newline, paste/drop images)")"
+                        disabled="@_isProcessing"
+                        rows="3">
+                    </textarea>
+                </div>
                 <div class="input-actions">
                     @if (_isProcessing)
                     {
@@ -323,11 +366,17 @@
     private string _streamingContent = "";
     private string _currentStatus = "";
     private string _currentToolName = "";
+    private string _currentToolArgs = "";
     private string _currentToolStatus = "";
     private TokenUsageDisplay? _usage;
     private ContextUsageDisplay? _contextUsage;
     private bool _showCopyToast;
     private bool _workspaceExpanded = false;
+    
+    // Attached image state
+    private string? _attachedImageBase64;
+    private string? _attachedImageMimeType;
+    private string? _attachedImageName;
 
     // Autocomplete state
     private bool _showAutocomplete;
@@ -389,6 +438,10 @@
                     TimeSpan.FromMinutes(5)  // Keep trying for a while
                 })
                 .Build();
+            
+            // Configure timeouts for long-running operations
+            _hubConnection.ServerTimeout = TimeSpan.FromMinutes(10);
+            _hubConnection.KeepAliveInterval = TimeSpan.FromSeconds(30);
 
             _hubConnection.Reconnecting += error =>
             {
@@ -454,7 +507,8 @@
     {
         Console.WriteLine($"SendMessage called. InputText: '{_inputText}', HubConnection: {_hubConnection != null}, Connected: {_connected}");
         
-        if (string.IsNullOrWhiteSpace(_inputText) || _hubConnection == null)
+        // Allow sending with just an image attached (empty message is OK)
+        if ((string.IsNullOrWhiteSpace(_inputText) && _attachedImageBase64 == null) || _hubConnection == null)
         {
             Console.WriteLine("SendMessage aborted - empty input or no hub connection");
             return;
@@ -463,8 +517,15 @@
         // Hide autocomplete
         _showAutocomplete = false;
 
-        var userMessage = _inputText.Trim();
+        var userMessage = _inputText?.Trim() ?? "";
+        var hasImage = _attachedImageBase64 != null;
+        var imageBase64 = _attachedImageBase64;
+        var imageMimeType = _attachedImageMimeType;
+        
         _inputText = "";
+        _attachedImageBase64 = null;
+        _attachedImageMimeType = null;
+        _attachedImageName = null;
         
         // Check for slash commands that should be handled locally
         if (userMessage.StartsWith("/"))
@@ -473,16 +534,21 @@
             return;
         }
         
+        // Build display content
+        var displayContent = hasImage 
+            ? (string.IsNullOrWhiteSpace(userMessage) ? "🖼️ [Image attached for analysis]" : $"🖼️ {userMessage}")
+            : userMessage;
+            
         _messages.Add(new ChatMessageDisplay
         {
             Role = "user",
-            Content = userMessage,
+            Content = displayContent,
             Timestamp = DateTime.Now
         });
 
         _isProcessing = true;
         _streamingContent = "";
-        _currentStatus = "Thinking...";
+        _currentStatus = hasImage ? "Analyzing image..." : "Thinking...";
         _currentToolName = "";
         _currentToolStatus = "";
         StateHasChanged();
@@ -490,7 +556,21 @@
 
         try
         {
-            var stream = _hubConnection.StreamAsync<AgentStreamEvent>("SendMessage", _sessionId, userMessage);
+            // Use image endpoint if we have an attached image
+            IAsyncEnumerable<AgentStreamEvent> stream;
+            if (hasImage && imageBase64 != null && imageMimeType != null)
+            {
+                stream = _hubConnection.StreamAsync<AgentStreamEvent>(
+                    "SendMessageWithImage", 
+                    _sessionId, 
+                    userMessage, 
+                    imageBase64, 
+                    imageMimeType);
+            }
+            else
+            {
+                stream = _hubConnection.StreamAsync<AgentStreamEvent>("SendMessage", _sessionId, userMessage);
+            }
             
             await foreach (var evt in stream)
             {
@@ -506,8 +586,25 @@
                         _currentToolName = evt.ToolName ?? "";
                         _currentToolStatus = evt.Data;
                         break;
+                    case "tool_call":
+                        // Finalize any streaming content before starting tool display
+                        if (!string.IsNullOrEmpty(_streamingContent))
+                        {
+                            _messages.Add(new ChatMessageDisplay
+                            {
+                                Role = "assistant",
+                                Content = _streamingContent,
+                                Timestamp = DateTime.Now
+                            });
+                            _streamingContent = "";
+                        }
+                        // Store tool arguments when a tool call starts
+                        _currentToolName = evt.ToolName ?? "";
+                        _currentToolArgs = evt.Data;
+                        break;
                     case "tool_complete":
                         _currentToolName = "";
+                        _currentToolArgs = "";
                         _currentToolStatus = "";
                         break;
                     case "tool_result":
@@ -526,9 +623,11 @@
                         {
                             Role = "tool",
                             ToolName = evt.ToolName ?? "unknown",
+                            ToolArgs = _currentToolArgs,
                             Content = evt.Data,
                             Timestamp = DateTime.Now
                         });
+                        _currentToolArgs = ""; // Clear after using
                         break;
                     case "usage":
                         _usage = System.Text.Json.JsonSerializer.Deserialize<TokenUsageDisplay>(evt.Data);
@@ -1195,6 +1294,93 @@
         };
     }
     
+    /// <summary>
+    /// Format JSON content for display - pretty print with truncation of long field values
+    /// </summary>
+    private string FormatJsonForDisplay(string content, int maxFieldLength = 500)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return content;
+        
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(content);
+            var truncated = TruncateJsonElement(doc.RootElement, maxFieldLength);
+            return System.Text.Json.JsonSerializer.Serialize(truncated, new System.Text.Json.JsonSerializerOptions 
+            { 
+                WriteIndented = true 
+            });
+        }
+        catch
+        {
+            // Not valid JSON, return as-is
+            return content;
+        }
+    }
+    
+    /// <summary>
+    /// Recursively truncate long string values in a JSON element
+    /// </summary>
+    private object? TruncateJsonElement(System.Text.Json.JsonElement element, int maxFieldLength)
+    {
+        switch (element.ValueKind)
+        {
+            case System.Text.Json.JsonValueKind.Object:
+                var obj = new Dictionary<string, object?>();
+                foreach (var prop in element.EnumerateObject())
+                {
+                    obj[prop.Name] = TruncateJsonElement(prop.Value, maxFieldLength);
+                }
+                return obj;
+                
+            case System.Text.Json.JsonValueKind.Array:
+                var arr = new List<object?>();
+                foreach (var item in element.EnumerateArray())
+                {
+                    arr.Add(TruncateJsonElement(item, maxFieldLength));
+                }
+                return arr;
+                
+            case System.Text.Json.JsonValueKind.String:
+                var str = element.GetString() ?? "";
+                if (str.Length > maxFieldLength)
+                {
+                    return str.Substring(0, maxFieldLength) + $"... ({str.Length - maxFieldLength} more chars)";
+                }
+                return str;
+                
+            case System.Text.Json.JsonValueKind.Number:
+                if (element.TryGetInt64(out var longVal)) return longVal;
+                if (element.TryGetDouble(out var doubleVal)) return doubleVal;
+                return element.GetRawText();
+                
+            case System.Text.Json.JsonValueKind.True:
+                return true;
+                
+            case System.Text.Json.JsonValueKind.False:
+                return false;
+                
+            case System.Text.Json.JsonValueKind.Null:
+            default:
+                return null;
+        }
+    }
+    
+    /// <summary>
+    /// Format tool result for display - handles JSON formatting with field truncation
+    /// </summary>
+    private (string FormattedContent, bool IsTruncated) FormatToolResult(string content, int maxFieldLength = 500)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return (content, false);
+        
+        var original = content;
+        var formatted = FormatJsonForDisplay(content, maxFieldLength);
+        
+        // Check if any truncation occurred by comparing lengths (rough heuristic)
+        var wasTruncated = formatted.Contains("... (") && formatted.Contains(" more chars)");
+        
+        return (formatted, wasTruncated);
+    }
+    
     private async Task TryReconnectAsync()
     {
         const int maxRetries = 10;
@@ -1225,6 +1411,55 @@
         
         _reconnectMessage = "Unable to reconnect. Please refresh the page.";
         await InvokeAsync(StateHasChanged);
+    }
+    
+    // Image attachment handlers
+    private async Task HandlePaste(ClipboardEventArgs e)
+    {
+        // Try to get image from clipboard via JS interop
+        try
+        {
+            await JS.InvokeVoidAsync("thuvu.handlePasteEvent", _dotNetRef);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error handling paste: {ex.Message}");
+        }
+    }
+    
+    [JSInvokable]
+    public void OnImagePasted(string base64, string mimeType, string name)
+    {
+        _attachedImageBase64 = base64;
+        _attachedImageMimeType = mimeType;
+        _attachedImageName = name;
+        InvokeAsync(StateHasChanged);
+    }
+    
+    private async Task HandleDrop(DragEventArgs e)
+    {
+        // Handle dropped files via JS interop
+        try
+        {
+            // The actual file reading happens in JS, but we need to handle DataTransfer
+            // For now, show a message that drop is being processed
+            if (e.DataTransfer?.Files?.Length > 0)
+            {
+                await JS.InvokeVoidAsync("console.log", "Files dropped, processing...");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error handling drop: {ex.Message}");
+        }
+    }
+    
+    private void RemoveAttachedImage()
+    {
+        _attachedImageBase64 = null;
+        _attachedImageMimeType = null;
+        _attachedImageName = null;
+        StateHasChanged();
     }
     
     private async Task RejoinSessionAsync()
@@ -1274,6 +1509,7 @@
         public string Role { get; set; } = "";
         public string Content { get; set; } = "";
         public string? ToolName { get; set; }
+        public string? ToolArgs { get; set; }
         public DateTime Timestamp { get; set; }
         public bool IsScreenshot { get; set; }
         public string? ScreenshotBase64 { get; set; }

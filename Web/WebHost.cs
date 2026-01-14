@@ -61,8 +61,8 @@ namespace thuvu.Web
             {
                 options.EnableDetailedErrors = true;
                 options.MaximumReceiveMessageSize = 1024 * 1024; // 1MB for large tool results
-                options.ClientTimeoutInterval = TimeSpan.FromMinutes(30); // Client considered disconnected after 30 min
-                options.KeepAliveInterval = TimeSpan.FromMinutes(1); // Send keep-alive every minute
+                options.ClientTimeoutInterval = TimeSpan.FromMinutes(10); // Server considers client dead after 10 min
+                options.KeepAliveInterval = TimeSpan.FromSeconds(15); // Server sends ping every 15 seconds
                 options.HandshakeTimeout = TimeSpan.FromSeconds(30);
             });
 

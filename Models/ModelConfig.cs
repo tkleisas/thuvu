@@ -62,7 +62,9 @@ namespace thuvu.Models
         /// <summary>Summarization and documentation</summary>
         Summary,
         /// <summary>Embedding generation for RAG</summary>
-        Embedding
+        Embedding,
+        /// <summary>Vision/image analysis</summary>
+        Vision
     }
 
     /// <summary>
@@ -108,6 +110,9 @@ namespace thuvu.Models
         
         /// <summary>Whether this model supports tool/function calling</summary>
         public bool SupportsTools { get; set; } = true;
+        
+        /// <summary>Whether this model supports vision/image input</summary>
+        public bool SupportsVision { get; set; } = false;
         
         /// <summary>Whether this is a "thinking" model that shows reasoning</summary>
         public bool IsThinkingModel { get; set; } = false;
@@ -184,6 +189,9 @@ namespace thuvu.Models
         /// <summary>Model ID to use for embeddings</summary>
         public string EmbeddingModelId { get; set; } = "";
         
+        /// <summary>Model ID to use for vision/image analysis</summary>
+        public string VisionModelId { get; set; } = "";
+        
         /// <summary>Whether to automatically select models based on task</summary>
         public bool AutoSelectModel { get; set; } = true;
         
@@ -223,6 +231,7 @@ namespace thuvu.Models
                 ModelPurpose.Thinking => ThinkingModelId,
                 ModelPurpose.Coding => CodingModelId,
                 ModelPurpose.Embedding => EmbeddingModelId,
+                ModelPurpose.Vision => VisionModelId,
                 _ => DefaultModelId
             };
             
@@ -264,6 +273,11 @@ namespace thuvu.Models
         /// Get coding model for simple code tasks
         /// </summary>
         public ModelEndpoint? GetCodingModel() => GetModelForPurpose(ModelPurpose.Coding);
+        
+        /// <summary>
+        /// Get vision model for image analysis
+        /// </summary>
+        public ModelEndpoint? GetVisionModel() => GetModelForPurpose(ModelPurpose.Vision);
         
         /// <summary>
         /// Get all configured models
