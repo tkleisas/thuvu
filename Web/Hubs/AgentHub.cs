@@ -63,6 +63,14 @@ namespace thuvu.Web.Hubs
         }
         
         /// <summary>
+        /// Keep-alive ping to prevent connection timeout in background tabs
+        /// </summary>
+        public DateTime Ping()
+        {
+            return DateTime.UtcNow;
+        }
+        
+        /// <summary>
         /// Respond to a permission request
         /// </summary>
         /// <param name="sessionId">Session ID</param>

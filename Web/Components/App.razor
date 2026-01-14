@@ -10,7 +10,15 @@
 </head>
 <body>
     <Routes @rendermode="RenderMode.InteractiveServer" />
-    <script src="_framework/blazor.server.js"></script>
-    <script src="js/thuvu.js"></script>
+    <script src="_framework/blazor.server.js" autostart="false"></script>
+    <script>
+        Blazor.start({
+            configureSignalR: function (builder) {
+                builder.withServerTimeout(300000);  // 5 minutes server timeout
+                builder.withKeepAliveInterval(60000); // 1 minute keep-alive
+            }
+        });
+    </script>
+    <script src="js/thuvu.js?v=3"></script>
 </body>
 </html>

@@ -50,12 +50,20 @@ namespace thuvu.Web
 
             // Add services
             builder.Services.AddRazorComponents()
-                .AddInteractiveServerComponents();
+                .AddInteractiveServerComponents(options =>
+                {
+                    options.DisconnectedCircuitRetentionPeriod = TimeSpan.FromHours(1);
+                    options.DisconnectedCircuitMaxRetained = 100;
+                    options.DetailedErrors = true;
+                });
             
             builder.Services.AddSignalR(options =>
             {
                 options.EnableDetailedErrors = true;
                 options.MaximumReceiveMessageSize = 1024 * 1024; // 1MB for large tool results
+                options.ClientTimeoutInterval = TimeSpan.FromMinutes(30); // Client considered disconnected after 30 min
+                options.KeepAliveInterval = TimeSpan.FromMinutes(1); // Send keep-alive every minute
+                options.HandshakeTimeout = TimeSpan.FromSeconds(30);
             });
 
             // Register our services

@@ -1,5 +1,34 @@
 // T.H.U.V.U. Web Interface JavaScript Interop
 
+// Visibility handler reference
+let visibilityDotNetRef = null;
+
+// Setup visibility change handler for background tab detection
+window.setupVisibilityHandler = function(dotNetRef) {
+    visibilityDotNetRef = dotNetRef;
+    
+    document.addEventListener('visibilitychange', function() {
+        if (visibilityDotNetRef) {
+            const isVisible = document.visibilityState === 'visible';
+            visibilityDotNetRef.invokeMethodAsync('OnPageVisibilityChanged', isVisible);
+        }
+    });
+    
+    // Also handle page focus/blur for additional reliability
+    window.addEventListener('focus', function() {
+        if (visibilityDotNetRef) {
+            visibilityDotNetRef.invokeMethodAsync('OnPageVisibilityChanged', true);
+        }
+    });
+    
+    window.addEventListener('blur', function() {
+        // Don't report hidden on blur - only use visibilitychange for that
+        // This prevents false disconnects when clicking outside the window
+    });
+    
+    console.log('Visibility handler registered');
+};
+
 window.thuvu = {
     // Scroll element to bottom
     scrollToBottom: function (element) {
