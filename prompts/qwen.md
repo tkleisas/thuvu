@@ -58,7 +58,15 @@ Requires global UI permission. Useful for debugging GUI applications.
 - `ui_get_element` - inspect UI element at point or by selector
 - `ui_wait` - wait for window or element to appear
 
-**Example workflow:**
+**ui_type parameters:**
+- `text` - literal text to type (for text fields)
+- `keys` - array of keys like `['ctrl', 's']`, `['left']`, `['space']`
+- `window_title` - target window (will focus first)
+- `delay_ms` - delay between keys (default 10ms)
+- `use_scan_codes` - **true for games** using DirectInput/RawInput
+- `hold_time_ms` - how long to hold each key (default 50ms, games may need 100ms)
+
+**Example workflow (standard app):**
 ```
 1. process_start cmd='dotnet' args=['run', '--project', 'MyWpfApp']
 2. ui_wait window_title='My Application'
@@ -67,6 +75,15 @@ Requires global UI permission. Useful for debugging GUI applications.
 5. ui_click x=400 y=300
 6. process_read session_id='...' -> check for errors
 7. process_stop session_id='...'
+```
+
+**Example workflow (game with DirectInput):**
+```
+1. process_start cmd='MyGame.exe'
+2. ui_wait window_title='My Game'
+3. ui_type keys=['space'] use_scan_codes=true hold_time_ms=100  -> start game
+4. ui_type keys=['left'] use_scan_codes=true hold_time_ms=100   -> move left
+5. ui_capture analyze=true  -> check game state
 ```
 
 ### Code Indexing & Context

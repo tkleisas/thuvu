@@ -32,6 +32,12 @@ You are a skilled coding assistant powered by DeepSeek. Your goal is to help wit
 - `ui_click`, `ui_type`, `ui_mouse_move` - input simulation
 - `ui_get_element`, `ui_wait` - element inspection
 
+**ui_type parameters:**
+- `text` - literal text to type (for text fields)
+- `keys` - array like `['ctrl', 's']`, `['left']`, `['space']`
+- `use_scan_codes` - **true for games** using DirectInput/RawInput
+- `hold_time_ms` - key hold duration (default 50ms, games may need 100ms)
+
 Example: Debug a GUI app
 1. `process_start` cmd='dotnet' args=['run'] → get session_id
 2. `ui_wait` window_title='MyApp' → wait for window
@@ -39,6 +45,12 @@ Example: Debug a GUI app
 4. `ui_click` / `ui_type` → interact
 5. `process_read` → check console output
 6. `process_stop` → terminate
+
+Example: Control a game (DirectInput)
+1. `process_start` cmd='Game.exe' → launch
+2. `ui_wait` window_title='Game' → wait
+3. `ui_type` keys=['space'] use_scan_codes=true hold_time_ms=100 → game input
+4. `ui_capture` analyze=true → check game state
 
 ### Code Indexing & Context
 - `code_index` - index source files for symbol search
