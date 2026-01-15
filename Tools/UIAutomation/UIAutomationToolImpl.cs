@@ -324,6 +324,8 @@ namespace thuvu.Tools.UIAutomation
                 var text = GetStringProperty(root, "text", null);
                 var windowTitle = GetStringProperty(root, "window_title", null);
                 var delayMs = GetIntProperty(root, "delay_ms", 10);
+                var useScanCodes = GetBoolProperty(root, "use_scan_codes", false);
+                var holdTimeMs = GetIntProperty(root, "hold_time_ms", 50);
                 
                 // Get keys array if present
                 string[]? keys = null;
@@ -339,7 +341,9 @@ namespace thuvu.Tools.UIAutomation
                 var options = new TypeOptions
                 {
                     DelayBetweenKeysMs = delayMs,
-                    WindowTitle = windowTitle
+                    WindowTitle = windowTitle,
+                    UseScanCodes = useScanCodes,
+                    HoldTimeMs = holdTimeMs
                 };
                 
                 var provider = GetProvider();
@@ -347,19 +351,29 @@ namespace thuvu.Tools.UIAutomation
                 
                 if (keys != null && keys.Length > 0)
                 {
-                    // Send keyboard shortcut
-                    result = await provider.SendKeysAsync(keys, options);
+                    // Send keyboard keys - use scan codes for games
+                    if (useScanCodes && provider is Windows.WindowsUIProvider winProvider)
+                    {
+                        // Use key sequence method for better game compatibility
+                        result = await winProvider.SendKeySequenceAsync(keys, delayMs, holdTimeMs, true);
+                    }
+                    else
+                    {
+                        result = await provider.SendKeysAsync(keys, options);
+                    }
+                    
                     return JsonSerializer.Serialize(new
                     {
                         success = result,
                         keys,
                         window_title = windowTitle,
+                        use_scan_codes = useScanCodes,
                         error = result ? null : "Failed to send keys"
                     });
                 }
                 else if (!string.IsNullOrEmpty(text))
                 {
-                    // Type text
+                    // Type text (always use Unicode for text)
                     result = await provider.TypeTextAsync(text, options);
                     return JsonSerializer.Serialize(new
                     {

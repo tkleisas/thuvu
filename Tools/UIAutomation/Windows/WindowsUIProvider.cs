@@ -174,7 +174,68 @@ namespace thuvu.Tools.UIAutomation.Windows
                     System.Threading.Thread.Sleep(100);
                 }
                 
-                return WindowsInput.SendKeys(keys);
+                // Use scan code method for games, virtual key for regular apps
+                var method = options.UseScanCodes 
+                    ? WindowsInput.KeyboardInputMethod.ScanCode 
+                    : WindowsInput.KeyboardInputMethod.VirtualKey;
+                
+                return WindowsInput.SendKeys(keys, method);
+            });
+        }
+        
+        /// <summary>
+        /// Send a single key press with configurable hold time (for games)
+        /// </summary>
+        public Task<bool> SendKeyPressAsync(string key, int holdTimeMs = 50, bool useScanCodes = true)
+        {
+            return Task.Run(() =>
+            {
+                var method = useScanCodes 
+                    ? WindowsInput.KeyboardInputMethod.ScanCode 
+                    : WindowsInput.KeyboardInputMethod.VirtualKey;
+                return WindowsInput.SendKeyPress(key, holdTimeMs, method);
+            });
+        }
+        
+        /// <summary>
+        /// Send a sequence of key presses (for games)
+        /// </summary>
+        public Task<bool> SendKeySequenceAsync(string[] keys, int delayBetweenKeysMs = 50, int holdTimeMs = 50, bool useScanCodes = true)
+        {
+            return Task.Run(() =>
+            {
+                var method = useScanCodes 
+                    ? WindowsInput.KeyboardInputMethod.ScanCode 
+                    : WindowsInput.KeyboardInputMethod.VirtualKey;
+                return WindowsInput.SendKeySequence(keys, delayBetweenKeysMs, holdTimeMs, method);
+            });
+        }
+        
+        /// <summary>
+        /// Hold a key down (for continuous game input)
+        /// </summary>
+        public Task<bool> KeyDownAsync(string key, bool useScanCodes = true)
+        {
+            return Task.Run(() =>
+            {
+                var method = useScanCodes 
+                    ? WindowsInput.KeyboardInputMethod.ScanCode 
+                    : WindowsInput.KeyboardInputMethod.VirtualKey;
+                return WindowsInput.KeyDown(key, method);
+            });
+        }
+        
+        /// <summary>
+        /// Release a held key
+        /// </summary>
+        public Task<bool> KeyUpAsync(string key, bool useScanCodes = true)
+        {
+            return Task.Run(() =>
+            {
+                var method = useScanCodes 
+                    ? WindowsInput.KeyboardInputMethod.ScanCode 
+                    : WindowsInput.KeyboardInputMethod.VirtualKey;
+                return WindowsInput.KeyUp(key, method);
             });
         }
         

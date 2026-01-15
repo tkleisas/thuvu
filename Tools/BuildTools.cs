@@ -679,21 +679,29 @@ Returns base64-encoded image data by default, or saves to file.",
                 Function = new FunctionDef
                 {
                     Name = "ui_type",
-                    Description = @"Type text or send keyboard shortcuts to the active window or a specific window.
+                    Description = @"Type text or send keyboard input to the active window or a specific window.
 
-For regular text, use the 'text' parameter.
-For special keys/shortcuts, use the 'keys' array: ['ctrl', 's'], ['alt', 'f4'], ['enter'], ['tab'], etc.
+For regular text input (forms, text editors), use the 'text' parameter.
+For special keys/shortcuts, use the 'keys' array: ['ctrl', 's'], ['alt', 'f4'], ['enter'], ['left'], ['right'], etc.
 
-Supported special keys: ctrl, alt, shift, win, enter, tab, escape, space, backspace, delete, 
-left, right, up, down, f1-f12, and single characters/numbers.",
+For GAMES that don't respond to normal keyboard input:
+- Set 'use_scan_codes' to true - this sends hardware scan codes that games using DirectInput/RawInput can detect
+- Adjust 'hold_time_ms' for how long each key is held (games often need longer holds, e.g., 100ms)
+- Adjust 'delay_ms' for delay between keys in a sequence
+
+Supported keys: ctrl, alt, shift, win, enter, tab, escape, space, backspace, delete, insert, home, end, 
+pageup, pagedown, left, right, up, down, f1-f12, numpad0-9, capslock, numlock, pause, printscreen, 
+and single characters/numbers (a-z, 0-9).",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
                       "properties":{
-                        "text":{"type":"string","description":"Text to type literally"},
-                        "keys":{"type":"array","items":{"type":"string"},"description":"Special keys to send, e.g. ['ctrl','s'] or ['enter']"},
+                        "text":{"type":"string","description":"Text to type literally (for text fields, not games)"},
+                        "keys":{"type":"array","items":{"type":"string"},"description":"Keys to send, e.g. ['left'], ['ctrl','s'], ['space']"},
                         "window_title":{"type":"string","description":"Target window (will focus first)"},
-                        "delay_ms":{"type":"integer","minimum":0,"maximum":1000,"default":10,"description":"Delay between keystrokes in ms"}
+                        "delay_ms":{"type":"integer","minimum":0,"maximum":1000,"default":10,"description":"Delay between keys in ms"},
+                        "use_scan_codes":{"type":"boolean","default":false,"description":"Use hardware scan codes for games using DirectInput/RawInput"},
+                        "hold_time_ms":{"type":"integer","minimum":10,"maximum":500,"default":50,"description":"How long to hold each key in ms (for games)"}
                       }
                     }
                     """).RootElement
