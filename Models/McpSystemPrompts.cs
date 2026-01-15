@@ -43,17 +43,67 @@ You are a helpful coding agent. Prefer tools over guessing; never invent file pa
 (3) run dotnet_build and dotnet_test, 
 (4) if green, you may git_commit with a concise message. 
 
-## Running programs (run_process, dotnet_run):
-- Programs run non-interactively without a console - they CANNOT receive keyboard input
-- Do NOT create programs that wait for keypresses (Console.ReadKey, Console.ReadLine to pause, 'Press any key to continue')
-- Programs must run to completion automatically and exit on their own
-- Use command-line arguments instead of interactive prompts for input
-- If a tool times out or fails repeatedly, try a different approach instead of retrying the same command
-- Set appropriate timeout values for long-running operations
+## Running programs:
+
+### For quick commands that complete quickly (< 2 minutes):
+- Use run_process or dotnet_run - these block until completion and return all output
+
+### For long-running applications (servers, GUI apps, interactive tools):
+- Use process_start to launch in background - returns session_id immediately
+- Use process_read to check stdout/stderr incrementally  
+- Use process_write to send input to stdin (for interactive apps)
+- Use process_status to check if still running or get exit code
+- Use process_stop to terminate when done
+
+Example workflow for debugging a web app:
+1. process_start cmd='dotnet' args=['run'] -> get session_id
+2. process_read session_id='...' wait_ms=3000 -> see startup output  
+3. (use browser or UI tools to interact with the running app)
+4. process_read -> check for errors/logs
+5. process_stop -> terminate when done
+
+## UI Automation (requires global permission):
+- ui_capture: Screenshot screen/window with optional vision analysis
+- ui_list_windows: Enumerate open windows
+- ui_focus_window: Bring window to foreground
+- ui_click: Mouse click at coordinates
+- ui_type: Keyboard input (text and shortcuts)
+- ui_get_element: Inspect UI elements at point or by selector
+- ui_wait: Wait for window/element to appear
+
+Combine process_start with UI tools for visual debugging:
+1. process_start -> launch GUI application
+2. ui_wait window_title='MyApp' -> wait for window
+3. ui_capture analyze=true -> see current state via vision model
+4. ui_click/ui_type -> interact with the UI
+5. process_read -> check console output
+
+## Code Indexing & Context (SQLite):
+- code_index: Index source files for symbol search (classes, methods, properties)
+- code_query: Search symbols by name, kind, or file; find references
+- context_store: Store decisions, patterns, notes for later retrieval
+- context_get: Retrieve stored context by key pattern or category
+- index_stats: Get index statistics (symbols, files, database size)
+- index_clear: Clear all indexed data
+
+Use code indexing to understand a codebase:
+1. code_index path='.' -> index the project
+2. code_query search='Controller' kind='class' -> find all controllers
+3. code_query file='Services/UserService.cs' -> see all symbols in a file
+
+Use context storage for memory across sessions:
+1. context_store key='api_design' value='REST with JSON responses' category='decision'
+2. context_get category='decision' -> recall all decisions
+
+## Important guidelines:
+- Programs run non-interactively without a console for direct tools
+- For interactive input, use process_start + process_write
+- Do NOT create programs that wait for keypresses with blocking tools
+- If a tool fails repeatedly, try a different approach
+- Use search_files before claiming a symbol/file doesn't exist
+- Do NOT use rag_index for creating files - it only indexes EXISTING files
 
 If write_file returns checksum_mismatch, re-read the file and rebase your patch.
-Use search_files before claiming a symbol/file doesn't exist.
-Do NOT use rag_index for creating files - it only indexes EXISTING files for search.
 Emit 'thuvu Finished Tasks' when you have completed all your tasks.";
 
         /// <summary>
@@ -93,7 +143,7 @@ const schema = getToolSchema('filesystem', 'readFile');
 | git | status, diff, commit | Version control |
 | dotnet | build, test, newProject | .NET development |
 | rag | search, index, stats, clear | Semantic search |
-| process | run, git, dotnet | Command execution |
+| process | run, start, read, write, status, stop | Command execution (blocking and background) |
 
 ## Quick Reference
 
@@ -112,9 +162,16 @@ import { build, test } from './servers/dotnet';
 const result = await build();
 const tests = await test();
 
-// Run commands
+// Run commands (blocking)
 import { run } from './servers/process';
 await run('dotnet', ['build', '-c', 'Release']);
+
+// Background processes (for long-running apps)
+import { start, read, write, stop } from './servers/process';
+const session = await start('dotnet', ['run']);  // Returns session_id
+await sleep(2000);  // Wait for app to start
+const output = await read(session.session_id);   // Get stdout/stderr
+await stop(session.session_id);                  // Terminate
 ```
 
 ## Example: Find and modify code

@@ -197,6 +197,28 @@ cd docker && docker-compose up -d postgres-rag
 /rag search "how to handle HTTP requests"
 ```
 
+### Code Indexing
+Local SQLite-based code indexing for fast symbol search:
+
+```bash
+# Index the current project
+code_index({"path": "."})
+
+# Search for classes
+code_query({"search": "Controller", "kind": "class"})
+
+# Get all symbols in a file
+code_query({"file": "src/Services/UserService.cs"})
+
+# Store context for later
+context_store({"key": "api_pattern", "value": "Use REST with JSON", "category": "decision"})
+
+# Retrieve context
+context_get({"category": "decision"})
+```
+
+See [docs/code-indexing.md](docs/code-indexing.md) for full documentation.
+
 ### MCP Code Execution
 Execute TypeScript in a secure Deno sandbox with access to all tools:
 
@@ -249,7 +271,7 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 | `dotnet_restore` | NuGet restore | Write |
 | `dotnet_build` | Build solution/project | Write |
 | `dotnet_test` | Run tests | Write |
-| `dotnet_run` | Run application | Write |
+| `dotnet_run` | Run application (blocking with timeout) | Write |
 | `dotnet_new` | Create new project | Write |
 | `git_status` | Branch and working tree status | ReadOnly |
 | `git_diff` | Show file diffs | ReadOnly |
@@ -266,6 +288,25 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 | `browser_screenshot` | Capture screenshot | ReadOnly |
 | `browser_script` | Execute JavaScript | Write |
 | `browser_close` | Close browser | Write |
+| `process_start` | Start background process (non-blocking) | Write |
+| `process_read` | Read process stdout/stderr | ReadOnly |
+| `process_write` | Write to process stdin | Write |
+| `process_status` | Get process status or list sessions | ReadOnly |
+| `process_stop` | Stop a background process | Write |
+| `ui_capture` | Screenshot (screen/window/region) with optional vision analysis | UI |
+| `ui_list_windows` | List open windows | UI |
+| `ui_focus_window` | Focus/activate a window | UI |
+| `ui_click` | Mouse click at coordinates | UI |
+| `ui_type` | Keyboard input (text/shortcuts) | UI |
+| `ui_mouse_move` | Move cursor | UI |
+| `ui_get_element` | Get UI element at point or by selector | UI |
+| `ui_wait` | Wait for window or element | UI |
+| `code_index` | Index source code for symbol search | Write |
+| `code_query` | Search indexed symbols (classes, methods, etc.) | ReadOnly |
+| `context_store` | Store context/memory for later retrieval | Write |
+| `context_get` | Retrieve stored context by key/category | ReadOnly |
+| `index_stats` | Get code index statistics | ReadOnly |
+| `index_clear` | Clear all indexed data | Write |
 
 ## Configuration
 

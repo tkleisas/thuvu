@@ -144,9 +144,12 @@ namespace thuvu.Models
         /// </summary>
         public HttpClient CreateHttpClient()
         {
+            // Ensure base URL ends with / for correct relative path resolution
+            var baseUrl = HostUrl.TrimEnd('/') + "/";
+            
             var client = new HttpClient
             {
-                BaseAddress = new Uri(HostUrl),
+                BaseAddress = new Uri(baseUrl),
                 Timeout = TimeSpan.FromMinutes(TimeoutMinutes)
             };
             

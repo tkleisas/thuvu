@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace thuvu.Models
@@ -36,6 +37,25 @@ namespace thuvu.Models
         public static TokenTracker GetEffectiveTokenTracker()
         {
             return _current.Value?.TokenTracker ?? TokenTracker.Instance;
+        }
+        
+        /// <summary>
+        /// Get the current conversation messages (for tools that need context like vision)
+        /// </summary>
+        public static List<ChatMessage>? GetCurrentMessages()
+        {
+            return _current.Value?.Messages;
+        }
+        
+        /// <summary>
+        /// Set the current messages for the context
+        /// </summary>
+        public static void SetCurrentMessages(List<ChatMessage>? messages)
+        {
+            if (_current.Value != null)
+            {
+                _current.Value.Messages = messages;
+            }
         }
         
         /// <summary>
@@ -97,6 +117,11 @@ namespace thuvu.Models
         public TokenTracker TokenTracker { get; set; } = new();
         public DateTime StartedAt { get; set; }
         public string? CurrentTaskId { get; set; }
+        
+        /// <summary>
+        /// Current conversation messages (for tools that need context like vision)
+        /// </summary>
+        public List<ChatMessage>? Messages { get; set; }
         
         /// <summary>
         /// Log a message with agent context

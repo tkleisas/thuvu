@@ -451,25 +451,27 @@ namespace thuvu.Web.Services
                 {
                     writer.TryWrite(new AgentStreamEvent { Type = "status", Data = $"Analyzing image with {visionModel.DisplayName}..." });
 
-                    // Call vision model directly
-                    var visionResult = await Tools.VisionToolImpl.AnalyzeImageAsync(
-                        imageBase64,
-                        imageMimeType,
-                        string.IsNullOrWhiteSpace(message) ? "Describe this image in detail" : message,
-                        linkedCt);
-
-                    // Add to conversation history with clear context
                     var userPrompt = string.IsNullOrWhiteSpace(message) 
                         ? "Please analyze the attached image and describe what you see."
                         : message;
-                    var userMsg = $"[User attached an image and asked: {userPrompt}]";
-                    session.Messages.Add(new ChatMessage("user", userMsg));
+                    
+                    // Add the multimodal message to conversation history BEFORE calling the API
+                    // This way the image becomes part of the conversation
+                    var userMessage = ChatMessage.CreateWithImage("user", userPrompt, imageBase64, imageMimeType);
+                    session.Messages.Add(userMessage);
+                    
+                    // Call vision model WITH full conversation context
+                    var visionResult = await Tools.VisionToolImpl.AnalyzeImageWithContextAsync(
+                        session.Messages,
+                        imageBase64,
+                        imageMimeType,
+                        userPrompt,
+                        linkedCt);
                     
                     if (visionResult.Success)
                     {
-                        // Add the vision description as assistant response with clear labeling
-                        var assistantResponse = $"I analyzed the image. Here's what I found:\n\n{visionResult.Description}";
-                        session.Messages.Add(new ChatMessage("assistant", assistantResponse));
+                        // Add the assistant response to conversation
+                        session.Messages.Add(new ChatMessage("assistant", visionResult.Description));
                         
                         // Update last activity
                         session.LastActivityAt = DateTime.Now;
@@ -485,6 +487,8 @@ namespace thuvu.Web.Services
                     }
                     else
                     {
+                        // Remove the failed user message from history
+                        session.Messages.RemoveAt(session.Messages.Count - 1);
                         writer.TryWrite(new AgentStreamEvent { Type = "error", Data = visionResult.Error ?? "Vision analysis failed" });
                     }
                 }

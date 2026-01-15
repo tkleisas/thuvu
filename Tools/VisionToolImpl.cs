@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Text;
@@ -97,8 +98,8 @@ namespace thuvu.Tools
                     });
                 }
                 
-                // Call the vision model
-                var result = await CallVisionModelAsync(visionModel, imageBase64, mimeType, prompt, ct);
+                // Call the vision model (no context for tool-based calls)
+                var result = await CallVisionModelAsync(visionModel, null, imageBase64, mimeType, prompt, ct);
                 
                 return JsonSerializer.Serialize(new { 
                     success = true, 
@@ -116,9 +117,22 @@ namespace thuvu.Tools
         }
         
         /// <summary>
-        /// Analyze an image directly with base64 data
+        /// Analyze an image directly with base64 data (no conversation context)
         /// </summary>
         public static async Task<VisionResult> AnalyzeImageAsync(
+            string imageBase64, 
+            string mimeType, 
+            string prompt,
+            CancellationToken ct = default)
+        {
+            return await AnalyzeImageWithContextAsync(null, imageBase64, mimeType, prompt, ct);
+        }
+        
+        /// <summary>
+        /// Analyze an image with full conversation context
+        /// </summary>
+        public static async Task<VisionResult> AnalyzeImageWithContextAsync(
+            List<ChatMessage>? conversationHistory,
             string imageBase64, 
             string mimeType, 
             string prompt,
@@ -137,8 +151,8 @@ namespace thuvu.Tools
                     };
                 }
                 
-                // Call the vision model
-                var description = await CallVisionModelAsync(visionModel, imageBase64, mimeType, prompt, ct);
+                // Call the vision model with context
+                var description = await CallVisionModelAsync(visionModel, conversationHistory, imageBase64, mimeType, prompt, ct);
                 
                 return new VisionResult 
                 { 
@@ -154,10 +168,11 @@ namespace thuvu.Tools
         }
         
         /// <summary>
-        /// Call the vision model with an image
+        /// Call the vision model with an image and optional conversation history
         /// </summary>
         private static async Task<string> CallVisionModelAsync(
             ModelEndpoint model, 
+            List<ChatMessage>? conversationHistory,
             string imageBase64, 
             string mimeType,
             string prompt,
@@ -165,27 +180,64 @@ namespace thuvu.Tools
         {
             using var client = model.CreateHttpClient();
             
-            // Build the request in OpenAI vision format
+            // Build the endpoint URL properly - ensure base ends with / for correct path joining
+            var baseUrl = model.HostUrl.TrimEnd('/') + "/";
+            var endpoint = new Uri(new Uri(baseUrl), "v1/chat/completions").ToString();
+            
+            // Build message list
+            var messages = new List<object>();
+            
+            // Include conversation history if provided (for context)
+            if (conversationHistory != null && conversationHistory.Count > 0)
+            {
+                foreach (var msg in conversationHistory)
+                {
+                    // Skip tool messages and empty content
+                    if (msg.Role == "tool" || (msg.Content == null && !msg.IsMultimodal))
+                        continue;
+                    
+                    // For multimodal messages, include as-is
+                    if (msg.IsMultimodal && msg.ContentParts != null)
+                    {
+                        var parts = new List<object>();
+                        foreach (var part in msg.ContentParts)
+                        {
+                            if (part.Type == "text")
+                                parts.Add(new { type = "text", text = part.Text });
+                            else if (part.Type == "image_url" && part.ImageUrl != null)
+                                parts.Add(new { type = "image_url", image_url = new { url = part.ImageUrl.Url } });
+                        }
+                        messages.Add(new { role = msg.Role, content = parts.ToArray() });
+                    }
+                    else if (msg.Content != null)
+                    {
+                        // Regular text message
+                        messages.Add(new { role = msg.Role, content = msg.Content });
+                    }
+                }
+            }
+            
+            // Add the current user message with image
+            messages.Add(new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new { type = "text", text = prompt },
+                    new { 
+                        type = "image_url", 
+                        image_url = new { 
+                            url = $"data:{mimeType};base64,{imageBase64}" 
+                        }
+                    }
+                }
+            });
+            
+            // Build request
             var request = new
             {
                 model = model.ModelId,
-                messages = new[]
-                {
-                    new
-                    {
-                        role = "user",
-                        content = new object[]
-                        {
-                            new { type = "text", text = prompt },
-                            new { 
-                                type = "image_url", 
-                                image_url = new { 
-                                    url = $"data:{mimeType};base64,{imageBase64}" 
-                                }
-                            }
-                        }
-                    }
-                },
+                messages = messages,
                 max_tokens = model.MaxOutputTokens > 0 ? model.MaxOutputTokens : 1024,
                 temperature = model.Temperature
             };
@@ -193,12 +245,19 @@ namespace thuvu.Tools
             var json = JsonSerializer.Serialize(request);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             
-            var response = await client.PostAsync("/v1/chat/completions", content, ct);
+            // Use relative path (no leading /) so it appends to BaseAddress path
+            var response = await client.PostAsync("v1/chat/completions", content, ct);
             var responseJson = await response.Content.ReadAsStringAsync(ct);
             
             if (!response.IsSuccessStatusCode)
             {
                 throw new Exception($"Vision API error: {response.StatusCode} - {responseJson}");
+            }
+            
+            // Check if response is valid JSON (not HTML error page)
+            if (string.IsNullOrWhiteSpace(responseJson) || responseJson.TrimStart().StartsWith('<'))
+            {
+                throw new Exception($"Vision API returned invalid response (HTML instead of JSON). Endpoint: {endpoint}. Status: {response.StatusCode}. For OpenRouter, use HostUrl='https://openrouter.ai/api'. For other providers, ensure the HostUrl is correct.");
             }
             
             // Parse response

@@ -55,6 +55,9 @@ namespace thuvu
             Action<string, string>? onToolCall = null,
             int? maxIterations = null)
         {
+            // Set current messages in context for tools that need it (e.g., vision analysis)
+            AgentContext.SetCurrentMessages(messages);
+            
             int maxIter = maxIterations ?? GetMaxIterations();
             int iteration = 0;
             var failureTracker = new Dictionary<string, int>(); // Track consecutive failures per tool
@@ -203,6 +206,9 @@ namespace thuvu
             Action<string, string>? onToolCall = null,
             int? maxIterations = null)
         {
+            // Set current messages in context for tools that need it (e.g., vision analysis)
+            AgentContext.SetCurrentMessages(messages);
+            
             int maxIter = maxIterations ?? GetMaxIterations();
             int iteration = 0;
             var failureTracker = new Dictionary<string, int>();
