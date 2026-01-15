@@ -147,9 +147,13 @@ namespace thuvu
                         onToolComplete?.Invoke(name, toolResult, toolElapsed);
                         
                         // Track failures for loop detection
-                        bool isFailure = toolResult.Contains("\"error\"") || 
+                        // Check for actual error values, not "error":null which indicates success
+                        bool isFailure = toolResult.Contains("\"success\":false") ||
                                         toolResult.Contains("\"timed_out\":true") ||
-                                        toolResult.Contains("\"stderr\":\"timeout\"");
+                                        toolResult.Contains("\"stderr\":\"timeout\"") ||
+                                        (toolResult.Contains("\"error\":") && 
+                                         !toolResult.Contains("\"error\":null") &&
+                                         !toolResult.Contains("\"error\": null"));
                         if (isFailure)
                         {
                             failureTracker[name] = failureTracker.GetValueOrDefault(name, 0) + 1;
@@ -335,9 +339,13 @@ namespace thuvu
                         onToolComplete?.Invoke(name, toolResult, toolElapsed);
                         
                         // Track failures for loop detection
-                        bool isFailure = toolResult.Contains("\"error\"") || 
+                        // Check for actual error values, not "error":null which indicates success
+                        bool isFailure = toolResult.Contains("\"success\":false") ||
                                         toolResult.Contains("\"timed_out\":true") ||
-                                        toolResult.Contains("\"stderr\":\"timeout\"");
+                                        toolResult.Contains("\"stderr\":\"timeout\"") ||
+                                        (toolResult.Contains("\"error\":") && 
+                                         !toolResult.Contains("\"error\":null") &&
+                                         !toolResult.Contains("\"error\": null"));
                         if (isFailure)
                         {
                             failureTracker[name] = failureTracker.GetValueOrDefault(name, 0) + 1;
