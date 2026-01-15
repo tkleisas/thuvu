@@ -129,6 +129,12 @@ namespace thuvu.Web
 
             // Map SignalR hub
             app.MapHub<AgentHub>("/agenthub");
+
+            // Map Agent API endpoints (if enabled)
+            if (AgentApiConfig.Instance.Enabled)
+            {
+                app.MapAgentApi();
+            }
             
             // Health check endpoint for Docker/Kubernetes
             app.MapGet("/health", () => Results.Ok(new 

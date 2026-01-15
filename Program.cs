@@ -55,6 +55,7 @@ namespace thuvu
             AgentConfig.LoadConfig();
             RagConfig.LoadConfig();
             McpConfig.LoadConfig();
+            SqliteConfig.LoadConfig();
             
             // Initialize model registry (try to load from config, fall back to AgentConfig)
             try
@@ -83,15 +84,88 @@ namespace thuvu
                 ModelRegistry.InitializeFromAgentConfig();
             }
 
-            // Check if TUI or Web mode is requested
-            bool useTui = args.Length > 0 && args[0].Equals("--tui", StringComparison.OrdinalIgnoreCase);
-            bool useWeb = args.Length > 0 && args[0].Equals("--web", StringComparison.OrdinalIgnoreCase);
+            // Parse command line arguments
+            bool useTui = false;
+            bool useWeb = false;
+            bool useApi = false;
+            bool testUiAutomation = false;
+            bool testProcessMgmt = false;
+            bool testSqlite = false;
+            string? customConfigPath = null;
+            int? customPort = null;
+            
+            for (int i = 0; i < args.Length; i++)
+            {
+                var arg = args[i].ToLowerInvariant();
+                if (arg == "--tui") useTui = true;
+                else if (arg == "--web") useWeb = true;
+                else if (arg == "--api") useApi = true;
+                else if (arg == "--test-ui") testUiAutomation = true;
+                else if (arg == "--test-process") testProcessMgmt = true;
+                else if (arg == "--test-sqlite") testSqlite = true;
+                else if (arg == "--config" && i + 1 < args.Length)
+                {
+                    customConfigPath = args[++i];
+                }
+                else if (arg == "--port" && i + 1 < args.Length)
+                {
+                    if (int.TryParse(args[++i], out var port))
+                        customPort = port;
+                }
+            }
+            
+            // If custom config path specified, set environment variable and reload
+            if (!string.IsNullOrEmpty(customConfigPath) && File.Exists(customConfigPath))
+            {
+                AgentLogger.LogInfo("Loading custom config from: {Path}", customConfigPath);
+                Environment.SetEnvironmentVariable("LM_AGENT_CONFIG", customConfigPath);
+                // Reload all configs with new environment variable
+                AgentConfig.LoadConfig();
+                RagConfig.LoadConfig();
+                McpConfig.LoadConfig();
+                SqliteConfig.LoadConfig();
+            }
+            
+            // Load agent API config (always load this)
+            AgentApiConfig.LoadConfig();
+            
+            // Apply command line overrides
+            if (useApi)
+            {
+                AgentApiConfig.Instance.Enabled = true;
+            }
+            if (customPort.HasValue)
+            {
+                AgentApiConfig.Instance.Port = customPort.Value;
+            }
 
             // Initialize permission manager with work directory
-            PermissionManager.SetCurrentRepoPath(AgentConfig.GetWorkDirectory());
+            PermissionManager.SetCurrentRepoPath(AgentConfig.GetWorkDirectory());;
+            
+            // If UI automation test mode, run tests and exit
+            if (testUiAutomation)
+            {
+                await thuvu.Tests.UIAutomationTest.RunTests();
+                return;
+            }
+            
+            // If process management test mode, run tests and exit
+            if (testProcessMgmt)
+            {
+                await thuvu.Tests.ProcessManagementTest.RunAllTestsAsync();
+                return;
+            }
+            
+            // If SQLite test mode, run tests and exit
+            if (testSqlite)
+            {
+                var result = await thuvu.Tests.SqliteTest.RunTests();
+                Environment.Exit(result);
+                return;
+            }
 
-            // If web mode, start the web server
-            if (useWeb)
+            // If web mode (without API agent mode), start the web server standalone
+            if (useWeb && !useApi)
             {
                 await thuvu.Web.WebHost.RunAsync(args);
                 return;
@@ -101,7 +175,7 @@ namespace thuvu
             AgentConfig.ApplyConfig(http);
 
             // Initialize RAG service
-            RagToolImpl.Initialize(http);
+            RagToolImpl.Initialize(http);;
 
             // Run health checks
             Console.WriteLine();
@@ -160,6 +234,95 @@ namespace thuvu
 
             // Tools you expose to the model
             var tools = BuildTools.GetBuildTools();
+
+            // If API mode is enabled, start the web server with agent API and set up job processor
+            if (useApi)
+            {
+                // Initialize the job service
+                await AgentJobService.Instance.InitializeAsync();
+                
+                // Set up the job processor callback that will run prompts through the agent loop
+                thuvu.Web.AgentJobProcessor.SetProcessCallback(async (prompt, jobId, ct) =>
+                {
+                    // Create a fresh conversation for this job
+                    var jobMessages = new List<ChatMessage>
+                    {
+                        new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)),
+                        new("user", prompt)
+                    };
+                    
+                    // Add journal entry for start
+                    await AgentJobService.Instance.AddJournalEntryAsync("Processing prompt...", ct);
+                    
+                    try
+                    {
+                        // Run the agent loop
+                        string? result;
+                        if (AgentConfig.Config.Stream)
+                        {
+                            result = await AgentLoop.CompleteWithToolsStreamingAsync(
+                                http, AgentConfig.Config.Model, jobMessages, tools, ct,
+                                onToken: _ => { },
+                                onToolResult: (name, json) => 
+                                {
+                                    // Log tool calls to journal
+                                    AgentJobService.Instance.AddJournalEntryAsync($"Tool: {name}").Wait();
+                                },
+                                onUsage: _ => { }
+                            );
+                        }
+                        else
+                        {
+                            result = await AgentLoop.CompleteWithToolsAsync(
+                                http, AgentConfig.Config.Model, jobMessages, tools, ct,
+                                onToolResult: (name, json) =>
+                                {
+                                    AgentJobService.Instance.AddJournalEntryAsync($"Tool: {name}").Wait();
+                                }
+                            );
+                        }
+                        
+                        await AgentJobService.Instance.AddJournalEntryAsync("Completed successfully", ct);
+                        return result ?? "No response generated";
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        await AgentJobService.Instance.AddJournalEntryAsync("Cancelled by user", ct);
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        await AgentJobService.Instance.AddJournalEntryAsync($"Error: {ex.Message}", ct);
+                        throw;
+                    }
+                });
+                
+                // Start web server in background
+                var webCts = new CancellationTokenSource();
+                var webTask = Task.Run(async () =>
+                {
+                    await thuvu.Web.WebHost.RunAsync(args, webCts.Token);
+                });
+                
+                ConsoleHelpers.PrintHeader($"T.H.U.V.U. Agent API v{Helpers.GetCurrentGitTag()}", ConsoleColor.Cyan);
+                Console.WriteLine();
+                ConsoleHelpers.PrintKeyValue("Agent Name", AgentApiConfig.Instance.AgentName, ConsoleColor.DarkGray, ConsoleColor.Green);
+                ConsoleHelpers.PrintKeyValue("API Port", $"http://localhost:{AgentApiConfig.Instance.Port}", ConsoleColor.DarkGray, ConsoleColor.Cyan);
+                ConsoleHelpers.PrintKeyValue("Model", AgentConfig.Config.Model, ConsoleColor.DarkGray, ConsoleColor.Green);
+                ConsoleHelpers.PrintKeyValue("Work Dir", AgentConfig.GetWorkDirectory(), ConsoleColor.DarkGray, ConsoleColor.Gray);
+                Console.WriteLine();
+                ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("Agent is listening for jobs. Press Ctrl+C to stop."));
+                Console.WriteLine();
+                
+                // Wait for web server (blocks until Ctrl+C)
+                try
+                {
+                    await webTask;
+                }
+                catch (OperationCanceledException) { }
+                
+                return;
+            }
 
             if (useTui)
             {

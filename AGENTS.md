@@ -32,6 +32,9 @@ T.H.U.V.U. is a **local-first AI coding agent** that performs software engineeri
 | **Skills System** | ✅ Done | Save/load reusable TypeScript workflows |
 | **Task Decomposition** | ✅ Done | `TaskDecomposition.cs` - Break complex tasks into subtasks |
 | **Multi-Agent Orchestration** | ✅ Done | `TaskOrchestrator.cs` - Coordinate multiple agents |
+| **Agent Communication API** | ✅ Done | REST API for agent-to-agent communication via HTTP |
+| **UI Automation** | ✅ Done | Screen capture, window control, element inspection |
+| **SQLite Code Indexing** | ✅ Done | Multi-language code analysis with symbol storage |
 
 ### 📁 Project Structure
 
@@ -54,7 +57,10 @@ thuvu/
 │   ├── ModelConfig.cs      # Multi-model registry
 │   ├── HealthCheck.cs      # Service health verification
 │   ├── TaskDecomposition.cs # Task analysis and subtask planning
-│   └── TaskOrchestrator.cs # Multi-agent coordination
+│   ├── TaskOrchestrator.cs # Multi-agent coordination
+│   ├── AgentApiConfig.cs   # Agent API configuration
+│   ├── AgentJobService.cs  # Job management with SQLite
+│   └── SqliteService.cs    # SQLite code indexing service
 │
 ├── Tools/                  # Tool implementations
 │   ├── BuildTools.cs       # Tool schema definitions
@@ -64,7 +70,16 @@ thuvu/
 │   ├── ApplyPatchToolImpl.cs
 │   ├── RunProcessToolImpl.cs
 │   ├── DotnetToolImpl.cs
-│   └── RagToolImpl.cs
+│   ├── RagToolImpl.cs
+│   ├── SqliteToolImpl.cs   # Code indexing tools
+│   ├── AgentCommunicationToolImpl.cs  # Inter-agent communication
+│   └── UIAutomation/       # Screen capture and automation
+│
+├── Web/                    # Web interface
+│   ├── WebHost.cs          # ASP.NET Core host
+│   ├── AgentApiEndpoints.cs # Agent communication REST API
+│   └── Components/         # Blazor components
+│       └── AgentDashboard.razor  # Agent status dashboard
 │
 ├── mcp/                    # MCP TypeScript ecosystem
 │   ├── servers/            # Tool wrappers (filesystem, git, dotnet, rag)
@@ -167,6 +182,23 @@ User Input → Command Handler → LLM Request
 | `rag_stats` | Index statistics | ReadOnly |
 | `rag_clear` | Clear index | Write |
 
+### 4.6 Agent Communication Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
+| `agent_list` | List known agents | ReadOnly |
+| `agent_submit` | Submit job to another agent | AgentCommunication |
+| `agent_status` | Get job status and journal | AgentCommunication |
+| `agent_result` | Get completed job result | AgentCommunication |
+| `agent_cancel` | Cancel a running job | AgentCommunication |
+
+### 4.7 UI Automation Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
+| `ui_capture` | Capture screen or window | UIAutomation |
+| `list_windows` | List open windows | UIAutomation |
+| `ui_click` | Click at coordinates | UIAutomation |
+| `ui_type` | Type text into window | UIAutomation |
+
 ---
 
 ## 5. Configuration
@@ -210,6 +242,22 @@ User Input → Command Handler → LLM Request
     "DefaultTimeout": 300000,
     "PermissionLevel": "readwrite",
     "RequireApproval": true
+  },
+  "AgentApiConfig": {
+    "Enabled": false,
+    "Port": 5001,
+    "AgentName": "Agent-1",
+    "AgentDescription": "Development agent",
+    "UseHttps": false,
+    "BearerToken": "",
+    "MaxJobHistory": 50,
+    "KnownAgents": [
+      {
+        "Name": "Agent-2",
+        "Url": "http://localhost:5002",
+        "BearerToken": ""
+      }
+    ]
   }
 }
 ```
@@ -217,6 +265,8 @@ User Input → Command Handler → LLM Request
 ---
 
 ## 6. Commands Reference
+
+### 6.1 Slash Commands
 
 | Command | Description |
 |---------|-------------|
@@ -241,11 +291,90 @@ User Input → Command Handler → LLM Request
 | `/health` | Run health checks on all services |
 | `/status` | Show session and token status |
 
+### 6.2 CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--tui` | Start with Terminal UI interface |
+| `--web` | Start web server (Blazor UI) |
+| `--api` | Enable Agent API server for multi-agent communication |
+| `--config <path>` | Use custom configuration file |
+| `--port <number>` | Override API server port |
+| `--test-sqlite` | Run SQLite integration tests |
+| `--test-ui` | Run UI automation tests |
+
+### 6.3 Agent API Mode
+
+Start agent in API mode to accept jobs from other agents:
+
+```bash
+# Start agent with API enabled on default port (5001)
+thuvu --api
+
+# Start with custom port
+thuvu --api --port 5002
+
+# Start with custom config
+thuvu --api --config agent2.json --port 5002
+```
+
+Access the agent dashboard at `http://localhost:5001/agent` to view:
+- Current job status and journal
+- Recent job history (last 50 jobs)
+- Agent configuration
+
 ---
 
-## 7. Agent Isolation & Git Strategy
+## 7. Agent Communication API
 
 ### 7.1 Overview
+
+Agents can communicate with each other via HTTP REST API. This enables:
+- Task delegation to specialized agents
+- Parallel task execution across multiple agents
+- Progress monitoring via journal system
+
+### 7.2 API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/agent/info` | GET | Get agent information |
+| `/api/jobs` | POST | Submit a new job |
+| `/api/jobs/current` | GET | Get current job status |
+| `/api/jobs/{id}` | GET | Get specific job by ID |
+| `/api/jobs/{id}` | DELETE | Cancel a job |
+
+### 7.3 Job Lifecycle
+
+1. **Submit**: POST `/api/jobs` with prompt
+2. **Monitor**: GET `/api/jobs/current` to check status and journal
+3. **Result**: GET `/api/jobs/{id}` when status is "completed"
+
+Job states: `pending` → `running` → `completed` | `failed` | `cancelled`
+
+### 7.4 Configuration
+
+Add `AgentApiConfig` section to appsettings.json:
+
+```json
+{
+  "AgentApiConfig": {
+    "Enabled": true,
+    "Port": 5001,
+    "AgentName": "Agent-1",
+    "BearerToken": "secret-token",
+    "KnownAgents": [
+      { "Name": "Agent-2", "Url": "http://localhost:5002" }
+    ]
+  }
+}
+```
+
+---
+
+## 8. Agent Isolation & Git Strategy
+
+### 8.1 Overview
 
 Each agent instance operates in **isolation** using Git branches to:
 - Track all changes made by the agent
@@ -253,7 +382,7 @@ Each agent instance operates in **isolation** using Git branches to:
 - Run tests without affecting other agents
 - Allow parallel agent execution on different tasks
 
-### 7.2 Branch Naming Convention
+### 8.2 Branch Naming Convention
 
 ```
 agent/<agent-id>/<task-description>

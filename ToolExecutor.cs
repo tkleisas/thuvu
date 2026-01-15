@@ -228,6 +228,38 @@ namespace thuvu
                 // Vision/Image Analysis
                 "analyze_image" => await VisionToolImpl.AnalyzeImageAsync(argsJson, ct).ConfigureAwait(false),
                 
+                // UI Automation
+                "ui_capture" => await Tools.UIAutomation.UIAutomationToolImpl.CaptureAsync(argsJson, ct).ConfigureAwait(false),
+                "ui_list_windows" => await Tools.UIAutomation.UIAutomationToolImpl.ListWindowsAsync(argsJson, ct).ConfigureAwait(false),
+                "ui_focus_window" => await Tools.UIAutomation.UIAutomationToolImpl.FocusWindowAsync(argsJson, ct).ConfigureAwait(false),
+                "ui_click" => await Tools.UIAutomation.UIAutomationToolImpl.ClickAsync(argsJson, ct).ConfigureAwait(false),
+                "ui_type" => await Tools.UIAutomation.UIAutomationToolImpl.TypeAsync(argsJson, ct).ConfigureAwait(false),
+                "ui_mouse_move" => await Tools.UIAutomation.UIAutomationToolImpl.MoveMouseAsync(argsJson, ct).ConfigureAwait(false),
+                "ui_get_element" => await Tools.UIAutomation.UIAutomationToolImpl.GetElementAsync(argsJson, ct).ConfigureAwait(false),
+                "ui_wait" => await Tools.UIAutomation.UIAutomationToolImpl.WaitAsync(argsJson, ct).ConfigureAwait(false),
+                
+                // Process Management tools
+                "process_start" => await Tools.ProcessManagement.ProcessToolImpl.ProcessStartAsync(argsJson).ConfigureAwait(false),
+                "process_read" => await Tools.ProcessManagement.ProcessToolImpl.ProcessReadAsync(argsJson).ConfigureAwait(false),
+                "process_write" => await Tools.ProcessManagement.ProcessToolImpl.ProcessWriteAsync(argsJson).ConfigureAwait(false),
+                "process_status" => await Tools.ProcessManagement.ProcessToolImpl.ProcessStatusAsync(argsJson).ConfigureAwait(false),
+                "process_stop" => await Tools.ProcessManagement.ProcessToolImpl.ProcessStopAsync(argsJson).ConfigureAwait(false),
+                
+                // Code Indexing & Context tools (SQLite)
+                "code_index" => await ExecuteCodeIndexAsync(argsJson, ct).ConfigureAwait(false),
+                "code_query" => await ExecuteCodeQueryAsync(argsJson, ct).ConfigureAwait(false),
+                "context_store" => await ExecuteContextStoreAsync(argsJson, ct).ConfigureAwait(false),
+                "context_get" => await ExecuteContextGetAsync(argsJson, ct).ConfigureAwait(false),
+                "index_stats" => await SqliteToolImpl.IndexStatsAsync(ct).ConfigureAwait(false),
+                "index_clear" => await SqliteToolImpl.IndexClearAsync(ct).ConfigureAwait(false),
+
+                // Agent Communication tools
+                "agent_list" => await AgentCommunicationToolImpl.AgentListAsync(ct).ConfigureAwait(false),
+                "agent_submit" => await ExecuteAgentSubmitAsync(argsJson, ct).ConfigureAwait(false),
+                "agent_status" => await ExecuteAgentStatusAsync(argsJson, ct).ConfigureAwait(false),
+                "agent_result" => await ExecuteAgentResultAsync(argsJson, ct).ConfigureAwait(false),
+                "agent_cancel" => await ExecuteAgentCancelAsync(argsJson, ct).ConfigureAwait(false),
+                
                 _ => JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" })
             };
         }
@@ -300,5 +332,196 @@ namespace thuvu
                 });
             }
         }
+        
+        /// <summary>
+        /// Execute code_index tool
+        /// </summary>
+        private static async Task<string> ExecuteCodeIndexAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                var path = root.TryGetProperty("path", out var pathProp) ? pathProp.GetString() ?? "." : ".";
+                var force = root.TryGetProperty("force", out var forceProp) && forceProp.GetBoolean();
+                
+                return await SqliteToolImpl.CodeIndexAsync(path, force, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+        
+        /// <summary>
+        /// Execute code_query tool
+        /// </summary>
+        private static async Task<string> ExecuteCodeQueryAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                var search = root.TryGetProperty("search", out var searchProp) ? searchProp.GetString() : null;
+                var kind = root.TryGetProperty("kind", out var kindProp) ? kindProp.GetString() : null;
+                var file = root.TryGetProperty("file", out var fileProp) ? fileProp.GetString() : null;
+                var symbolId = root.TryGetProperty("symbol_id", out var idProp) ? idProp.GetInt64() : (long?)null;
+                var findRefs = root.TryGetProperty("find_references", out var refsProp) && refsProp.GetBoolean();
+                var limit = root.TryGetProperty("limit", out var limitProp) ? limitProp.GetInt32() : 50;
+                
+                return await SqliteToolImpl.CodeQueryAsync(search, kind, file, symbolId, findRefs, limit, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+        
+        /// <summary>
+        /// Execute context_store tool
+        /// </summary>
+        private static async Task<string> ExecuteContextStoreAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                if (!root.TryGetProperty("key", out var keyProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'key' parameter" });
+                if (!root.TryGetProperty("value", out var valueProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'value' parameter" });
+                
+                var key = keyProp.GetString() ?? "";
+                var value = valueProp.GetString() ?? "";
+                var category = root.TryGetProperty("category", out var catProp) ? catProp.GetString() : null;
+                var projectPath = root.TryGetProperty("project_path", out var projProp) ? projProp.GetString() : null;
+                var expiresInDays = root.TryGetProperty("expires_in_days", out var expProp) ? expProp.GetInt32() : (int?)null;
+                
+                return await SqliteToolImpl.ContextStoreAsync(key, value, category, projectPath, expiresInDays, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+        
+        /// <summary>
+        /// Execute context_get tool
+        /// </summary>
+        private static async Task<string> ExecuteContextGetAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                var keyPattern = root.TryGetProperty("key_pattern", out var keyProp) ? keyProp.GetString() : null;
+                var category = root.TryGetProperty("category", out var catProp) ? catProp.GetString() : null;
+                var projectPath = root.TryGetProperty("project_path", out var projProp) ? projProp.GetString() : null;
+                var limit = root.TryGetProperty("limit", out var limitProp) ? limitProp.GetInt32() : 50;
+                
+                return await SqliteToolImpl.ContextGetAsync(keyPattern, category, projectPath, limit, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+
+        #region Agent Communication Helpers
+
+        private static async Task<string> ExecuteAgentSubmitAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                if (!root.TryGetProperty("agent_name", out var nameProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'agent_name' parameter" });
+                if (!root.TryGetProperty("prompt", out var promptProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'prompt' parameter" });
+                
+                var agentName = nameProp.GetString() ?? "";
+                var prompt = promptProp.GetString() ?? "";
+                
+                return await AgentCommunicationToolImpl.AgentSubmitAsync(agentName, prompt, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+
+        private static async Task<string> ExecuteAgentStatusAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                if (!root.TryGetProperty("agent_name", out var nameProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'agent_name' parameter" });
+                
+                var agentName = nameProp.GetString() ?? "";
+                
+                return await AgentCommunicationToolImpl.AgentStatusAsync(agentName, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+
+        private static async Task<string> ExecuteAgentResultAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                if (!root.TryGetProperty("agent_name", out var nameProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'agent_name' parameter" });
+                if (!root.TryGetProperty("job_id", out var jobProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'job_id' parameter" });
+                
+                var agentName = nameProp.GetString() ?? "";
+                var jobId = jobProp.GetString() ?? "";
+                
+                return await AgentCommunicationToolImpl.AgentResultAsync(agentName, jobId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+
+        private static async Task<string> ExecuteAgentCancelAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                if (!root.TryGetProperty("agent_name", out var nameProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'agent_name' parameter" });
+                if (!root.TryGetProperty("job_id", out var jobProp))
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'job_id' parameter" });
+                
+                var agentName = nameProp.GetString() ?? "";
+                var jobId = jobProp.GetString() ?? "";
+                
+                return await AgentCommunicationToolImpl.AgentCancelAsync(agentName, jobId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+
+        #endregion
     }
 }

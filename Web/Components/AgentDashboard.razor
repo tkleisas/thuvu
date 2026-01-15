@@ -1,0 +1,466 @@
+@page "/agent"
+@using thuvu.Models
+@using System.Text.Json
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<PageTitle>@AgentApiConfig.Instance.AgentName - Agent Dashboard</PageTitle>
+
+<div class="agent-dashboard">
+    <header class="agent-header">
+        <div class="agent-info">
+            <h1>@AgentApiConfig.Instance.AgentName</h1>
+            <span class="agent-status @GetStatusClass()">@GetStatusText()</span>
+        </div>
+        @if (!string.IsNullOrEmpty(AgentApiConfig.Instance.AgentDescription))
+        {
+            <p class="agent-description">@AgentApiConfig.Instance.AgentDescription</p>
+        }
+        <div class="agent-meta">
+            <span>Model: @(AgentConfig.Config?.Model ?? "unknown")</span>
+            <span>Port: @AgentApiConfig.Instance.Port</span>
+        </div>
+    </header>
+
+    @if (_currentJob != null)
+    {
+        <section class="current-job">
+            <h2>Current Job</h2>
+            <div class="job-card active">
+                <div class="job-header">
+                    <span class="job-id">#@_currentJob.Id</span>
+                    <span class="job-status @_currentJob.Status.ToString().ToLower()">
+                        @_currentJob.Status.ToString()
+                    </span>
+                    @if (_currentJob.Duration.HasValue)
+                    {
+                        <span class="job-duration">@FormatDuration(_currentJob.Duration.Value)</span>
+                    }
+                </div>
+                <div class="job-prompt">
+                    <strong>Prompt:</strong>
+                    <p>@_currentJob.Prompt</p>
+                </div>
+                
+                @if (_currentJob.Journal.Count > 0)
+                {
+                    <div class="job-journal">
+                        <h3>Journal</h3>
+                        <div class="journal-entries">
+                            @foreach (var entry in _currentJob.Journal.TakeLast(20))
+                            {
+                                <div class="journal-entry">
+                                    <span class="journal-time">[@entry.Timestamp.ToString("HH:mm:ss")]</span>
+                                    <span class="journal-text">@entry.Entry</span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                
+                @if (_currentJob.Status == JobStatus.Running)
+                {
+                    <div class="job-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill"></div>
+                        </div>
+                        <span>Working...</span>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+    else
+    {
+        <section class="no-job">
+            <div class="idle-indicator">
+                <span class="idle-icon">💤</span>
+                <span>Agent is idle - waiting for work</span>
+            </div>
+        </section>
+    }
+
+    @if (_recentJobs.Count > 0)
+    {
+        <section class="recent-jobs">
+            <h2>Recent Jobs (@_recentJobs.Count)</h2>
+            <div class="jobs-list">
+                @foreach (var job in _recentJobs.Take(20))
+                {
+                    <div class="job-card @job.Status.ToString().ToLower()" @onclick="() => ToggleJobDetails(job.Id)">
+                        <div class="job-header">
+                            <span class="job-id">#@job.Id</span>
+                            <span class="job-status @job.Status.ToString().ToLower()">
+                                @job.Status.ToString()
+                            </span>
+                            @if (job.CompletedAt.HasValue)
+                            {
+                                <span class="job-time">@FormatTimeAgo(job.CompletedAt.Value)</span>
+                            }
+                            @if (job.Duration.HasValue)
+                            {
+                                <span class="job-duration">@FormatDuration(job.Duration.Value)</span>
+                            }
+                        </div>
+                        <div class="job-prompt-preview">
+                            @(job.Prompt.Length > 100 ? job.Prompt.Substring(0, 100) + "..." : job.Prompt)
+                        </div>
+                        
+                        @if (_expandedJobId == job.Id)
+                        {
+                            <div class="job-details">
+                                @if (!string.IsNullOrEmpty(job.Result))
+                                {
+                                    <div class="job-result">
+                                        <strong>Result:</strong>
+                                        <pre>@job.Result</pre>
+                                    </div>
+                                }
+                                @if (!string.IsNullOrEmpty(job.Error))
+                                {
+                                    <div class="job-error">
+                                        <strong>Error:</strong>
+                                        <pre>@job.Error</pre>
+                                    </div>
+                                }
+                                @if (job.Journal.Count > 0)
+                                {
+                                    <div class="job-journal">
+                                        <strong>Journal:</strong>
+                                        @foreach (var entry in job.Journal)
+                                        {
+                                            <div class="journal-entry">
+                                                <span class="journal-time">[@entry.Timestamp.ToString("HH:mm:ss")]</span>
+                                                <span class="journal-text">@entry.Entry</span>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+    }
+</div>
+
+<style>
+    .agent-dashboard {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    .agent-header {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        color: white;
+        padding: 24px;
+        border-radius: 12px;
+        margin-bottom: 24px;
+    }
+
+    .agent-info {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 8px;
+    }
+
+    .agent-info h1 {
+        margin: 0;
+        font-size: 28px;
+    }
+
+    .agent-status {
+        padding: 4px 12px;
+        border-radius: 16px;
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .agent-status.idle { background: #4a5568; }
+    .agent-status.running { background: #38a169; animation: pulse 2s infinite; }
+    .agent-status.busy { background: #d69e2e; }
+
+    @@keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    .agent-description {
+        color: #a0aec0;
+        margin: 8px 0;
+    }
+
+    .agent-meta {
+        display: flex;
+        gap: 16px;
+        color: #718096;
+        font-size: 14px;
+    }
+
+    .current-job, .recent-jobs, .no-job {
+        margin-bottom: 24px;
+    }
+
+    .current-job h2, .recent-jobs h2 {
+        color: #2d3748;
+        margin-bottom: 16px;
+    }
+
+    .job-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        transition: box-shadow 0.2s;
+    }
+
+    .job-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .job-card.active {
+        border-color: #38a169;
+        border-width: 2px;
+    }
+
+    .job-card.completed { border-left: 4px solid #38a169; }
+    .job-card.failed { border-left: 4px solid #e53e3e; }
+    .job-card.cancelled { border-left: 4px solid #718096; }
+
+    .job-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+    }
+
+    .job-id {
+        font-family: monospace;
+        font-weight: 600;
+        color: #4a5568;
+    }
+
+    .job-status {
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        text-transform: uppercase;
+    }
+
+    .job-status.pending { background: #ecc94b; color: #744210; }
+    .job-status.running { background: #48bb78; color: white; }
+    .job-status.completed { background: #38a169; color: white; }
+    .job-status.failed { background: #e53e3e; color: white; }
+    .job-status.cancelled { background: #718096; color: white; }
+
+    .job-time, .job-duration {
+        color: #718096;
+        font-size: 12px;
+    }
+
+    .job-prompt {
+        color: #2d3748;
+        margin-bottom: 12px;
+    }
+
+    .job-prompt p {
+        margin: 4px 0;
+        white-space: pre-wrap;
+    }
+
+    .job-prompt-preview {
+        color: #4a5568;
+        font-size: 14px;
+    }
+
+    .job-journal {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .job-journal h3 {
+        font-size: 14px;
+        color: #4a5568;
+        margin-bottom: 8px;
+    }
+
+    .journal-entries {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .journal-entry {
+        font-size: 13px;
+        padding: 4px 0;
+        border-bottom: 1px solid #f7fafc;
+    }
+
+    .journal-time {
+        font-family: monospace;
+        color: #718096;
+        margin-right: 8px;
+    }
+
+    .journal-text {
+        color: #2d3748;
+    }
+
+    .job-progress {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+    }
+
+    .progress-bar {
+        flex: 1;
+        height: 4px;
+        background: #e2e8f0;
+        border-radius: 2px;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        width: 30%;
+        background: linear-gradient(90deg, #38a169, #48bb78);
+        animation: progress 1.5s ease-in-out infinite;
+    }
+
+    @@keyframes progress {
+        0% { width: 0%; margin-left: 0; }
+        50% { width: 30%; }
+        100% { width: 0%; margin-left: 100%; }
+    }
+
+    .job-details {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .job-result pre, .job-error pre {
+        background: #f7fafc;
+        padding: 12px;
+        border-radius: 4px;
+        font-size: 13px;
+        overflow-x: auto;
+        max-height: 200px;
+    }
+
+    .job-error pre {
+        background: #fff5f5;
+        color: #c53030;
+    }
+
+    .no-job {
+        text-align: center;
+        padding: 48px;
+    }
+
+    .idle-indicator {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        color: #718096;
+    }
+
+    .idle-icon {
+        font-size: 48px;
+    }
+
+    .jobs-list {
+        max-height: 600px;
+        overflow-y: auto;
+    }
+</style>
+
+@code {
+    private AgentJob? _currentJob;
+    private List<AgentJob> _recentJobs = new();
+    private string? _expandedJobId;
+    private System.Threading.Timer? _refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshData();
+        
+        // Auto-refresh every 2 seconds
+        _refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await RefreshData();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private async Task RefreshData()
+    {
+        try
+        {
+            _currentJob = AgentJobService.Instance.CurrentJob;
+            _recentJobs = await AgentJobService.Instance.GetRecentJobsAsync(50);
+        }
+        catch
+        {
+            // Ignore errors during refresh
+        }
+    }
+
+    private string GetStatusClass()
+    {
+        if (_currentJob == null) return "idle";
+        return _currentJob.Status switch
+        {
+            JobStatus.Running => "running",
+            JobStatus.Pending => "busy",
+            _ => "idle"
+        };
+    }
+
+    private string GetStatusText()
+    {
+        if (_currentJob == null) return "Idle";
+        return _currentJob.Status switch
+        {
+            JobStatus.Running => "Working",
+            JobStatus.Pending => "Queued",
+            _ => "Idle"
+        };
+    }
+
+    private void ToggleJobDetails(string jobId)
+    {
+        _expandedJobId = _expandedJobId == jobId ? null : jobId;
+    }
+
+    private string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+            return $"{duration.Hours}h {duration.Minutes}m";
+        if (duration.TotalMinutes >= 1)
+            return $"{duration.Minutes}m {duration.Seconds}s";
+        return $"{duration.Seconds}s";
+    }
+
+    private string FormatTimeAgo(DateTime time)
+    {
+        var diff = DateTime.UtcNow - time;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        return $"{(int)diff.TotalDays}d ago";
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+    }
+}

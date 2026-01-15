@@ -574,6 +574,496 @@ The image can be provided as a file path or base64 data.",
                     }
                     """).RootElement
                 }
+            },
+            
+            // --- UI Automation tools ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_capture",
+                    Description = @"Capture a screenshot of the screen, a window, or a region.
+Use for visual debugging, verifying UI state, or feeding images to vision models.
+
+Modes:
+- fullscreen: Capture entire screen (all monitors)
+- window: Capture specific window by title
+- region: Capture rectangular area by coordinates
+
+Set analyze=true to automatically analyze the image with the vision model and get a description.
+Returns base64-encoded image data by default, or saves to file.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "mode":{"type":"string","enum":["fullscreen","window","region"],"default":"fullscreen","description":"Capture mode"},
+                        "window_title":{"type":"string","description":"Window title for mode=window (partial match supported)"},
+                        "x":{"type":"integer","description":"Left coordinate for mode=region"},
+                        "y":{"type":"integer","description":"Top coordinate for mode=region"},
+                        "width":{"type":"integer","description":"Width in pixels for mode=region"},
+                        "height":{"type":"integer","description":"Height in pixels for mode=region"},
+                        "format":{"type":"string","enum":["png","jpeg"],"default":"png","description":"Image format"},
+                        "quality":{"type":"integer","minimum":1,"maximum":100,"default":"85","description":"JPEG quality (ignored for PNG)"},
+                        "output":{"type":"string","enum":["base64","file"],"default":"base64","description":"Output mode"},
+                        "file_path":{"type":"string","description":"File path when output=file"},
+                        "include_cursor":{"type":"boolean","default":false,"description":"Include mouse cursor in capture"},
+                        "analyze":{"type":"boolean","default":false,"description":"If true, analyze the captured image with the vision model and return a description"},
+                        "analyze_prompt":{"type":"string","description":"Custom prompt for image analysis (used when analyze=true). Default: 'Describe what you see in this screenshot.'"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_list_windows",
+                    Description = "List all open windows. Use to discover window titles for ui_capture, ui_click, or ui_focus_window.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "include_hidden":{"type":"boolean","default":false,"description":"Include hidden/background windows"},
+                        "filter":{"type":"string","description":"Filter by title (case-insensitive partial match)"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_focus_window",
+                    Description = "Bring a window to the foreground and give it focus. Use before ui_click or ui_type to target a specific window.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "window_title":{"type":"string","description":"Window title (partial match supported)"}
+                      },
+                      "required":["window_title"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_click",
+                    Description = "Click at screen coordinates or coordinates relative to a window. Use after ui_capture to interact with UI elements.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "x":{"type":"integer","description":"X coordinate (screen or window-relative)"},
+                        "y":{"type":"integer","description":"Y coordinate (screen or window-relative)"},
+                        "button":{"type":"string","enum":["left","right","middle"],"default":"left","description":"Mouse button"},
+                        "clicks":{"type":"integer","enum":[1,2],"default":1,"description":"1=single click, 2=double click"},
+                        "window_title":{"type":"string","description":"If provided, coordinates are relative to this window"}
+                      },
+                      "required":["x","y"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_type",
+                    Description = @"Type text or send keyboard shortcuts to the active window or a specific window.
+
+For regular text, use the 'text' parameter.
+For special keys/shortcuts, use the 'keys' array: ['ctrl', 's'], ['alt', 'f4'], ['enter'], ['tab'], etc.
+
+Supported special keys: ctrl, alt, shift, win, enter, tab, escape, space, backspace, delete, 
+left, right, up, down, f1-f12, and single characters/numbers.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "text":{"type":"string","description":"Text to type literally"},
+                        "keys":{"type":"array","items":{"type":"string"},"description":"Special keys to send, e.g. ['ctrl','s'] or ['enter']"},
+                        "window_title":{"type":"string","description":"Target window (will focus first)"},
+                        "delay_ms":{"type":"integer","minimum":0,"maximum":1000,"default":10,"description":"Delay between keystrokes in ms"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_mouse_move",
+                    Description = "Move the mouse cursor to specified coordinates without clicking.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "x":{"type":"integer","description":"X coordinate"},
+                        "y":{"type":"integer","description":"Y coordinate"},
+                        "window_title":{"type":"string","description":"If provided, coordinates are relative to this window"}
+                      },
+                      "required":["x","y"]
+                    }
+                    """).RootElement
+                }
+            },
+            // ui_get_element - Get UI element information
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_get_element",
+                    Description = "Get UI element at coordinates or find elements by selector. Returns element properties including automation ID, name, type, bounds, and enabled/visible state. Useful for UI automation debugging.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "x":{"type":"integer","description":"X coordinate to get element at (screen coordinates)"},
+                        "y":{"type":"integer","description":"Y coordinate to get element at (screen coordinates)"},
+                        "selector":{"type":"string","description":"Element selector in format 'ControlType:Name' (e.g., 'Button:Submit', 'TextBox:*', 'Edit:Username')"},
+                        "window_title":{"type":"string","description":"Limit element search to this window (optional)"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            // ui_wait - Wait for window or element to appear
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "ui_wait",
+                    Description = "Wait for a window or UI element to appear. Useful for waiting for dialogs, loading indicators, or dynamic UI elements.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "window_title":{"type":"string","description":"Window title pattern to wait for (supports substring match)"},
+                        "element_selector":{"type":"string","description":"Element selector to wait for (format: 'ControlType:Name')"},
+                        "timeout_ms":{"type":"integer","description":"Maximum time to wait in milliseconds (default: 10000)"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+
+            // --- Process Management Tools ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "process_start",
+                    Description = "Start a background process that continues running. Returns a session_id for later interaction. Use for long-running apps, servers, GUI applications. The process runs independently and can be interacted with via process_read, process_write, process_status, and process_stop.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "cmd":{"type":"string","description":"Command to run (must be in allowed list: dotnet, npm, node, python, etc.)"},
+                        "args":{"type":"array","items":{"type":"string"},"description":"Command arguments"},
+                        "cwd":{"type":"string","description":"Working directory (defaults to project directory)"}
+                      },
+                      "required":["cmd"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "process_read",
+                    Description = "Read stdout/stderr output from a background process. By default reads only new output since last read. Use 'all' to read complete output from start.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "session_id":{"type":"string","description":"Session ID from process_start"},
+                        "all":{"type":"boolean","description":"If true, read all output from beginning instead of just new output"},
+                        "wait_ms":{"type":"integer","description":"Wait this many milliseconds before reading (useful when expecting output, max 30000)"}
+                      },
+                      "required":["session_id"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "process_write",
+                    Description = "Write input to a background process stdin. Useful for interactive applications that expect user input.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "session_id":{"type":"string","description":"Session ID from process_start"},
+                        "input":{"type":"string","description":"Text to send to the process"},
+                        "no_newline":{"type":"boolean","description":"If true, don't append newline after input"}
+                      },
+                      "required":["session_id","input"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "process_status",
+                    Description = "Get status of a background process or list all running sessions. Without session_id, lists all sessions.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "session_id":{"type":"string","description":"Session ID to check (optional - omit to list all sessions)"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "process_stop",
+                    Description = "Stop a background process and remove its session. Returns final output before termination.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "session_id":{"type":"string","description":"Session ID to stop"},
+                        "force":{"type":"boolean","description":"If true, force kill immediately without graceful shutdown"}
+                      },
+                      "required":["session_id"]
+                    }
+                    """).RootElement
+                }
+            },
+
+            // --- Code Indexing & Context Tools ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "code_index",
+                    Description = "Index source code files for symbol search. Extracts classes, methods, properties, fields, etc. Supports incremental indexing (only changed files). Use to enable code_query searches.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "path":{"type":"string","description":"Directory or file to index. Indexes recursively for directories."},
+                        "force":{"type":"boolean","default":false,"description":"Re-index even if file unchanged"}
+                      },
+                      "required":["path"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "code_query",
+                    Description = "Query indexed code symbols. Search for classes, methods, properties by name. Get symbols in a file. Find references to a symbol.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "search":{"type":"string","description":"Search pattern for symbol names (partial match)"},
+                        "kind":{"type":"string","enum":["class","interface","struct","enum","method","property","field","constructor"],"description":"Filter by symbol kind"},
+                        "file":{"type":"string","description":"Get all symbols in this file, or filter search to this file"},
+                        "symbol_id":{"type":"integer","description":"Get specific symbol by ID"},
+                        "find_references":{"type":"boolean","default":false,"description":"Find all references to the symbol (requires symbol_id)"},
+                        "limit":{"type":"integer","default":50,"description":"Maximum results to return"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "context_store",
+                    Description = "Store context/memory for later retrieval. Use to remember decisions, patterns, errors, or any information across sessions.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "key":{"type":"string","description":"Unique key for this context entry"},
+                        "value":{"type":"string","description":"The content to store"},
+                        "category":{"type":"string","enum":["decision","pattern","preference","note","error"],"description":"Category for filtering"},
+                        "project_path":{"type":"string","description":"Associate with a specific project directory"},
+                        "expires_in_days":{"type":"integer","description":"Auto-delete after N days (default: 30, 0=never)"}
+                      },
+                      "required":["key","value"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "context_get",
+                    Description = "Retrieve stored context/memory. Search by key pattern, category, or project.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "key_pattern":{"type":"string","description":"Search pattern for keys (partial match)"},
+                        "category":{"type":"string","enum":["decision","pattern","preference","note","error"],"description":"Filter by category"},
+                        "project_path":{"type":"string","description":"Filter by project directory"},
+                        "limit":{"type":"integer","default":50,"description":"Maximum results"}
+                      }
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "index_stats",
+                    Description = "Get statistics about the code index: total symbols, files, references, database size.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{}
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "index_clear",
+                    Description = "Clear all indexed data (symbols, files, context). Use with caution.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{}
+                    }
+                    """).RootElement
+                }
+            },
+
+            // --- Agent Communication Tools ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "agent_list",
+                    Description = "List all known agents and their current status (idle/busy/offline).",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{}
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "agent_submit",
+                    Description = "Submit a prompt/task to another agent. Returns immediately with a job ID. Agent must not be busy.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "agent_name":{"type":"string","description":"Name of the target agent (from agent_list)"},
+                        "prompt":{"type":"string","description":"The task/prompt to send to the agent"}
+                      },
+                      "required":["agent_name","prompt"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "agent_status",
+                    Description = "Get the current job status and journal from an agent. Use to poll progress.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "agent_name":{"type":"string","description":"Name of the target agent"}
+                      },
+                      "required":["agent_name"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "agent_result",
+                    Description = "Get the full result of a completed job from an agent.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "agent_name":{"type":"string","description":"Name of the target agent"},
+                        "job_id":{"type":"string","description":"The job ID returned from agent_submit"}
+                      },
+                      "required":["agent_name","job_id"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "agent_cancel",
+                    Description = "Cancel a running job on an agent.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "agent_name":{"type":"string","description":"Name of the target agent"},
+                        "job_id":{"type":"string","description":"The job ID to cancel"}
+                      },
+                      "required":["agent_name","job_id"]
+                    }
+                    """).RootElement
+                }
             }
         };
 
