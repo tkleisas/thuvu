@@ -61,15 +61,25 @@ namespace thuvu.Web.Services
         private HttpClient GetHttpClientForCurrentModel()
         {
             var modelId = AgentConfig.Config.Model;
+            Console.WriteLine($"[WebAgentService] GetHttpClientForCurrentModel: modelId={modelId}");
+            AgentLogger.LogDebug("GetHttpClientForCurrentModel: modelId={ModelId}", modelId);
+            
             var modelConfig = Models.ModelRegistry.Instance?.GetModel(modelId);
+            Console.WriteLine($"[WebAgentService] ModelRegistry lookup: found={modelConfig != null}, HostUrl={modelConfig?.HostUrl ?? "null"}");
+            AgentLogger.LogDebug("ModelRegistry lookup: found={Found}, HostUrl={HostUrl}", modelConfig != null, modelConfig?.HostUrl ?? "null");
             
             if (modelConfig != null && !string.IsNullOrEmpty(modelConfig.HostUrl))
             {
                 // Model has its own endpoint config - create a dedicated client
-                return modelConfig.CreateHttpClient();
+                var client = modelConfig.CreateHttpClient();
+                Console.WriteLine($"[WebAgentService] Created dedicated HttpClient: BaseAddress={client.BaseAddress}, HasAuth={client.DefaultRequestHeaders.Authorization != null}");
+                AgentLogger.LogInfo("Created dedicated HttpClient for model {ModelId}: BaseAddress={BaseAddress}", modelId, client.BaseAddress);
+                return client;
             }
             
             // Fall back to default shared client
+            Console.WriteLine($"[WebAgentService] Using shared HttpClient: BaseAddress={_http.BaseAddress}");
+            AgentLogger.LogDebug("Using shared HttpClient: BaseAddress={BaseAddress}", _http.BaseAddress);
             return _http;
         }
         

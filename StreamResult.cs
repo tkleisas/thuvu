@@ -50,15 +50,18 @@ namespace thuvu
             {
                 var logLine = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
                 System.Diagnostics.Debug.WriteLine(logLine);
+                Console.WriteLine($"[StreamResult] {msg}");
                 try { File.AppendAllText("stream_debug.log", logLine + Environment.NewLine); } catch { }
             }
             
-            LogStream("Sending HTTP POST request...");
+            LogStream($"Sending HTTP POST request to BaseAddress={http.BaseAddress}, Model={streamingReq.model}");
+            LogStream($"HttpClient HasAuth={http.DefaultRequestHeaders.Authorization != null}");
             
             using var jsonContent = new StringContent(JsonSerializer.Serialize(streamingReq, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }), Encoding.UTF8, "application/json");
-            using var resp = await http.PostAsync("/v1/chat/completions", jsonContent, ct);
+            using var resp = await http.PostAsync("v1/chat/completions", jsonContent, ct);
             
             LogStream($"HTTP response received, status={resp.StatusCode}");
+            LogStream($"Response ContentType={resp.Content.Headers.ContentType}");
             
             if (!resp.IsSuccessStatusCode)
             {
@@ -67,9 +70,25 @@ namespace thuvu
                 resp.EnsureSuccessStatusCode(); // This will throw with the status code
             }
 
-            LogStream("Getting response stream...");
-            await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
+            // For debugging: read raw response first to see what we're getting
+            var rawResponse = await resp.Content.ReadAsStringAsync(ct);
+            LogStream($"Raw response length={rawResponse.Length}, first 500 chars: {rawResponse.Substring(0, Math.Min(500, rawResponse.Length))}");
+            
+            // If empty or HTML, log and handle
+            if (string.IsNullOrEmpty(rawResponse))
+            {
+                LogStream("ERROR: Empty response from API");
+                throw new InvalidOperationException("API returned empty response");
+            }
+            
+            if (rawResponse.TrimStart().StartsWith("<"))
+            {
+                LogStream($"ERROR: API returned HTML instead of JSON/SSE: {rawResponse.Substring(0, Math.Min(200, rawResponse.Length))}");
+                throw new InvalidOperationException($"API returned HTML instead of JSON. Response: {rawResponse.Substring(0, Math.Min(500, rawResponse.Length))}");
+            }
+
+            LogStream("Processing response as SSE stream...");
+            using var reader = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawResponse)));
             LogStream("Stream reader created");
 
             var sbContent = new StringBuilder();
