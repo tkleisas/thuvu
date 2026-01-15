@@ -55,6 +55,25 @@ namespace thuvu.Web.Services
         }
         
         /// <summary>
+        /// Gets the HttpClient for the current model. If the model has its own HostUrl/AuthToken,
+        /// creates a dedicated client; otherwise uses the default shared client.
+        /// </summary>
+        private HttpClient GetHttpClientForCurrentModel()
+        {
+            var modelId = AgentConfig.Config.Model;
+            var modelConfig = Models.ModelRegistry.Instance?.GetModel(modelId);
+            
+            if (modelConfig != null && !string.IsNullOrEmpty(modelConfig.HostUrl))
+            {
+                // Model has its own endpoint config - create a dedicated client
+                return modelConfig.CreateHttpClient();
+            }
+            
+            // Fall back to default shared client
+            return _http;
+        }
+        
+        /// <summary>
         /// Set up async permission handler for a specific session.
         /// Called when starting message processing to wire up the permission callback.
         /// </summary>
@@ -235,8 +254,11 @@ namespace thuvu.Web.Services
                 {
                     try
                     {
+                        // Get the appropriate HttpClient for the current model
+                        var httpClient = GetHttpClientForCurrentModel();
+                        
                         var result = await AgentLoop.CompleteWithToolsStreamingAsync(
-                            _http,
+                            httpClient,
                             AgentConfig.Config.Model,
                             session.Messages,
                             session.Tools,
@@ -340,7 +362,7 @@ namespace thuvu.Web.Services
                             });
 
                             var summarized = await AgentLoop.HandleContextSizeAsync(
-                                _http,
+                                httpClient,
                                 AgentConfig.Config.Model,
                                 session.Messages,
                                 linkedCt,
