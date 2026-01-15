@@ -198,26 +198,177 @@ cd docker && docker-compose up -d postgres-rag
 ```
 
 ### Code Indexing
-Local SQLite-based code indexing for fast symbol search:
+Local SQLite-based code indexing for fast symbol search across multiple languages. The database is created per-project in the work directory.
+
+**Supported Languages:**
+- C# (.cs) - Full Roslyn-based parsing with accurate symbol extraction
+- TypeScript/JavaScript (.ts, .tsx, .js, .jsx) - Regex-based parsing
+- Python (.py, .pyw, .pyi) - Regex-based parsing
+- Go (.go) - Regex-based parsing
+
+**Symbol Types Extracted:**
+- Classes, interfaces, structs, enums
+- Methods, functions, constructors
+- Properties, fields, constants
+- Namespaces, modules
 
 ```bash
-# Index the current project
+# Index the current project (recursive by default)
 code_index({"path": "."})
 
-# Search for classes
-code_query({"search": "Controller", "kind": "class"})
+# Index specific directory with file pattern
+code_index({"path": "src/", "pattern": "*.cs"})
+
+# Search for symbols by name
+code_query({"search": "Controller"})
+
+# Search by symbol kind
+code_query({"search": "User", "kind": "class"})
 
 # Get all symbols in a file
 code_query({"file": "src/Services/UserService.cs"})
 
-# Store context for later
-context_store({"key": "api_pattern", "value": "Use REST with JSON", "category": "decision"})
+# Full-text search in symbol names
+code_query({"search": "Handle", "kind": "method"})
 
-# Retrieve context
+# Get index statistics
+index_stats({})
+
+# Clear all indexed data
+index_clear({})
+```
+
+**Context Storage:**
+Store and retrieve context/decisions for later use:
+
+```bash
+# Store architectural decisions
+context_store({"key": "api_pattern", "value": "Use REST with JSON responses", "category": "decision"})
+
+# Store technical notes
+context_store({"key": "auth_flow", "value": "JWT tokens with refresh", "category": "architecture"})
+
+# Retrieve by key
+context_get({"key": "api_pattern"})
+
+# Retrieve all in a category
 context_get({"category": "decision"})
+
+# List all stored context
+context_get({})
 ```
 
 See [docs/code-indexing.md](docs/code-indexing.md) for full documentation.
+
+### Multi-Agent Communication API
+Run THUVU as an API server that accepts jobs from other agents. This enables distributed task execution across multiple specialized agents.
+
+**Starting Agent API Mode:**
+
+```bash
+# Start agent with API enabled on default port (5001)
+dotnet run -- --api
+
+# Start with custom port
+dotnet run -- --api --port 5002
+
+# Start with custom configuration file
+dotnet run -- --api --config agent2.json --port 5002
+
+# Combine with web UI
+dotnet run -- --web --api --port 5001
+```
+
+**Agent Dashboard:**
+Access `http://localhost:5001/agent` to view:
+- Current job status and real-time journal updates
+- Recent job history (last 50 jobs)
+- Agent configuration and capabilities
+
+**API Endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/agent/info` | GET | Get agent name, status, and capabilities |
+| `/api/jobs` | POST | Submit a new job (returns job ID) |
+| `/api/jobs/current` | GET | Get current job status and journal |
+| `/api/jobs/{id}` | GET | Get specific job by ID |
+| `/api/jobs/{id}` | DELETE | Cancel a running job |
+
+**Job Lifecycle:**
+1. **Submit**: POST `/api/jobs` with `{"prompt": "your task"}` - returns job ID immediately
+2. **Monitor**: GET `/api/jobs/current` to check status and read journal entries
+3. **Result**: GET `/api/jobs/{id}` when status is "completed" to get the result
+
+Job states: `pending` → `running` → `completed` | `failed` | `cancelled`
+
+**Agent-to-Agent Tools:**
+When an agent needs to delegate work to another agent:
+
+```bash
+# List known agents
+agent_list({})
+
+# Submit a job to another agent
+agent_submit({"agent": "Agent-2", "prompt": "Analyze the authentication module"})
+
+# Check job status and read journal
+agent_status({"agent": "Agent-2", "job_id": "abc123"})
+
+# Get completed result
+agent_result({"agent": "Agent-2", "job_id": "abc123"})
+
+# Cancel a running job
+agent_cancel({"agent": "Agent-2", "job_id": "abc123"})
+```
+
+**Configuration:**
+Add `AgentApiConfig` section to `appsettings.json`:
+
+```json
+{
+  "AgentApiConfig": {
+    "Enabled": false,
+    "Port": 5001,
+    "AgentName": "Agent-1",
+    "AgentDescription": "Primary development agent",
+    "UseHttps": false,
+    "BearerToken": "optional-secret-token",
+    "MaxJobHistory": 50,
+    "KnownAgents": [
+      {
+        "Name": "Agent-2",
+        "Url": "http://localhost:5002",
+        "BearerToken": ""
+      },
+      {
+        "Name": "Agent-3",
+        "Url": "http://localhost:5003",
+        "BearerToken": ""
+      }
+    ]
+  }
+}
+```
+
+**Multi-Agent Setup Example:**
+
+```bash
+# Terminal 1: Start primary agent
+dotnet run -- --api --port 5001 --config agent1.json
+
+# Terminal 2: Start secondary agent
+dotnet run -- --api --port 5002 --config agent2.json
+
+# Terminal 3: Start orchestrator agent
+dotnet run -- --api --port 5003 --config orchestrator.json
+```
+
+Each agent can have its own:
+- Configuration file with different models
+- Work directory for isolation
+- Known agents list for communication
+- Bearer token for authentication
 
 ### MCP Code Execution
 Execute TypeScript in a secure Deno sandbox with access to all tools:
@@ -230,6 +381,19 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 # Run TypeScript code
 /mcp run "const files = await searchFiles('**/*.cs'); return files.length;"
 ```
+
+## CLI Flags Reference
+
+| Flag | Description |
+|------|-------------|
+| `--tui` | Start with Terminal UI (multi-panel interface) |
+| `--web` | Start web server with Blazor UI at http://localhost:5000 |
+| `--api` | Enable Agent API server for multi-agent communication |
+| `--port <number>` | Override API server port (default: 5001) |
+| `--config <path>` | Use custom configuration file |
+| `--test-sqlite` | Run SQLite code indexing integration tests |
+| `--test-ui` | Run UI automation tests |
+| `--test-process` | Run process management tests |
 
 ## Commands Reference
 
@@ -260,6 +424,7 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 
 ## Available Tools
 
+### File & Code Tools
 | Tool | Description | Risk Level |
 |------|-------------|------------|
 | `search_files` | Glob search with optional content query | ReadOnly |
@@ -268,19 +433,35 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 | `apply_patch` | Apply unified diff patches | Write |
 | `run_process` | Execute whitelisted commands | Write |
 | `execute_code` | Run TypeScript in Deno sandbox | Write |
+
+### .NET Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
 | `dotnet_restore` | NuGet restore | Write |
 | `dotnet_build` | Build solution/project | Write |
 | `dotnet_test` | Run tests | Write |
 | `dotnet_run` | Run application (blocking with timeout) | Write |
 | `dotnet_new` | Create new project | Write |
+
+### Git & Package Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
 | `git_status` | Branch and working tree status | ReadOnly |
 | `git_diff` | Show file diffs | ReadOnly |
 | `nuget_search` | Search packages | ReadOnly |
 | `nuget_add` | Add package to project | Write |
+
+### RAG Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
 | `rag_index` | Index files for semantic search | Write |
 | `rag_search` | Query indexed content | ReadOnly |
 | `rag_stats` | Index statistics | ReadOnly |
 | `rag_clear` | Clear index | Write |
+
+### Browser Automation Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
 | `browser_navigate` | Navigate to URL | Write |
 | `browser_click` | Click element | Write |
 | `browser_type` | Type text into element | Write |
@@ -288,25 +469,46 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 | `browser_screenshot` | Capture screenshot | ReadOnly |
 | `browser_script` | Execute JavaScript | Write |
 | `browser_close` | Close browser | Write |
+
+### Process Management Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
 | `process_start` | Start background process (non-blocking) | Write |
 | `process_read` | Read process stdout/stderr | ReadOnly |
 | `process_write` | Write to process stdin | Write |
 | `process_status` | Get process status or list sessions | ReadOnly |
 | `process_stop` | Stop a background process | Write |
-| `ui_capture` | Screenshot (screen/window/region) with optional vision analysis | UI |
-| `ui_list_windows` | List open windows | UI |
-| `ui_focus_window` | Focus/activate a window | UI |
-| `ui_click` | Mouse click at coordinates | UI |
-| `ui_type` | Keyboard input (text/shortcuts) | UI |
-| `ui_mouse_move` | Move cursor | UI |
-| `ui_get_element` | Get UI element at point or by selector | UI |
-| `ui_wait` | Wait for window or element | UI |
-| `code_index` | Index source code for symbol search | Write |
+
+### UI Automation Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
+| `ui_capture` | Screenshot (screen/window/region) with optional vision analysis | UIAutomation |
+| `ui_list_windows` | List open windows | UIAutomation |
+| `ui_focus_window` | Focus/activate a window | UIAutomation |
+| `ui_click` | Mouse click at coordinates | UIAutomation |
+| `ui_type` | Keyboard input (text/shortcuts) | UIAutomation |
+| `ui_mouse_move` | Move cursor | UIAutomation |
+| `ui_get_element` | Get UI element at point or by selector | UIAutomation |
+| `ui_wait` | Wait for window or element | UIAutomation |
+
+### Code Indexing Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
+| `code_index` | Index source code for symbol search (C#, TS, Python, Go) | Write |
 | `code_query` | Search indexed symbols (classes, methods, etc.) | ReadOnly |
 | `context_store` | Store context/memory for later retrieval | Write |
 | `context_get` | Retrieve stored context by key/category | ReadOnly |
 | `index_stats` | Get code index statistics | ReadOnly |
 | `index_clear` | Clear all indexed data | Write |
+
+### Agent Communication Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
+| `agent_list` | List known agents and their status | AgentCommunication |
+| `agent_submit` | Submit a job to another agent | AgentCommunication |
+| `agent_status` | Get job status and journal from another agent | AgentCommunication |
+| `agent_result` | Get completed job result from another agent | AgentCommunication |
+| `agent_cancel` | Cancel a running job on another agent | AgentCommunication |
 
 ## Configuration
 
@@ -417,6 +619,8 @@ thuvu/
 - [Docker Deployment](docker/README.md) - Multi-container Docker setup
 - [System Prompts](prompts/README.md) - Custom prompt templates
 - [Multi-Agent Orchestration](docs/orchestration.md) - Task decomposition and parallel execution
+- [Code Indexing](docs/code-indexing.md) - SQLite-based symbol search
+- [UI Automation](docs/ui-automation-plan.md) - Screen capture and input control
 
 ## Why the name THUVU?
 The name is a reference to the late and great Greek comedian Thanassis Veggos who made a 2-part film series 
@@ -432,6 +636,40 @@ secret agent school and messing up all the tasks he was assigned.
 - Improve browser automation with more actions
 
 ## Recent Changes (January 2026)
+
+### Multi-Agent Communication API (NEW)
+Run THUVU as an API server that accepts jobs from other agents:
+
+- **Agent API Mode**: Start with `--api` flag to enable REST API server
+- **Job Management**: Submit jobs, monitor progress via journal, get results
+- **Agent Dashboard**: Web UI at `/agent` showing current job, journal, and history
+- **Inter-Agent Tools**: `agent_list`, `agent_submit`, `agent_status`, `agent_result`, `agent_cancel`
+- **SQLite Persistence**: Jobs persist across restarts with full journal history
+- **Authentication**: Optional Bearer token authentication for secure communication
+- **CLI Flags**: `--api`, `--port`, `--config` for flexible multi-agent setups
+
+**Quick Start:**
+```bash
+# Start agent with API
+dotnet run -- --api --port 5001
+
+# Access dashboard at http://localhost:5001/agent
+```
+
+### SQLite Code Indexing (NEW)
+Local code indexing for fast symbol search:
+
+- **Multi-Language Support**: C# (Roslyn), TypeScript, Python, Go (regex-based)
+- **Symbol Extraction**: Classes, methods, properties, functions, interfaces
+- **Per-Project Database**: SQLite database created in work directory
+- **Context Storage**: Store and retrieve architectural decisions and notes
+- **Incremental Indexing**: Skip unchanged files based on content hash
+
+**Tools Added:**
+- `code_index` - Index source files
+- `code_query` - Search symbols by name, kind, or file
+- `context_store` / `context_get` - Store and retrieve context
+- `index_stats` / `index_clear` - Manage index
 
 ### Vision/Image Analysis
 Added support for analyzing images using vision-capable LLMs:
@@ -482,6 +720,23 @@ Fixed critical issues with the TypeScript sandbox execution:
 - `wwwroot/js/thuvu.js` - Image clipboard/file reading, auto-resize
 - `wwwroot/css/app.css` - Image attachment preview styles
 - `mcp/runtime/sandbox.ts` - Console.log capture fix
+
+### Files Added/Changed for Agent Communication & Code Indexing
+- `Models/AgentApiConfig.cs` (new) - Agent API configuration
+- `Models/AgentJobService.cs` (new) - Job management with SQLite persistence
+- `Tools/AgentCommunicationToolImpl.cs` (new) - Inter-agent communication tools
+- `Web/AgentApiEndpoints.cs` (new) - REST API endpoints for agent communication
+- `Web/Components/AgentDashboard.razor` (new) - Agent status dashboard
+- `Models/SqliteConfig.cs` (new) - SQLite configuration
+- `Tools/SqliteService.cs` (new) - SQLite database service
+- `Tools/SqliteToolImpl.cs` (new) - Code indexing tools
+- `Tools/CodeIndexer.cs` (new) - Multi-language code parser
+- `Tools/Parsers/` (new) - Language-specific parsers (Python, TypeScript, Go)
+- `Program.cs` - Added --api, --port, --config CLI flags
+- `Web/WebHost.cs` - Agent API endpoint mapping
+- `Models/PermissionManager.cs` - Added AgentCommunication permission category
+- `Tools/BuildTools.cs` - Added agent communication and code indexing tool definitions
+- `ToolExecutor.cs` - Added dispatch logic for new tools
 
 ## Performance
 Tested on ThinkPad L14 with Ryzen 5 Pro 4650U and 64GB RAM running Windows 11. Works well with local LLMs running mainly on CPU, though cloud APIs (DeepSeek) provide faster responses for complex tasks.
