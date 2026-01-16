@@ -289,8 +289,8 @@ namespace thuvu.Web.Services
                 if (sessionData == null)
                     return null;
 
-                // Load messages from the messages table
-                var messageRecords = await SqliteService.Instance.GetSessionMessagesAsync(sessionId);
+                // Load active messages (respecting summarization) from the messages table
+                var messageRecords = await SqliteService.Instance.GetActiveSessionMessagesAsync(sessionId);
                 var messages = ReconstructMessagesFromRecords(messageRecords, sessionData.SystemPrompt);
 
                 return new WebAgentSession
@@ -312,6 +312,7 @@ namespace thuvu.Web.Services
 
         /// <summary>
         /// Reconstruct ChatMessage list from MessageRecord entries.
+        /// Handles summarization by converting summary messages to context.
         /// </summary>
         private static List<ChatMessage> ReconstructMessagesFromRecords(List<MessageRecord> records, string? systemPrompt)
         {
@@ -326,6 +327,14 @@ namespace thuvu.Web.Services
             {
                 switch (record.MessageType)
                 {
+                    case "summary":
+                        // Convert summary to context messages (same format as SummarizeConversationAsync output)
+                        if (!string.IsNullOrEmpty(record.ResponseContent))
+                        {
+                            messages.Add(new ChatMessage("user", $"[CONVERSATION SUMMARY - Context from previous messages]\n{record.ResponseContent}\n\n[END SUMMARY - Continue from here]"));
+                            messages.Add(new ChatMessage("assistant", "I understand. I have the context from the summarized conversation. I'll continue from where we left off."));
+                        }
+                        break;
                     case "user":
                         if (!string.IsNullOrEmpty(record.RequestContent))
                             messages.Add(new ChatMessage("user", record.RequestContent));
@@ -334,9 +343,14 @@ namespace thuvu.Web.Services
                         if (!string.IsNullOrEmpty(record.ResponseContent))
                             messages.Add(new ChatMessage("assistant", record.ResponseContent));
                         break;
+                    case "tool_call":
+                        // Tool calls are typically paired with their results, handle as assistant message if it has content
+                        if (!string.IsNullOrEmpty(record.ResponseContent))
+                            messages.Add(new ChatMessage("assistant", record.ResponseContent));
+                        break;
                     case "tool_result":
                         if (!string.IsNullOrEmpty(record.ToolResultJson))
-                            messages.Add(new ChatMessage("tool", record.ToolResultJson));
+                            messages.Add(new ChatMessage("tool", record.ToolResultJson) { Name = record.ToolName });
                         break;
                 }
             }
@@ -778,7 +792,17 @@ namespace thuvu.Web.Services
                                 AgentConfig.Config.Model,
                                 session.Messages,
                                 linkedCt,
-                                status => writer.TryWrite(new AgentStreamEvent { Type = "status", Data = status })
+                                status => writer.TryWrite(new AgentStreamEvent { Type = "status", Data = status }),
+                                onSummarized: async (summaryContent) =>
+                                {
+                                    // Record summarization to database
+                                    var messageIds = await SqliteService.Instance.GetNonSummarizedMessageIdsAsync(sessionId);
+                                    if (messageIds.Count > 0)
+                                    {
+                                        await SqliteService.Instance.RecordSummarizationAsync(sessionId, summaryContent, messageIds);
+                                        AgentLogger.LogInfo("Recorded summarization for session {SessionId}, {Count} messages summarized", sessionId, messageIds.Count);
+                                    }
+                                }
                             );
 
                             if (summarized)

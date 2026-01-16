@@ -184,10 +184,15 @@ namespace thuvu.Tools
                     status TEXT DEFAULT 'pending', -- 'pending', 'running', 'completed', 'failed', 'cancelled', 'timeout'
                     error_message TEXT,
                     
+                    -- Summarization tracking
+                    is_summarized INTEGER DEFAULT 0, -- 1 if this message was included in a summary
+                    summary_id INTEGER,              -- Reference to the summary message that replaced this
+                    
                     -- Metadata
                     metadata_json TEXT,
                     
                     FOREIGN KEY (parent_message_id) REFERENCES messages(id),
+                    FOREIGN KEY (summary_id) REFERENCES messages(id),
                     FOREIGN KEY (session_id) REFERENCES sessions(session_id)
                 );
 
@@ -208,6 +213,7 @@ namespace thuvu.Tools
                 CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(agent_role);
                 CREATE INDEX IF NOT EXISTS idx_messages_depth ON messages(agent_depth);
                 CREATE INDEX IF NOT EXISTS idx_messages_started ON messages(started_at);
+                CREATE INDEX IF NOT EXISTS idx_messages_summarized ON messages(is_summarized);
                 CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
                 CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type);
             ";
@@ -1043,6 +1049,198 @@ namespace thuvu.Tools
         }
 
         /// <summary>
+        /// Record a summarization event: mark messages as summarized and create a summary message.
+        /// Returns the ID of the new summary message.
+        /// </summary>
+        public async Task<long> RecordSummarizationAsync(
+            string sessionId,
+            string summaryContent,
+            List<long> summarizedMessageIds,
+            CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            var transaction = conn.BeginTransaction();
+            
+            try
+            {
+                // 1. Insert the summary message
+                await using var insertCmd = conn.CreateCommand();
+                insertCmd.Transaction = transaction;
+                insertCmd.CommandText = @"
+                    INSERT INTO messages (
+                        session_id, started_at, agent_role, agent_depth, model_id,
+                        message_type, response_content, status
+                    )
+                    VALUES (
+                        @session_id, @started_at, 'main', 0, @model_id,
+                        'summary', @response_content, 'completed'
+                    )
+                    RETURNING id
+                ";
+                
+                insertCmd.Parameters.AddWithValue("@session_id", sessionId);
+                insertCmd.Parameters.AddWithValue("@started_at", DateTime.Now.ToString("o"));
+                insertCmd.Parameters.AddWithValue("@model_id", (object?)AgentConfig.Config.Model ?? DBNull.Value);
+                insertCmd.Parameters.AddWithValue("@response_content", summaryContent);
+                
+                var summaryId = Convert.ToInt64(await insertCmd.ExecuteScalarAsync(ct));
+                
+                // 2. Mark all summarized messages
+                if (summarizedMessageIds.Count > 0)
+                {
+                    await using var updateCmd = conn.CreateCommand();
+                    updateCmd.Transaction = transaction;
+                    
+                    // Build parameterized IN clause
+                    var idParams = string.Join(",", summarizedMessageIds.Select((_, i) => $"@id{i}"));
+                    updateCmd.CommandText = $@"
+                        UPDATE messages SET
+                            is_summarized = 1,
+                            summary_id = @summary_id
+                        WHERE id IN ({idParams})
+                    ";
+                    
+                    updateCmd.Parameters.AddWithValue("@summary_id", summaryId);
+                    for (int i = 0; i < summarizedMessageIds.Count; i++)
+                    {
+                        updateCmd.Parameters.AddWithValue($"@id{i}", summarizedMessageIds[i]);
+                    }
+                    
+                    await updateCmd.ExecuteNonQueryAsync(ct);
+                }
+                
+                transaction.Commit();
+                return summaryId;
+            }
+            catch
+            {
+                transaction.Rollback();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Get messages for context reconstruction, respecting summarization.
+        /// Returns only non-summarized messages, plus the latest summary if one exists.
+        /// </summary>
+        public async Task<List<MessageRecord>> GetActiveSessionMessagesAsync(string sessionId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            
+            // First, check if there's a summary message
+            await using var summaryCmd = conn.CreateCommand();
+            summaryCmd.CommandText = @"
+                SELECT id, session_id, parent_message_id, started_at, completed_at, duration_ms,
+                       agent_role, agent_depth, model_id, system_prompt_id, message_type,
+                       request_content, context_mode, context_token_count, response_content, response_summary,
+                       tool_name, tool_args_json, tool_result_json, files_modified_json, files_created_json,
+                       prompt_tokens, completion_tokens, total_tokens, iteration_number,
+                       max_iterations, max_duration_ms, bailout_reason, status, error_message, metadata_json,
+                       is_summarized, summary_id
+                FROM messages
+                WHERE session_id = @session_id AND message_type = 'summary'
+                ORDER BY started_at DESC
+                LIMIT 1
+            ";
+            summaryCmd.Parameters.AddWithValue("@session_id", sessionId);
+            
+            MessageRecord? latestSummary = null;
+            await using (var reader = await summaryCmd.ExecuteReaderAsync(ct))
+            {
+                if (await reader.ReadAsync(ct))
+                {
+                    latestSummary = ReadMessageWithSummaryFields(reader);
+                }
+            }
+            
+            var results = new List<MessageRecord>();
+            
+            if (latestSummary != null)
+            {
+                // Add the summary first
+                results.Add(latestSummary);
+                
+                // Then get all non-summarized messages after the summary
+                await using var afterCmd = conn.CreateCommand();
+                afterCmd.CommandText = @"
+                    SELECT id, session_id, parent_message_id, started_at, completed_at, duration_ms,
+                           agent_role, agent_depth, model_id, system_prompt_id, message_type,
+                           request_content, context_mode, context_token_count, response_content, response_summary,
+                           tool_name, tool_args_json, tool_result_json, files_modified_json, files_created_json,
+                           prompt_tokens, completion_tokens, total_tokens, iteration_number,
+                           max_iterations, max_duration_ms, bailout_reason, status, error_message, metadata_json,
+                           is_summarized, summary_id
+                    FROM messages
+                    WHERE session_id = @session_id 
+                      AND is_summarized = 0
+                      AND message_type != 'summary'
+                      AND started_at > @summary_time
+                    ORDER BY started_at ASC
+                ";
+                afterCmd.Parameters.AddWithValue("@session_id", sessionId);
+                afterCmd.Parameters.AddWithValue("@summary_time", latestSummary.StartedAt.ToString("o"));
+                
+                await using var afterReader = await afterCmd.ExecuteReaderAsync(ct);
+                while (await afterReader.ReadAsync(ct))
+                {
+                    results.Add(ReadMessageWithSummaryFields(afterReader));
+                }
+            }
+            else
+            {
+                // No summary, get all messages
+                await using var allCmd = conn.CreateCommand();
+                allCmd.CommandText = @"
+                    SELECT id, session_id, parent_message_id, started_at, completed_at, duration_ms,
+                           agent_role, agent_depth, model_id, system_prompt_id, message_type,
+                           request_content, context_mode, context_token_count, response_content, response_summary,
+                           tool_name, tool_args_json, tool_result_json, files_modified_json, files_created_json,
+                           prompt_tokens, completion_tokens, total_tokens, iteration_number,
+                           max_iterations, max_duration_ms, bailout_reason, status, error_message, metadata_json,
+                           is_summarized, summary_id
+                    FROM messages
+                    WHERE session_id = @session_id
+                    ORDER BY started_at ASC
+                ";
+                allCmd.Parameters.AddWithValue("@session_id", sessionId);
+                
+                await using var allReader = await allCmd.ExecuteReaderAsync(ct);
+                while (await allReader.ReadAsync(ct))
+                {
+                    results.Add(ReadMessageWithSummaryFields(allReader));
+                }
+            }
+            
+            return results;
+        }
+
+        /// <summary>
+        /// Get IDs of all non-summarized messages in a session (for marking during summarization).
+        /// </summary>
+        public async Task<List<long>> GetNonSummarizedMessageIdsAsync(string sessionId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+            
+            cmd.CommandText = @"
+                SELECT id FROM messages
+                WHERE session_id = @session_id 
+                  AND is_summarized = 0
+                  AND message_type NOT IN ('system', 'summary')
+                ORDER BY started_at ASC
+            ";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+            
+            var ids = new List<long>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                ids.Add(reader.GetInt64(0));
+            }
+            return ids;
+        }
+
+        /// <summary>
         /// Get all messages for a session, ordered by start time.
         /// </summary>
         public async Task<List<MessageRecord>> GetSessionMessagesAsync(string sessionId, CancellationToken ct = default)
@@ -1205,6 +1403,50 @@ namespace thuvu.Tools
             };
         }
 
+        /// <summary>
+        /// Read a message record including summarization fields (columns 31-32).
+        /// </summary>
+        private static MessageRecord ReadMessageWithSummaryFields(SqliteDataReader reader)
+        {
+            var msg = new MessageRecord
+            {
+                Id = reader.GetInt64(0),
+                SessionId = reader.GetString(1),
+                ParentMessageId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                StartedAt = DateTime.Parse(reader.GetString(3)),
+                CompletedAt = reader.IsDBNull(4) ? null : DateTime.Parse(reader.GetString(4)),
+                DurationMs = reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                AgentRole = reader.IsDBNull(6) ? null : reader.GetString(6),
+                AgentDepth = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+                ModelId = reader.IsDBNull(8) ? null : reader.GetString(8),
+                SystemPromptId = reader.IsDBNull(9) ? null : reader.GetString(9),
+                MessageType = reader.GetString(10),
+                RequestContent = reader.IsDBNull(11) ? null : reader.GetString(11),
+                ContextMode = reader.IsDBNull(12) ? null : reader.GetString(12),
+                ContextTokenCount = reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                ResponseContent = reader.IsDBNull(14) ? null : reader.GetString(14),
+                ResponseSummary = reader.IsDBNull(15) ? null : reader.GetString(15),
+                ToolName = reader.IsDBNull(16) ? null : reader.GetString(16),
+                ToolArgsJson = reader.IsDBNull(17) ? null : reader.GetString(17),
+                ToolResultJson = reader.IsDBNull(18) ? null : reader.GetString(18),
+                FilesModifiedJson = reader.IsDBNull(19) ? null : reader.GetString(19),
+                FilesCreatedJson = reader.IsDBNull(20) ? null : reader.GetString(20),
+                PromptTokens = reader.IsDBNull(21) ? null : reader.GetInt32(21),
+                CompletionTokens = reader.IsDBNull(22) ? null : reader.GetInt32(22),
+                TotalTokens = reader.IsDBNull(23) ? null : reader.GetInt32(23),
+                IterationNumber = reader.IsDBNull(24) ? 0 : reader.GetInt32(24),
+                MaxIterations = reader.IsDBNull(25) ? null : reader.GetInt32(25),
+                MaxDurationMs = reader.IsDBNull(26) ? null : reader.GetInt64(26),
+                BailoutReason = reader.IsDBNull(27) ? null : reader.GetString(27),
+                Status = reader.GetString(28),
+                ErrorMessage = reader.IsDBNull(29) ? null : reader.GetString(29),
+                MetadataJson = reader.IsDBNull(30) ? null : reader.GetString(30),
+                IsSummarized = reader.FieldCount > 31 && !reader.IsDBNull(31) && reader.GetInt32(31) == 1,
+                SummaryId = reader.FieldCount > 32 && !reader.IsDBNull(32) ? reader.GetInt64(32) : null
+            };
+            return msg;
+        }
+
         #endregion
     }
 
@@ -1311,7 +1553,7 @@ namespace thuvu.Tools
         public string? SystemPromptId { get; set; }
         
         // Message type and direction
-        public string MessageType { get; set; } = "user"; // 'user', 'assistant', 'tool_call', 'tool_result', 'delegation', 'system'
+        public string MessageType { get; set; } = "user"; // 'user', 'assistant', 'tool_call', 'tool_result', 'delegation', 'summary', 'system'
         
         // Request
         public string? RequestContent { get; set; }
@@ -1347,6 +1589,10 @@ namespace thuvu.Tools
         // Status
         public string Status { get; set; } = "pending"; // 'pending', 'running', 'completed', 'failed', 'cancelled', 'timeout'
         public string? ErrorMessage { get; set; }
+        
+        // Summarization tracking
+        public bool IsSummarized { get; set; } // True if this message was included in a summary
+        public long? SummaryId { get; set; }   // Reference to the summary message that replaced this
         
         // Metadata
         public string? MetadataJson { get; set; }

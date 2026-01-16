@@ -648,7 +648,7 @@ namespace thuvu
                 AppendActionText("Summarizing conversation...");
                 try
                 {
-                    var success = await AgentLoop.SummarizeConversationAsync(
+                    var (success, _) = await AgentLoop.SummarizeConversationAsync(
                         _http, AgentConfig.Config.Model, _messages, CancellationToken.None,
                         s => Application.Invoke(() => AppendActionText($"  {s}")));
                     

@@ -174,7 +174,7 @@ namespace thuvu.Tui
                 _appendText("Summarizing conversation...", false);
                 try
                 {
-                    var success = await AgentLoop.SummarizeConversationAsync(
+                    var (success, _) = await AgentLoop.SummarizeConversationAsync(
                         _http, AgentConfig.Config.Model, messages, CancellationToken.None,
                         s => _appendText($"  {s}", false));
                     

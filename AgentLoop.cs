@@ -472,8 +472,9 @@ namespace thuvu
         /// <summary>
         /// Summarize the conversation to reduce context size.
         /// Keeps the system prompt and creates a summary of the conversation so far.
+        /// Returns (success, summaryContent) tuple.
         /// </summary>
-        public static async Task<bool> SummarizeConversationAsync(
+        public static async Task<(bool Success, string? SummaryContent)> SummarizeConversationAsync(
             HttpClient http,
             string model,
             List<ChatMessage> messages,
@@ -483,7 +484,7 @@ namespace thuvu
             if (messages.Count < 3) // Need at least system + some conversation
             {
                 LogAgent("Not enough messages to summarize");
-                return false;
+                return (false, null);
             }
 
             onStatus?.Invoke("Auto-summarizing conversation to reduce context size...");
@@ -542,7 +543,7 @@ namespace thuvu
                 if (string.IsNullOrEmpty(summary))
                 {
                     LogAgent("Summarization returned empty result");
-                    return false;
+                    return (false, null);
                 }
 
                 LogAgent($"Generated summary ({summary.Length} chars)");
@@ -562,13 +563,13 @@ namespace thuvu
                 LogAgent($"Conversation summarized. New message count: {messages.Count}");
                 onStatus?.Invoke($"Conversation summarized. Reduced from many messages to {messages.Count}.");
                 
-                return true;
+                return (true, summary);
             }
             catch (Exception ex)
             {
                 LogAgent($"Summarization failed: {ex.Message}");
                 onStatus?.Invoke($"Summarization failed: {ex.Message}");
-                return false;
+                return (false, null);
             }
         }
 
@@ -637,7 +638,8 @@ namespace thuvu
             string model,
             List<ChatMessage> messages,
             CancellationToken ct,
-            Action<string>? onStatus = null)
+            Action<string>? onStatus = null,
+            Func<string, Task>? onSummarized = null)
         {
             var tracker = Models.AgentContext.GetEffectiveTokenTracker();
             
@@ -652,7 +654,20 @@ namespace thuvu
             onStatus?.Invoke($"⚠️ Context usage at {tracker.UsagePercent:P0}, attempting to reduce...");
 
             // First try summarization
-            var summarized = await SummarizeConversationAsync(http, model, messages, ct, onStatus);
+            var (summarized, summaryContent) = await SummarizeConversationAsync(http, model, messages, ct, onStatus);
+            
+            // If summarization succeeded and we have a callback, record it
+            if (summarized && !string.IsNullOrEmpty(summaryContent) && onSummarized != null)
+            {
+                try
+                {
+                    await onSummarized(summaryContent);
+                }
+                catch (Exception ex)
+                {
+                    LogAgent($"Failed to record summarization: {ex.Message}");
+                }
+            }
             
             // If still over truncation threshold, truncate
             if (tracker.UsagePercent >= TruncationThreshold)

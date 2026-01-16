@@ -675,7 +675,7 @@ namespace thuvu
             if (user.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine("Summarizing conversation...");
-                var success = await AgentLoop.SummarizeConversationAsync(
+                var (success, _) = await AgentLoop.SummarizeConversationAsync(
                     http, AgentConfig.Config.Model, messages, ct, 
                     s => Console.WriteLine($"  {s}"));
                 if (success)
