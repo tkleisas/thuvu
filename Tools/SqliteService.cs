@@ -222,8 +222,69 @@ namespace thuvu.Tools
             cmd.CommandText = schema;
             await cmd.ExecuteNonQueryAsync(ct);
 
+            // Run migrations to add columns that may be missing in existing databases
+            await RunMigrationsAsync(conn, ct);
+
             _initialized = true;
             AgentLogger.LogInfo("SQLite database initialized at {Path}", dbPath);
+        }
+
+        /// <summary>
+        /// Run database migrations to add missing columns to existing tables.
+        /// This allows existing databases to be upgraded without losing data.
+        /// </summary>
+        private async Task RunMigrationsAsync(SqliteConnection conn, CancellationToken ct)
+        {
+            // Get existing columns in messages table
+            var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var pragmaCmd = conn.CreateCommand())
+            {
+                pragmaCmd.CommandText = "PRAGMA table_info(messages);";
+                await using var reader = await pragmaCmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    existingColumns.Add(reader.GetString(1)); // column name is at index 1
+                }
+            }
+
+            // Migration: Add is_summarized column if missing
+            if (!existingColumns.Contains("is_summarized"))
+            {
+                await using var alterCmd = conn.CreateCommand();
+                alterCmd.CommandText = "ALTER TABLE messages ADD COLUMN is_summarized INTEGER DEFAULT 0;";
+                await alterCmd.ExecuteNonQueryAsync(ct);
+                AgentLogger.LogInfo("Migration: Added is_summarized column to messages table");
+            }
+
+            // Migration: Add summary_id column if missing
+            if (!existingColumns.Contains("summary_id"))
+            {
+                await using var alterCmd = conn.CreateCommand();
+                alterCmd.CommandText = "ALTER TABLE messages ADD COLUMN summary_id INTEGER;";
+                await alterCmd.ExecuteNonQueryAsync(ct);
+                AgentLogger.LogInfo("Migration: Added summary_id column to messages table");
+            }
+
+            // Get existing columns in sessions table
+            existingColumns.Clear();
+            await using (var pragmaCmd = conn.CreateCommand())
+            {
+                pragmaCmd.CommandText = "PRAGMA table_info(sessions);";
+                await using var reader = await pragmaCmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    existingColumns.Add(reader.GetString(1));
+                }
+            }
+
+            // Migration: Add is_active column if missing
+            if (!existingColumns.Contains("is_active"))
+            {
+                await using var alterCmd = conn.CreateCommand();
+                alterCmd.CommandText = "ALTER TABLE sessions ADD COLUMN is_active INTEGER DEFAULT 0;";
+                await alterCmd.ExecuteNonQueryAsync(ct);
+                AgentLogger.LogInfo("Migration: Added is_active column to sessions table");
+            }
         }
 
         /// <summary>
