@@ -1072,6 +1072,36 @@ and single characters/numbers (a-z, 0-9).",
                     }
                     """).RootElement
                 }
+            },
+
+            // --- Sub-Agent Delegation Tool ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "delegate_to_agent",
+                    Description = @"Delegate a task to a specialist sub-agent. Available roles:
+- planner: Creates detailed implementation plans and task breakdowns
+- coder: Implements code changes based on specifications  
+- tester: Writes and runs tests, validates implementations
+- reviewer: Reviews code for quality, security, best practices
+- debugger: Investigates bugs, analyzes errors, proposes fixes
+
+The sub-agent will execute synchronously and return a structured result. Use when tasks benefit from specialized expertise or focused context.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "role":{"type":"string","enum":["planner","coder","tester","reviewer","debugger"],"description":"The specialist role to delegate to"},
+                        "task":{"type":"string","description":"Clear description of the task for the sub-agent"},
+                        "context_files":{"type":"array","items":{"type":"string"},"description":"Optional list of file paths the sub-agent should focus on"},
+                        "success_criteria":{"type":"string","description":"Optional criteria for task completion"}
+                      },
+                      "required":["role","task"]
+                    }
+                    """).RootElement
+                }
             }
         };
 

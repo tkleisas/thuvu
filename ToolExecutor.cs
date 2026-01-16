@@ -260,6 +260,9 @@ namespace thuvu
                 "agent_result" => await ExecuteAgentResultAsync(argsJson, ct).ConfigureAwait(false),
                 "agent_cancel" => await ExecuteAgentCancelAsync(argsJson, ct).ConfigureAwait(false),
                 
+                // Sub-Agent Delegation tool
+                "delegate_to_agent" => await DelegateToAgentToolImpl.ExecuteAsync(argsJson, ct).ConfigureAwait(false),
+                
                 _ => JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" })
             };
         }
