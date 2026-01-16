@@ -9,6 +9,11 @@ namespace thuvu.Models
     public class AgentRolesConfig
     {
         /// <summary>
+        /// Whether sub-agent delegation is enabled. When false, uses traditional single-agent approach.
+        /// </summary>
+        public bool Enabled { get; set; } = false;
+        
+        /// <summary>
         /// Maximum delegation depth (0=main only, 1=one level of sub-agents, 2=sub-sub-agents allowed).
         /// </summary>
         public int MaxDepth { get; set; } = 2;
@@ -32,10 +37,14 @@ namespace thuvu.Models
         }
         
         /// <summary>
-        /// Check if a role can delegate to another role.
+        /// Check if delegation is allowed from one role to another.
+        /// Returns false if delegation is globally disabled.
         /// </summary>
         public bool CanDelegate(string fromRoleId, string toRoleId)
         {
+            if (!Enabled)
+                return false;
+                
             var fromRole = GetRole(fromRoleId);
             if (fromRole == null || !fromRole.CanDelegate)
                 return false;
@@ -203,6 +212,7 @@ namespace thuvu.Models
         {
             return new AgentRolesConfig
             {
+                Enabled = false,  // Disabled by default, uses traditional single-agent approach
                 MaxDepth = 2,
                 DefaultContextMode = "full",
                 Roles = new List<AgentRoleDefinition>
