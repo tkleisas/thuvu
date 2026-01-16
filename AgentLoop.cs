@@ -130,6 +130,41 @@ namespace thuvu
                     return msg.Content;
                 }
 
+                // Check if the model indicated it wants to continue but didn't make a tool call
+                if (msg.ToolCalls == null || msg.ToolCalls.Count == 0)
+                {
+                    bool wantsToContinue = msg.Content != null && 
+                        (msg.Content.Contains("let me ", StringComparison.OrdinalIgnoreCase) ||
+                         msg.Content.Contains("I will ", StringComparison.OrdinalIgnoreCase) ||
+                         msg.Content.Contains("I'll ", StringComparison.OrdinalIgnoreCase) ||
+                         msg.Content.Contains("Now I ", StringComparison.OrdinalIgnoreCase) ||
+                         msg.Content.Contains("Next, I", StringComparison.OrdinalIgnoreCase) ||
+                         msg.Content.Contains("Let's ", StringComparison.OrdinalIgnoreCase) ||
+                         msg.Content.Contains("I need to ", StringComparison.OrdinalIgnoreCase) ||
+                         msg.Content.Contains("I should ", StringComparison.OrdinalIgnoreCase));
+                    
+                    if (wantsToContinue)
+                    {
+                        LogAgent("Model indicated intent to continue but made no tool call. Prompting to proceed.");
+                        
+                        // Add the assistant message
+                        messages.Add(new ChatMessage
+                        {
+                            Role = "assistant",
+                            Content = msg.Content
+                        });
+                        
+                        // Add a prompt to continue
+                        messages.Add(new ChatMessage
+                        {
+                            Role = "user",
+                            Content = "Please proceed with the action you described. Make the appropriate tool call."
+                        });
+                        
+                        continue;
+                    }
+                }
+
                 if (msg.ToolCalls is { Count: > 0 })
                 {
                     messages.Add(msg);
@@ -281,6 +316,42 @@ namespace thuvu
                 {
                     LogAgent("Detected task completion signal. Ignoring further tool calls and finishing.");
                     return result.Content;
+                }
+                
+                // Check if the model indicated it wants to continue but didn't make a tool call
+                // This handles cases where the model says "Now let me..." but forgets to call the tool
+                if (result.ToolCalls == null || result.ToolCalls.Count == 0)
+                {
+                    bool wantsToContinue = result.Content != null && 
+                        (result.Content.Contains("let me ", StringComparison.OrdinalIgnoreCase) ||
+                         result.Content.Contains("I will ", StringComparison.OrdinalIgnoreCase) ||
+                         result.Content.Contains("I'll ", StringComparison.OrdinalIgnoreCase) ||
+                         result.Content.Contains("Now I ", StringComparison.OrdinalIgnoreCase) ||
+                         result.Content.Contains("Next, I", StringComparison.OrdinalIgnoreCase) ||
+                         result.Content.Contains("Let's ", StringComparison.OrdinalIgnoreCase) ||
+                         result.Content.Contains("I need to ", StringComparison.OrdinalIgnoreCase) ||
+                         result.Content.Contains("I should ", StringComparison.OrdinalIgnoreCase));
+                    
+                    if (wantsToContinue)
+                    {
+                        LogAgent("Model indicated intent to continue but made no tool call. Prompting to proceed.");
+                        
+                        // Add the assistant message
+                        messages.Add(new ChatMessage
+                        {
+                            Role = "assistant",
+                            Content = result.Content
+                        });
+                        
+                        // Add a prompt to continue
+                        messages.Add(new ChatMessage
+                        {
+                            Role = "user",
+                            Content = "Please proceed with the action you described. Make the appropriate tool call."
+                        });
+                        
+                        continue;
+                    }
                 }
                 
                 if (result.ToolCalls is { Count: > 0 })
