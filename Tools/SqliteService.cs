@@ -213,7 +213,6 @@ namespace thuvu.Tools
                 CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(agent_role);
                 CREATE INDEX IF NOT EXISTS idx_messages_depth ON messages(agent_depth);
                 CREATE INDEX IF NOT EXISTS idx_messages_started ON messages(started_at);
-                CREATE INDEX IF NOT EXISTS idx_messages_summarized ON messages(is_summarized);
                 CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
                 CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type);
             ";
@@ -224,6 +223,11 @@ namespace thuvu.Tools
 
             // Run migrations to add columns that may be missing in existing databases
             await RunMigrationsAsync(conn, ct);
+
+            // Create indexes on migrated columns (after migrations ensure columns exist)
+            await using var indexCmd = conn.CreateCommand();
+            indexCmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_messages_summarized ON messages(is_summarized);";
+            await indexCmd.ExecuteNonQueryAsync(ct);
 
             _initialized = true;
             AgentLogger.LogInfo("SQLite database initialized at {Path}", dbPath);
