@@ -163,27 +163,56 @@
                         {
                             var (formattedContent, isTruncated) = FormatToolResult(msg.Content);
                             var (formattedArgs, _) = FormatToolResult(msg.ToolArgs ?? "");
-                            <div class="tool-result">
-                                <div class="tool-header">
-                                    <span class="tool-icon">🔧</span>
-                                    <span class="tool-name">@msg.ToolName</span>
-                                    @if (isTruncated)
-                                    {
-                                        <span class="tool-truncated">(truncated)</span>
-                                    }
-                                </div>
-                                @if (!string.IsNullOrEmpty(formattedArgs))
-                                {
-                                    <div class="tool-args">
-                                        <span class="tool-args-label">Arguments:</span>
-                                        <pre class="tool-args-content">@formattedArgs</pre>
+                            
+                            @if (msg.IsSubAgentDelegation)
+                            {
+                                // Special rendering for sub-agent delegation results
+                                <div class="subagent-result depth-@msg.AgentDepth">
+                                    <div class="subagent-header">
+                                        <span class="subagent-icon">@GetRoleIcon(msg.AgentRole)</span>
+                                        <span class="subagent-role">@GetRoleDisplayName(msg.AgentRole)</span>
+                                        @if (isTruncated)
+                                        {
+                                            <span class="tool-truncated">(truncated)</span>
+                                        }
                                     </div>
-                                }
-                                <div class="tool-output-section">
-                                    <span class="tool-output-label">Result:</span>
-                                    <pre class="tool-output">@formattedContent</pre>
+                                    @if (!string.IsNullOrEmpty(formattedArgs))
+                                    {
+                                        <div class="subagent-task">
+                                            <span class="subagent-task-label">Task:</span>
+                                            <pre class="subagent-task-content">@formattedArgs</pre>
+                                        </div>
+                                    }
+                                    <div class="subagent-output-section">
+                                        <span class="subagent-output-label">Result:</span>
+                                        <pre class="subagent-output">@formattedContent</pre>
+                                    </div>
                                 </div>
-                            </div>
+                            }
+                            else
+                            {
+                                <div class="tool-result">
+                                    <div class="tool-header">
+                                        <span class="tool-icon">🔧</span>
+                                        <span class="tool-name">@msg.ToolName</span>
+                                        @if (isTruncated)
+                                        {
+                                            <span class="tool-truncated">(truncated)</span>
+                                        }
+                                    </div>
+                                    @if (!string.IsNullOrEmpty(formattedArgs))
+                                    {
+                                        <div class="tool-args">
+                                            <span class="tool-args-label">Arguments:</span>
+                                            <pre class="tool-args-content">@formattedArgs</pre>
+                                        </div>
+                                    }
+                                    <div class="tool-output-section">
+                                        <span class="tool-output-label">Result:</span>
+                                        <pre class="tool-output">@formattedContent</pre>
+                                    </div>
+                                </div>
+                            }
                         }
                         else if (msg.Role == "assistant" || msg.Role == "system")
                         {
@@ -625,7 +654,10 @@
                             ToolName = evt.ToolName ?? "unknown",
                             ToolArgs = _currentToolArgs,
                             Content = evt.Data,
-                            Timestamp = DateTime.Now
+                            Timestamp = DateTime.Now,
+                            IsSubAgentDelegation = evt.ToolName == "delegate_to_agent",
+                            AgentRole = evt.ToolName == "delegate_to_agent" ? ExtractSubAgentRole(evt.Data) : null,
+                            AgentDepth = evt.ToolName == "delegate_to_agent" ? 1 : 0
                         });
                         _currentToolArgs = ""; // Clear after using
                         break;
@@ -1380,6 +1412,55 @@
         
         return (formatted, wasTruncated);
     }
+
+    /// <summary>
+    /// Extract the sub-agent role from a delegate_to_agent result
+    /// </summary>
+    private string? ExtractSubAgentRole(string resultJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(resultJson);
+            if (doc.RootElement.TryGetProperty("role", out var roleProp))
+            {
+                return roleProp.GetString();
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>
+    /// Get a display icon for a sub-agent role
+    /// </summary>
+    private string GetRoleIcon(string? role)
+    {
+        return role?.ToLower() switch
+        {
+            "planner" => "📋",
+            "coder" => "💻",
+            "tester" => "🧪",
+            "reviewer" => "🔍",
+            "debugger" => "🐛",
+            _ => "🤖"
+        };
+    }
+
+    /// <summary>
+    /// Get a display name for a sub-agent role
+    /// </summary>
+    private string GetRoleDisplayName(string? role)
+    {
+        return role?.ToLower() switch
+        {
+            "planner" => "Planning Agent",
+            "coder" => "Coding Agent",
+            "tester" => "Testing Agent",
+            "reviewer" => "Review Agent",
+            "debugger" => "Debugging Agent",
+            _ => "Sub-Agent"
+        };
+    }
     
     private async Task TryReconnectAsync()
     {
@@ -1513,6 +1594,10 @@
         public DateTime Timestamp { get; set; }
         public bool IsScreenshot { get; set; }
         public string? ScreenshotBase64 { get; set; }
+        // Sub-agent support
+        public int AgentDepth { get; set; } = 0;
+        public string? AgentRole { get; set; }
+        public bool IsSubAgentDelegation { get; set; }
     }
 
     private class TokenUsageDisplay

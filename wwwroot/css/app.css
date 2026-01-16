@@ -521,6 +521,128 @@ html, body {
     overflow-y: auto;
 }
 
+/* Sub-Agent Delegation Results */
+.subagent-result {
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+    border-radius: 8px;
+    padding: 0.75rem;
+    border-left: 4px solid var(--accent-purple);
+    position: relative;
+}
+
+.subagent-result.depth-1 {
+    margin-left: 1rem;
+    border-left-color: var(--accent-cyan);
+}
+
+.subagent-result.depth-2 {
+    margin-left: 2rem;
+    border-left-color: var(--accent-green);
+}
+
+.subagent-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.subagent-icon {
+    font-size: 1.25rem;
+}
+
+.subagent-role {
+    display: inline-block;
+    background: linear-gradient(90deg, var(--accent-purple), var(--accent-cyan));
+    color: var(--bg-primary);
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.subagent-task {
+    margin-bottom: 0.75rem;
+    background-color: var(--bg-primary);
+    border-radius: 6px;
+    padding: 0.5rem;
+}
+
+.subagent-task-label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--accent-yellow);
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.subagent-task-content {
+    background-color: transparent;
+    padding: 0;
+    margin: 0;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    color: var(--text-secondary);
+}
+
+.subagent-output-section {
+    margin-top: 0.5rem;
+}
+
+.subagent-output-label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--accent-green);
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.subagent-output {
+    background-color: var(--bg-primary);
+    padding: 0.75rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.8rem;
+    max-height: 500px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    border: 1px solid var(--accent-cyan);
+    border-opacity: 0.3;
+    margin: 0;
+}
+
+/* Sub-agent depth connector line */
+.subagent-result::before {
+    content: '';
+    position: absolute;
+    left: -12px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--accent-purple), transparent);
+}
+
+.subagent-result.depth-1::before {
+    background: linear-gradient(to bottom, var(--accent-cyan), transparent);
+}
+
+.subagent-result.depth-2::before {
+    background: linear-gradient(to bottom, var(--accent-green), transparent);
+}
+
 /* Screenshot Container */
 .screenshot-container {
     padding: 0.5rem;
