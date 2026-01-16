@@ -892,13 +892,13 @@ namespace thuvu.Tools
             cmd.CommandText = @"
                 INSERT INTO messages (
                     session_id, parent_message_id, started_at, agent_role, agent_depth, model_id,
-                    system_prompt_id, message_type, request_content, context_mode, context_token_count,
+                    system_prompt_id, message_type, request_content, response_content, context_mode, context_token_count,
                     max_iterations, max_duration_ms, status
                 )
                 VALUES (
                     @session_id, @parent_message_id, @started_at, @agent_role, @agent_depth, @model_id,
-                    @system_prompt_id, @message_type, @request_content, @context_mode, @context_token_count,
-                    @max_iterations, @max_duration_ms, 'running'
+                    @system_prompt_id, @message_type, @request_content, @response_content, @context_mode, @context_token_count,
+                    @max_iterations, @max_duration_ms, @status
                 )
                 RETURNING id
             ";
@@ -912,10 +912,12 @@ namespace thuvu.Tools
             cmd.Parameters.AddWithValue("@system_prompt_id", (object?)message.SystemPromptId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@message_type", message.MessageType);
             cmd.Parameters.AddWithValue("@request_content", (object?)message.RequestContent ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@response_content", (object?)message.ResponseContent ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@context_mode", (object?)message.ContextMode ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@context_token_count", message.ContextTokenCount.HasValue ? message.ContextTokenCount.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("@max_iterations", message.MaxIterations.HasValue ? message.MaxIterations.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("@max_duration_ms", message.MaxDurationMs.HasValue ? message.MaxDurationMs.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@status", message.Status ?? "running");
 
             var result = await cmd.ExecuteScalarAsync(ct);
             var messageId = result != null ? Convert.ToInt64(result) : 0;

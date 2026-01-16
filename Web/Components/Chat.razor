@@ -414,6 +414,7 @@
     private string _autocompletePrefix = "";
 
     private bool _initialized;
+    private bool _disposed;
     private DotNetObjectReference<Chat>? _dotNetRef;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -492,6 +493,8 @@
             
             _hubConnection.Closed += async ex =>
             {
+                if (_disposed) return;
+                
                 _connected = false;
                 Console.WriteLine($"Hub connection closed: {ex?.Message}");
                 _reconnectMessage = "Connection lost. Attempting to reconnect...";
@@ -499,7 +502,7 @@
                 
                 // Try to reconnect after a delay if automatic reconnect gave up
                 await Task.Delay(5000);
-                if (_hubConnection.State == HubConnectionState.Disconnected)
+                if (!_disposed && _hubConnection.State == HubConnectionState.Disconnected)
                 {
                     await TryReconnectAsync();
                 }
@@ -1506,10 +1509,13 @@
     
     private async Task TryReconnectAsync()
     {
+        // Don't reconnect if disposed
+        if (_disposed) return;
+        
         const int maxRetries = 10;
         var retryDelays = new[] { 1000, 2000, 5000, 10000, 30000, 60000 };
         
-        for (int i = 0; i < maxRetries && _hubConnection?.State == HubConnectionState.Disconnected; i++)
+        for (int i = 0; i < maxRetries && !_disposed && _hubConnection?.State == HubConnectionState.Disconnected; i++)
         {
             try
             {
@@ -1524,6 +1530,12 @@
                 Console.WriteLine("Successfully reconnected to hub");
                 return;
             }
+            catch (ObjectDisposedException)
+            {
+                // Connection was disposed, stop trying to reconnect
+                Console.WriteLine("HubConnection disposed, stopping reconnect attempts");
+                return;
+            }
             catch (Exception ex)
             {
                 Console.WriteLine($"Reconnect attempt {i + 1} failed: {ex.Message}");
@@ -1532,8 +1544,11 @@
             }
         }
         
-        _reconnectMessage = "Unable to reconnect. Please refresh the page.";
-        await InvokeAsync(StateHasChanged);
+        if (!_disposed)
+        {
+            _reconnectMessage = "Unable to reconnect. Please refresh the page.";
+            await InvokeAsync(StateHasChanged);
+        }
     }
     
     // Image attachment handlers
@@ -1618,6 +1633,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        _disposed = true;
         _dotNetRef?.Dispose();
         
         if (_hubConnection != null)
