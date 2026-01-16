@@ -131,17 +131,40 @@ namespace thuvu
                 }
 
                 // Check if the model indicated it wants to continue but didn't make a tool call
+                // We look for action phrases, especially those ending with ":" which strongly indicate intent
                 if (msg.ToolCalls == null || msg.ToolCalls.Count == 0)
                 {
-                    bool wantsToContinue = msg.Content != null && 
-                        (msg.Content.Contains("let me ", StringComparison.OrdinalIgnoreCase) ||
-                         msg.Content.Contains("I will ", StringComparison.OrdinalIgnoreCase) ||
-                         msg.Content.Contains("I'll ", StringComparison.OrdinalIgnoreCase) ||
-                         msg.Content.Contains("Now I ", StringComparison.OrdinalIgnoreCase) ||
-                         msg.Content.Contains("Next, I", StringComparison.OrdinalIgnoreCase) ||
-                         msg.Content.Contains("Let's ", StringComparison.OrdinalIgnoreCase) ||
-                         msg.Content.Contains("I need to ", StringComparison.OrdinalIgnoreCase) ||
-                         msg.Content.Contains("I should ", StringComparison.OrdinalIgnoreCase));
+                    bool wantsToContinue = false;
+                    
+                    if (msg.Content != null)
+                    {
+                        // Strong signal: phrases ending with colon (e.g., "Let me check the screen:", "Now I will press C:")
+                        var colonPattern = @"(?:let me|I will|I'll|now I|next,? I|let's|I need to|I should|I'm going to)[^.!?\n]*:";
+                        if (System.Text.RegularExpressions.Regex.IsMatch(msg.Content, colonPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                        {
+                            wantsToContinue = true;
+                            LogAgent("Detected action phrase with colon - strong intent signal");
+                        }
+                        // Weaker signal: just the action phrases without colon
+                        else if (msg.Content.Contains("let me ", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("I will ", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("I'll ", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("Now I ", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("Next, I", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("Let's ", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("I need to ", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("I should ", StringComparison.OrdinalIgnoreCase) ||
+                                 msg.Content.Contains("I'm going to ", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Only trigger on weak signals if the message is short and doesn't end with punctuation
+                            var trimmed = msg.Content.TrimEnd();
+                            if (trimmed.Length < 500 && !trimmed.EndsWith(".") && !trimmed.EndsWith("!") && !trimmed.EndsWith("?"))
+                            {
+                                wantsToContinue = true;
+                                LogAgent("Detected action phrase with incomplete ending");
+                            }
+                        }
+                    }
                     
                     if (wantsToContinue)
                     {
@@ -320,17 +343,42 @@ namespace thuvu
                 
                 // Check if the model indicated it wants to continue but didn't make a tool call
                 // This handles cases where the model says "Now let me..." but forgets to call the tool
+                // We look for action phrases, especially those ending with ":" which strongly indicate intent
                 if (result.ToolCalls == null || result.ToolCalls.Count == 0)
                 {
-                    bool wantsToContinue = result.Content != null && 
-                        (result.Content.Contains("let me ", StringComparison.OrdinalIgnoreCase) ||
-                         result.Content.Contains("I will ", StringComparison.OrdinalIgnoreCase) ||
-                         result.Content.Contains("I'll ", StringComparison.OrdinalIgnoreCase) ||
-                         result.Content.Contains("Now I ", StringComparison.OrdinalIgnoreCase) ||
-                         result.Content.Contains("Next, I", StringComparison.OrdinalIgnoreCase) ||
-                         result.Content.Contains("Let's ", StringComparison.OrdinalIgnoreCase) ||
-                         result.Content.Contains("I need to ", StringComparison.OrdinalIgnoreCase) ||
-                         result.Content.Contains("I should ", StringComparison.OrdinalIgnoreCase));
+                    bool wantsToContinue = false;
+                    
+                    if (result.Content != null)
+                    {
+                        // Strong signal: phrases ending with colon (e.g., "Let me check the screen:", "Now I will press C:")
+                        // This regex looks for common action phrases followed by a colon
+                        var colonPattern = @"(?:let me|I will|I'll|now I|next,? I|let's|I need to|I should|I'm going to)[^.!?\n]*:";
+                        if (System.Text.RegularExpressions.Regex.IsMatch(result.Content, colonPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                        {
+                            wantsToContinue = true;
+                            LogAgent("Detected action phrase with colon - strong intent signal");
+                        }
+                        // Weaker signal: just the action phrases without colon (may have false positives)
+                        else if (result.Content.Contains("let me ", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("I will ", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("I'll ", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("Now I ", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("Next, I", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("Let's ", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("I need to ", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("I should ", StringComparison.OrdinalIgnoreCase) ||
+                                 result.Content.Contains("I'm going to ", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Only trigger on weak signals if the message is short (less likely to be a summary)
+                            // and doesn't end with a period (indicating incomplete thought)
+                            var trimmed = result.Content.TrimEnd();
+                            if (trimmed.Length < 500 && !trimmed.EndsWith(".") && !trimmed.EndsWith("!") && !trimmed.EndsWith("?"))
+                            {
+                                wantsToContinue = true;
+                                LogAgent("Detected action phrase with incomplete ending");
+                            }
+                        }
+                    }
                     
                     if (wantsToContinue)
                     {

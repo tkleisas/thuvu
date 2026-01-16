@@ -904,6 +904,268 @@ namespace thuvu.Web.Services
         }
 
         /// <summary>
+        /// Core message processing - runs the agent loop without adding a user message.
+        /// Used when the caller has already added the user message (e.g., for multimodal messages).
+        /// </summary>
+        private async IAsyncEnumerable<AgentStreamEvent> ProcessMessageCoreAsync(
+            string sessionId,
+            WebAgentSession session,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            session.IsProcessing = true;
+            session.CurrentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var linkedCt = session.CurrentCts.Token;
+            
+            // Set session as active in database
+            _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, true, linkedCt);
+            
+            // Set up async permission handler for this session
+            SetupAsyncPermissionHandler(sessionId);
+            
+            // Declare handler outside try block so we can unsubscribe in finally
+            Action<string, PendingPermissionRequest>? permissionHandler = null;
+            System.Threading.Channels.ChannelWriter<AgentStreamEvent>? channelWriter = null;
+            
+            // Track token usage for final message
+            int? lastPromptTokens = null;
+            int? lastCompletionTokens = null;
+            int? lastTotalTokens = null;
+
+            try
+            {
+                yield return new AgentStreamEvent { Type = "status", Data = "Processing..." };
+
+                // Use a channel to collect events from callbacks
+                var channel = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
+                var writer = channel.Writer;
+                channelWriter = writer;
+                
+                // Subscribe to permission requests for this processing run
+                permissionHandler = (sid, request) =>
+                {
+                    if (sid == sessionId)
+                    {
+                        writer.TryWrite(new AgentStreamEvent 
+                        { 
+                            Type = "permission_request",
+                            ToolName = request.ToolName,
+                            Data = JsonSerializer.Serialize(new 
+                            {
+                                requestId = request.RequestId,
+                                toolName = request.ToolName,
+                                args = request.ArgsJson
+                            })
+                        });
+                    }
+                };
+                OnPermissionRequired += permissionHandler;
+
+                var completionTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Get the appropriate HttpClient for the current model
+                        var httpClient = GetHttpClientForCurrentModel();
+                        
+                        var result = await AgentLoop.CompleteWithToolsStreamingAsync(
+                            httpClient,
+                            AgentConfig.Config.Model,
+                            session.Messages,
+                            session.Tools,
+                            linkedCt,
+                            onToken: token =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent { Type = "token", Data = token });
+                            },
+                            onToolResult: (name, result) =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "tool_result", 
+                                    ToolName = name,
+                                    Data = TruncateResult(result)
+                                });
+                            },
+                            onUsage: usage =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "usage",
+                                    Data = JsonSerializer.Serialize(new 
+                                    { 
+                                        prompt = usage.PromptTokens,
+                                        completion = usage.CompletionTokens,
+                                        total = usage.TotalTokens
+                                    })
+                                });
+                                
+                                // Update TokenTracker first, then send context usage info
+                                var tokenTracker = TokenTracker.Instance;
+                                tokenTracker.UpdateFromUsage(usage);
+                                
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "context_usage",
+                                    Data = JsonSerializer.Serialize(new 
+                                    { 
+                                        totalTokens = tokenTracker.TotalTokens,
+                                        maxContextLength = tokenTracker.MaxContextLength,
+                                        usagePercent = tokenTracker.UsagePercent * 100
+                                    })
+                                });
+                                
+                                // Track token usage for the final assistant message
+                                lastPromptTokens = usage.PromptTokens;
+                                lastCompletionTokens = usage.CompletionTokens;
+                                lastTotalTokens = usage.TotalTokens;
+                            },
+                            onToolComplete: (name, argsJson, toolResult, elapsed) =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "tool_complete",
+                                    ToolName = name,
+                                    Data = $"Completed in {elapsed.TotalSeconds:F1}s"
+                                });
+                                
+                                // Record tool call + result to database immediately
+                                _ = Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        var toolRecord = new MessageRecord
+                                        {
+                                            SessionId = sessionId,
+                                            StartedAt = DateTime.Now.AddMilliseconds(-elapsed.TotalMilliseconds),
+                                            AgentRole = "main",
+                                            AgentDepth = 0,
+                                            ModelId = AgentConfig.Config.Model,
+                                            MessageType = "tool_call",
+                                            ToolName = name,
+                                            ToolArgsJson = argsJson,
+                                            ToolResultJson = TruncateForDb(toolResult),
+                                            Status = "completed"
+                                        };
+                                        await SqliteService.Instance.StartMessageAsync(toolRecord);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        AgentLogger.LogError("Failed to record tool call: {Error}", ex.Message);
+                                    }
+                                });
+                            },
+                            onToolProgress: progress =>
+                            {
+                                // Send tool_start when status is Running and just started
+                                if (progress.Status == ToolStatus.Running || progress.Status == ToolStatus.Pending)
+                                {
+                                    writer.TryWrite(new AgentStreamEvent 
+                                    { 
+                                        Type = "tool_progress",
+                                        ToolName = progress.ToolName,
+                                        Data = progress.Message ?? $"{progress.Status} ({progress.ElapsedFormatted})"
+                                    });
+                                }
+                                else
+                                {
+                                    writer.TryWrite(new AgentStreamEvent 
+                                    { 
+                                        Type = "tool_progress",
+                                        ToolName = progress.ToolName,
+                                        Data = progress.Message ?? progress.Status.ToString()
+                                    });
+                                }
+                            },
+                            onToolCall: (name, argsJson) =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent 
+                                { 
+                                    Type = "tool_call",
+                                    ToolName = name,
+                                    Data = argsJson
+                                });
+                            }
+                        );
+
+                        if (result != null)
+                        {
+                            session.Messages.Add(new ChatMessage("assistant", result));
+                        }
+
+                        // Record assistant response to database with token usage
+                        if (!string.IsNullOrEmpty(result))
+                        {
+                            try
+                            {
+                                var msgRecord = new MessageRecord
+                                {
+                                    SessionId = sessionId,
+                                    StartedAt = DateTime.Now,
+                                    AgentRole = "main",
+                                    AgentDepth = 0,
+                                    ModelId = AgentConfig.Config.Model,
+                                    MessageType = "assistant",
+                                    ResponseContent = result,
+                                    PromptTokens = lastPromptTokens,
+                                    CompletionTokens = lastCompletionTokens,
+                                    TotalTokens = lastTotalTokens,
+                                    Status = "completed"
+                                };
+                                await SqliteService.Instance.StartMessageAsync(msgRecord, linkedCt);
+                            }
+                            catch (Exception dbEx)
+                            {
+                                AgentLogger.LogError("Failed to record assistant message: {Error}", dbEx.Message);
+                            }
+                        }
+
+                        writer.TryWrite(new AgentStreamEvent { Type = "done", Data = result ?? "" });
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        writer.TryWrite(new AgentStreamEvent { Type = "cancelled", Data = "Request cancelled" });
+                        
+                        // Record cancellation
+                        _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, false);
+                    }
+                    catch (Exception ex)
+                    {
+                        writer.TryWrite(new AgentStreamEvent { Type = "error", Data = ex.Message });
+                        
+                        // Record error
+                        _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, false);
+                    }
+                    finally
+                    {
+                        writer.Complete();
+                    }
+                }, linkedCt);
+
+                // Stream events as they come
+                await foreach (var evt in channel.Reader.ReadAllAsync(linkedCt))
+                {
+                    yield return evt;
+                }
+
+                await completionTask;
+            }
+            finally
+            {
+                if (permissionHandler != null)
+                    OnPermissionRequired -= permissionHandler;
+                session.IsProcessing = false;
+                session.CurrentCts?.Dispose();
+                session.CurrentCts = null;
+                
+                // Set session as inactive in database
+                _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, false);
+                
+                // Save session metadata
+                _ = SaveSessionToDatabaseAsync(session);
+            }
+        }
+
+        /// <summary>
         /// Send a message with an image and stream the response
         /// </summary>
         public async IAsyncEnumerable<AgentStreamEvent> SendMessageWithImageAsync(
@@ -934,6 +1196,38 @@ namespace thuvu.Web.Services
                 yield break;
             }
 
+            // If vision model supports tools, use the full agent loop with tool calling
+            // This allows the agent to analyze the image AND take action (e.g., edit files)
+            if (visionModel.SupportsTools)
+            {
+                // Add the multimodal message directly to session
+                var userPrompt = string.IsNullOrWhiteSpace(message) 
+                    ? "Please analyze the attached image and describe what you see."
+                    : message;
+                var userMessage = ChatMessage.CreateWithImage("user", userPrompt, imageBase64, imageMimeType);
+                session.Messages.Add(userMessage);
+                session.LastActivityAt = DateTime.Now;
+                
+                // Temporarily switch to the vision model for this request
+                var originalModel = AgentConfig.Config.Model;
+                AgentConfig.Config.Model = visionModel.ModelId;
+                
+                // Record user message to database
+                await RecordUserMessageAsync(sessionId, $"[Image attached] {userPrompt}");
+                
+                // Use the core message processing (without adding another user message)
+                await foreach (var evt in ProcessMessageCoreAsync(sessionId, session, ct))
+                {
+                    yield return evt;
+                }
+                
+                // Restore original model
+                AgentConfig.Config.Model = originalModel;
+                yield break;
+            }
+            
+            // Fall back to vision-only mode (no tool calling)
+            // This is for vision models that don't support tool calling
             session.IsProcessing = true;
             session.CurrentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var linkedCt = session.CurrentCts.Token;
