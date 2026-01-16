@@ -35,6 +35,18 @@ namespace thuvu.Web.Services
     }
 
     /// <summary>
+    /// Summary of a persisted session for listing in UI.
+    /// </summary>
+    public class SessionSummary
+    {
+        public string SessionId { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+        public DateTime LastActivityAt { get; set; }
+        public int MessageCount { get; set; }
+        public bool IsActive { get; set; }
+    }
+
+    /// <summary>
     /// Service that wraps AgentLoop for web clients
     /// </summary>
     public class WebAgentService
@@ -172,6 +184,18 @@ namespace thuvu.Web.Services
                 return existing;
             }
 
+            // Try to load from database if session ID provided
+            if (sessionId != null)
+            {
+                var loaded = LoadSessionFromDatabaseAsync(sessionId).GetAwaiter().GetResult();
+                if (loaded != null)
+                {
+                    _sessions[loaded.SessionId] = loaded;
+                    AgentLogger.LogInfo("Restored session {SessionId} from database", sessionId);
+                    return loaded;
+                }
+            }
+
             var session = new WebAgentSession
             {
                 Messages = new List<ChatMessage>
@@ -182,7 +206,119 @@ namespace thuvu.Web.Services
             };
 
             _sessions[session.SessionId] = session;
+            
+            // Save new session to database
+            _ = SaveSessionToDatabaseAsync(session);
+            
             return session;
+        }
+
+        /// <summary>
+        /// Save a session to the SQLite database for persistence.
+        /// </summary>
+        public async Task SaveSessionToDatabaseAsync(WebAgentSession session)
+        {
+            try
+            {
+                var sessionData = new SessionData
+                {
+                    SessionId = session.SessionId,
+                    MessagesJson = JsonSerializer.Serialize(session.Messages, new JsonSerializerOptions 
+                    { 
+                        WriteIndented = false,
+                        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+                    }),
+                    SystemPrompt = session.Messages.FirstOrDefault(m => m.Role == "system")?.Content,
+                    ModelId = AgentConfig.Config.Model,
+                    CreatedAt = session.CreatedAt,
+                    LastActivityAt = session.LastActivityAt,
+                    IsProcessing = session.IsProcessing
+                };
+
+                await SqliteService.Instance.SaveSessionAsync(sessionData);
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to save session {SessionId}: {Error}", session.SessionId, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Load a session from the SQLite database.
+        /// </summary>
+        private async Task<WebAgentSession?> LoadSessionFromDatabaseAsync(string sessionId)
+        {
+            try
+            {
+                var sessionData = await SqliteService.Instance.LoadSessionAsync(sessionId);
+                if (sessionData == null)
+                    return null;
+
+                var messages = JsonSerializer.Deserialize<List<ChatMessage>>(sessionData.MessagesJson) ?? new List<ChatMessage>();
+                
+                // If no messages or no system prompt, add one
+                if (messages.Count == 0 || messages[0].Role != "system")
+                {
+                    messages.Insert(0, new ChatMessage("system", 
+                        SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)));
+                }
+
+                return new WebAgentSession
+                {
+                    SessionId = sessionData.SessionId,
+                    Messages = messages,
+                    Tools = BuildTools.GetBuildTools(),
+                    CreatedAt = sessionData.CreatedAt,
+                    LastActivityAt = sessionData.LastActivityAt,
+                    IsProcessing = false // Reset processing state on restore
+                };
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to load session {SessionId}: {Error}", sessionId, ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Get list of recent sessions for the UI.
+        /// </summary>
+        public async Task<List<SessionSummary>> GetRecentSessionsAsync(int limit = 10)
+        {
+            try
+            {
+                var sessions = await SqliteService.Instance.GetRecentSessionsAsync(limit);
+                return sessions.Select(s => new SessionSummary
+                {
+                    SessionId = s.SessionId,
+                    CreatedAt = s.CreatedAt,
+                    LastActivityAt = s.LastActivityAt,
+                    MessageCount = CountMessages(s.MessagesJson),
+                    IsActive = _sessions.ContainsKey(s.SessionId)
+                }).ToList();
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to get recent sessions: {Error}", ex.Message);
+                return new List<SessionSummary>();
+            }
+        }
+
+        private static int CountMessages(string messagesJson)
+        {
+            try
+            {
+                var messages = JsonSerializer.Deserialize<List<JsonElement>>(messagesJson);
+                // Count non-system, non-tool messages
+                return messages?.Count(m => 
+                    m.TryGetProperty("Role", out var role) && 
+                    role.GetString() != "system" && 
+                    role.GetString() != "tool") ?? 0;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         /// <summary>
@@ -435,6 +571,9 @@ namespace thuvu.Web.Services
                 session.IsProcessing = false;
                 session.CurrentCts?.Dispose();
                 session.CurrentCts = null;
+                
+                // Save session to database after processing completes
+                _ = SaveSessionToDatabaseAsync(session);
             }
         }
 
@@ -550,6 +689,9 @@ namespace thuvu.Web.Services
             session.IsProcessing = false;
             session.CurrentCts?.Dispose();
             session.CurrentCts = null;
+            
+            // Save session to database after processing completes
+            _ = SaveSessionToDatabaseAsync(session);
         }
 
         /// <summary>

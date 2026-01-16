@@ -53,6 +53,14 @@ namespace thuvu.Tools
             await using var conn = new SqliteConnection(_connectionString);
             await conn.OpenAsync(ct);
 
+            // Enable WAL mode for better performance with concurrent reads/writes
+            await using (var walCmd = conn.CreateCommand())
+            {
+                walCmd.CommandText = "PRAGMA journal_mode=WAL;";
+                await walCmd.ExecuteNonQueryAsync(ct);
+                AgentLogger.LogDebug("SQLite WAL mode enabled");
+            }
+
             // Create tables
             var schema = @"
                 -- Code symbols (functions, classes, properties, etc.)
@@ -107,6 +115,19 @@ namespace thuvu.Tools
                     symbol_count INTEGER DEFAULT 0
                 );
 
+                -- Web agent sessions for persistence across reconnections
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    messages_json TEXT NOT NULL,  -- JSON serialized List<ChatMessage>
+                    tools_json TEXT,              -- JSON serialized List<Tool> (optional, can rebuild)
+                    system_prompt TEXT,
+                    model_id TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    last_activity_at TEXT DEFAULT (datetime('now')),
+                    is_processing INTEGER DEFAULT 0,
+                    metadata_json TEXT            -- Additional metadata as JSON
+                );
+
                 -- Indexes for performance
                 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
                 CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
@@ -118,6 +139,7 @@ namespace thuvu.Tools
                 CREATE INDEX IF NOT EXISTS idx_context_category ON context(category);
                 CREATE INDEX IF NOT EXISTS idx_context_project ON context(project_path);
                 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+                CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity_at);
             ";
 
             await using var cmd = conn.CreateCommand();
@@ -590,6 +612,164 @@ namespace thuvu.Tools
         }
 
         #endregion
+
+        #region Session Operations
+
+        /// <summary>
+        /// Save or update a session to the database.
+        /// </summary>
+        public async Task SaveSessionAsync(SessionData session, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                INSERT INTO sessions (session_id, messages_json, tools_json, system_prompt, model_id, 
+                                      created_at, last_activity_at, is_processing, metadata_json)
+                VALUES (@session_id, @messages_json, @tools_json, @system_prompt, @model_id,
+                        @created_at, @last_activity_at, @is_processing, @metadata_json)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    messages_json = @messages_json,
+                    tools_json = @tools_json,
+                    system_prompt = @system_prompt,
+                    model_id = @model_id,
+                    last_activity_at = @last_activity_at,
+                    is_processing = @is_processing,
+                    metadata_json = @metadata_json
+            ";
+
+            cmd.Parameters.AddWithValue("@session_id", session.SessionId);
+            cmd.Parameters.AddWithValue("@messages_json", session.MessagesJson);
+            cmd.Parameters.AddWithValue("@tools_json", (object?)session.ToolsJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@system_prompt", (object?)session.SystemPrompt ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@model_id", (object?)session.ModelId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@created_at", session.CreatedAt.ToString("o"));
+            cmd.Parameters.AddWithValue("@last_activity_at", session.LastActivityAt.ToString("o"));
+            cmd.Parameters.AddWithValue("@is_processing", session.IsProcessing ? 1 : 0);
+            cmd.Parameters.AddWithValue("@metadata_json", (object?)session.MetadataJson ?? DBNull.Value);
+
+            await cmd.ExecuteNonQueryAsync(ct);
+            AgentLogger.LogDebug("Session {SessionId} saved to database", session.SessionId);
+        }
+
+        /// <summary>
+        /// Load a session from the database.
+        /// </summary>
+        public async Task<SessionData?> LoadSessionAsync(string sessionId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                SELECT session_id, messages_json, tools_json, system_prompt, model_id,
+                       created_at, last_activity_at, is_processing, metadata_json
+                FROM sessions
+                WHERE session_id = @session_id
+            ";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                return ReadSession(reader);
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Get list of recent sessions.
+        /// </summary>
+        public async Task<List<SessionData>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                SELECT session_id, messages_json, tools_json, system_prompt, model_id,
+                       created_at, last_activity_at, is_processing, metadata_json
+                FROM sessions
+                ORDER BY last_activity_at DESC
+                LIMIT @limit
+            ";
+            cmd.Parameters.AddWithValue("@limit", limit);
+
+            var results = new List<SessionData>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                results.Add(ReadSession(reader));
+            }
+            return results;
+        }
+
+        /// <summary>
+        /// Delete a session from the database.
+        /// </summary>
+        public async Task<bool> DeleteSessionAsync(string sessionId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = "DELETE FROM sessions WHERE session_id = @session_id";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+
+            var deleted = await cmd.ExecuteNonQueryAsync(ct);
+            return deleted > 0;
+        }
+
+        /// <summary>
+        /// Clean up old sessions (older than specified days).
+        /// </summary>
+        public async Task<int> CleanupOldSessionsAsync(int olderThanDays = 7, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                DELETE FROM sessions 
+                WHERE last_activity_at < datetime('now', @days_ago)
+            ";
+            cmd.Parameters.AddWithValue("@days_ago", $"-{olderThanDays} days");
+
+            return await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        /// <summary>
+        /// Update session's last activity timestamp and processing state.
+        /// </summary>
+        public async Task UpdateSessionActivityAsync(string sessionId, bool isProcessing = false, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                UPDATE sessions 
+                SET last_activity_at = datetime('now'), is_processing = @is_processing
+                WHERE session_id = @session_id
+            ";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+            cmd.Parameters.AddWithValue("@is_processing", isProcessing ? 1 : 0);
+
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        private static SessionData ReadSession(SqliteDataReader reader)
+        {
+            return new SessionData
+            {
+                SessionId = reader.GetString(0),
+                MessagesJson = reader.GetString(1),
+                ToolsJson = reader.IsDBNull(2) ? null : reader.GetString(2),
+                SystemPrompt = reader.IsDBNull(3) ? null : reader.GetString(3),
+                ModelId = reader.IsDBNull(4) ? null : reader.GetString(4),
+                CreatedAt = reader.IsDBNull(5) ? DateTime.Now : DateTime.Parse(reader.GetString(5)),
+                LastActivityAt = reader.IsDBNull(6) ? DateTime.Now : DateTime.Parse(reader.GetString(6)),
+                IsProcessing = !reader.IsDBNull(7) && reader.GetInt32(7) == 1,
+                MetadataJson = reader.IsDBNull(8) ? null : reader.GetString(8)
+            };
+        }
+
+        #endregion
     }
 
     #region Models
@@ -653,6 +833,22 @@ namespace thuvu.Tools
         public long TotalContextEntries { get; set; }
         public long DatabaseSizeBytes { get; set; }
         public Dictionary<string, long> SymbolsByKind { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Persisted session data for storing agent sessions in SQLite.
+    /// </summary>
+    public class SessionData
+    {
+        public string SessionId { get; set; } = "";
+        public string MessagesJson { get; set; } = "[]";
+        public string? ToolsJson { get; set; }
+        public string? SystemPrompt { get; set; }
+        public string? ModelId { get; set; }
+        public DateTime CreatedAt { get; set; } = DateTime.Now;
+        public DateTime LastActivityAt { get; set; } = DateTime.Now;
+        public bool IsProcessing { get; set; }
+        public string? MetadataJson { get; set; }
     }
 
     #endregion

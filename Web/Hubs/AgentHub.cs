@@ -128,6 +128,14 @@ namespace thuvu.Web.Hubs
         }
 
         /// <summary>
+        /// Get list of recent sessions that can be restored
+        /// </summary>
+        public async Task<List<SessionSummary>> GetRecentSessions(int limit = 10)
+        {
+            return await _agentService.GetRecentSessionsAsync(limit);
+        }
+
+        /// <summary>
         /// Get file suggestions for autocomplete
         /// </summary>
         public List<string> GetFileSuggestions(string sessionId, string prefix)
