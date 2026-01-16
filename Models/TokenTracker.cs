@@ -129,10 +129,12 @@ namespace thuvu.Models
         {
             lock (_lock)
             {
-                // For context tracking, prompt_tokens is the key metric as it represents
-                // the actual context window usage (all messages sent to the model)
+                // For context tracking, we use prompt_tokens + completion_tokens
+                // This represents the context size AFTER the response (before next user input)
+                // prompt_tokens = all messages sent to model
+                // completion_tokens = new assistant response
                 LastPromptTokens = promptTokens;
-                TotalTokens = promptTokens; // Use prompt tokens as the context usage indicator
+                TotalTokens = promptTokens + completionTokens; // Context after this turn
                 AssistantTokens += completionTokens;
             }
 
@@ -156,7 +158,8 @@ namespace thuvu.Models
                 }
                 
                 LastPromptTokens = usage.PromptTokens;
-                TotalTokens = usage.PromptTokens; // Context usage = prompt tokens
+                // Context after this turn = prompt + completion
+                TotalTokens = usage.PromptTokens + usage.CompletionTokens;
                 AssistantTokens += usage.CompletionTokens;
             }
             

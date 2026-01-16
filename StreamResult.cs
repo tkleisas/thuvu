@@ -34,11 +34,44 @@ namespace thuvu
             Action<string>? onToken = null,
             Action<Usage>? onUsage = null)
         {
-            // Build a streaming request without changing your strong-typed models
+            // Check if current model supports vision - if not, serialize multimodal messages as text-only
+            var modelConfig = Models.ModelRegistry.Instance?.GetModel(req.Model);
+            var supportsVision = modelConfig?.SupportsVision ?? false;
+            
+            // Prepare messages for serialization
+            // For non-vision models, multimodal messages are converted to text-only during serialization
+            // The original messages list is NOT modified - only the serialized output changes
+            object[] serializedMessages;
+            if (supportsVision)
+            {
+                // Vision model: serialize messages as-is (ChatMessageConverter handles multimodal)
+                serializedMessages = req.Messages.Cast<object>().ToArray();
+            }
+            else
+            {
+                // Non-vision model: convert multimodal messages to text-only for serialization
+                serializedMessages = req.Messages.Select(m => 
+                {
+                    if (m.IsMultimodal)
+                    {
+                        // Extract just the text content, add note about image
+                        var textContent = m.TextContent ?? "";
+                        var hasImage = m.ContentParts?.Any(p => p.Type == "image_url") ?? false;
+                        if (hasImage)
+                        {
+                            textContent = $"[An image was shared here]\n{textContent}";
+                        }
+                        return (object)new { role = m.Role, content = textContent };
+                    }
+                    return (object)m; // Regular messages serialize normally
+                }).ToArray();
+            }
+            
+            // Build a streaming request
             var streamingReq = new
             {
                 model = req.Model,
-                messages = req.Messages,
+                messages = serializedMessages,
                 tools = req.Tools,
                 tool_choice = req.ToolChoice,
                 temperature = req.Temperature,

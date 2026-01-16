@@ -1210,7 +1210,14 @@ namespace thuvu.Web.Services
                 
                 // Temporarily switch to the vision model for this request
                 var originalModel = AgentConfig.Config.Model;
+                var originalMaxContext = TokenTracker.Instance.MaxContextLength;
                 AgentConfig.Config.Model = visionModel.ModelId;
+                
+                // Update TokenTracker with vision model's context length
+                if (visionModel.MaxContextLength > 0)
+                {
+                    TokenTracker.Instance.MaxContextLength = visionModel.MaxContextLength;
+                }
                 
                 // Record user message to database
                 await RecordUserMessageAsync(sessionId, $"[Image attached] {userPrompt}");
@@ -1221,8 +1228,9 @@ namespace thuvu.Web.Services
                     yield return evt;
                 }
                 
-                // Restore original model
+                // Restore original model and context length
                 AgentConfig.Config.Model = originalModel;
+                TokenTracker.Instance.MaxContextLength = originalMaxContext;
                 yield break;
             }
             
