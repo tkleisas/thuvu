@@ -522,6 +522,10 @@
                 _mcpEnabled = result.Config.McpEnabled;
                 _ragEnabled = result.Config.RagEnabled;
             }
+            
+            // Load existing session history from database
+            await LoadSessionHistoryAsync();
+            
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
@@ -529,6 +533,44 @@
             Console.WriteLine($"Failed to initialize hub connection: {ex}");
             _connected = false;
             await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    /// <summary>
+    /// Load session history from database and populate the message list
+    /// </summary>
+    private async Task LoadSessionHistoryAsync()
+    {
+        if (_hubConnection == null || string.IsNullOrEmpty(_sessionId))
+            return;
+            
+        try
+        {
+            var history = await _hubConnection.InvokeAsync<List<SessionMessageDto>>("GetSessionHistoryFromDb", _sessionId);
+            
+            if (history != null && history.Count > 0)
+            {
+                _messages.Clear();
+                foreach (var msg in history)
+                {
+                    _messages.Add(new ChatMessageDisplay
+                    {
+                        Role = msg.Role ?? "assistant",
+                        Content = msg.Content ?? "",
+                        ToolName = msg.ToolName,
+                        ToolArgs = msg.ToolArgs,
+                        Timestamp = msg.Timestamp,
+                        AgentDepth = msg.AgentDepth,
+                        AgentRole = msg.AgentRole,
+                        IsSubAgentDelegation = msg.IsSubAgentDelegation
+                    });
+                }
+                Console.WriteLine($"Loaded {history.Count} messages from session history");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load session history: {ex.Message}");
         }
     }
 
@@ -1638,6 +1680,36 @@
         public string Text { get; set; } = "";
         public string Icon { get; set; } = "📄";
         public string Description { get; set; } = "";
+    }
+
+    /// <summary>
+    /// DTO for receiving session messages from hub
+    /// </summary>
+    private class SessionMessageDto
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("role")]
+        public string? Role { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("content")]
+        public string? Content { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("toolName")]
+        public string? ToolName { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("toolArgs")]
+        public string? ToolArgs { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("timestamp")]
+        public DateTime Timestamp { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("agentDepth")]
+        public int AgentDepth { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("agentRole")]
+        public string? AgentRole { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("isSubAgentDelegation")]
+        public bool IsSubAgentDelegation { get; set; }
     }
 
     private class FileContentResult

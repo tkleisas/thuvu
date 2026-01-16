@@ -457,6 +457,79 @@ namespace thuvu.Web.Services
         }
 
         /// <summary>
+        /// Get session history for UI display from the database.
+        /// Returns messages formatted for the Chat component.
+        /// </summary>
+        public async Task<List<ChatMessageDisplayDto>> GetSessionHistoryAsync(string sessionId)
+        {
+            var result = new List<ChatMessageDisplayDto>();
+            
+            try
+            {
+                var messages = await SqliteService.Instance.GetSessionMessagesAsync(sessionId);
+                
+                foreach (var msg in messages)
+                {
+                    // Skip system messages - they're internal
+                    if (msg.MessageType == "system")
+                        continue;
+                    
+                    var displayMsg = new ChatMessageDisplayDto
+                    {
+                        Role = MapMessageTypeToRole(msg.MessageType),
+                        Content = GetMessageContent(msg),
+                        ToolName = msg.ToolName,
+                        ToolArgs = msg.ToolArgsJson,
+                        Timestamp = msg.StartedAt,
+                        AgentDepth = msg.AgentDepth,
+                        AgentRole = msg.AgentRole,
+                        IsSubAgentDelegation = msg.MessageType == "delegation"
+                    };
+                    
+                    result.Add(displayMsg);
+                }
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to get session history: {Error}", ex.Message);
+            }
+            
+            return result;
+        }
+
+        /// <summary>
+        /// Map database message type to display role
+        /// </summary>
+        private static string MapMessageTypeToRole(string? messageType)
+        {
+            return messageType switch
+            {
+                "user" => "user",
+                "assistant" => "assistant",
+                "tool_call" => "tool",
+                "tool_result" => "tool",
+                "delegation" => "tool",
+                _ => "system"
+            };
+        }
+
+        /// <summary>
+        /// Get the appropriate content to display for a message
+        /// </summary>
+        private static string GetMessageContent(MessageRecord msg)
+        {
+            return msg.MessageType switch
+            {
+                "user" => msg.RequestContent ?? "",
+                "assistant" => msg.ResponseContent ?? "",
+                "tool_call" => msg.ToolArgsJson ?? "",
+                "tool_result" => msg.ToolResultJson ?? "",
+                "delegation" => msg.ResponseSummary ?? msg.ResponseContent ?? "",
+                _ => msg.ResponseContent ?? msg.RequestContent ?? ""
+            };
+        }
+
+        /// <summary>
         /// Send a message and stream the response
         /// </summary>
         public async IAsyncEnumerable<AgentStreamEvent> SendMessageAsync(
@@ -2062,5 +2135,35 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
         public string Data { get; set; } = "";
         [System.Text.Json.Serialization.JsonPropertyName("toolName")]
         public string? ToolName { get; set; }
+    }
+
+    /// <summary>
+    /// DTO for chat message display in UI
+    /// </summary>
+    public class ChatMessageDisplayDto
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("role")]
+        public string Role { get; set; } = "";
+        
+        [System.Text.Json.Serialization.JsonPropertyName("content")]
+        public string Content { get; set; } = "";
+        
+        [System.Text.Json.Serialization.JsonPropertyName("toolName")]
+        public string? ToolName { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("toolArgs")]
+        public string? ToolArgs { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("timestamp")]
+        public DateTime Timestamp { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("agentDepth")]
+        public int AgentDepth { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("agentRole")]
+        public string? AgentRole { get; set; }
+        
+        [System.Text.Json.Serialization.JsonPropertyName("isSubAgentDelegation")]
+        public bool IsSubAgentDelegation { get; set; }
     }
 }

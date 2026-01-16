@@ -120,6 +120,15 @@ namespace thuvu.Web.Hubs
         }
 
         /// <summary>
+        /// Get full session history from database for UI display.
+        /// Includes all messages with sub-agent information.
+        /// </summary>
+        public async Task<List<ChatMessageDisplayDto>> GetSessionHistoryFromDb(string sessionId)
+        {
+            return await _agentService.GetSessionHistoryAsync(sessionId);
+        }
+
+        /// <summary>
         /// Get current config
         /// </summary>
         public object GetConfig()
