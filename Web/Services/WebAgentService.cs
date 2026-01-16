@@ -223,16 +223,13 @@ namespace thuvu.Web.Services
                 var sessionData = new SessionData
                 {
                     SessionId = session.SessionId,
-                    MessagesJson = JsonSerializer.Serialize(session.Messages, new JsonSerializerOptions 
-                    { 
-                        WriteIndented = false,
-                        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-                    }),
                     SystemPrompt = session.Messages.FirstOrDefault(m => m.Role == "system")?.Content,
                     ModelId = AgentConfig.Config.Model,
+                    AgentRole = "main",
+                    Title = GenerateSessionTitle(session),
+                    WorkDirectory = AgentConfig.Config.WorkDirectory,
                     CreatedAt = session.CreatedAt,
-                    LastActivityAt = session.LastActivityAt,
-                    IsProcessing = session.IsProcessing
+                    LastActivityAt = session.LastActivityAt
                 };
 
                 await SqliteService.Instance.SaveSessionAsync(sessionData);
@@ -241,6 +238,23 @@ namespace thuvu.Web.Services
             {
                 AgentLogger.LogError("Failed to save session {SessionId}: {Error}", session.SessionId, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Generate a session title from the first user message.
+        /// </summary>
+        private static string GenerateSessionTitle(WebAgentSession session)
+        {
+            var firstUserMsg = session.Messages.FirstOrDefault(m => m.Role == "user");
+            if (firstUserMsg != null && !string.IsNullOrEmpty(firstUserMsg.Content))
+            {
+                var content = firstUserMsg.Content;
+                // Truncate to first 50 chars
+                if (content.Length > 50)
+                    content = content[..50] + "...";
+                return content;
+            }
+            return $"Session {session.SessionId}";
         }
 
         /// <summary>
@@ -254,14 +268,9 @@ namespace thuvu.Web.Services
                 if (sessionData == null)
                     return null;
 
-                var messages = JsonSerializer.Deserialize<List<ChatMessage>>(sessionData.MessagesJson) ?? new List<ChatMessage>();
-                
-                // If no messages or no system prompt, add one
-                if (messages.Count == 0 || messages[0].Role != "system")
-                {
-                    messages.Insert(0, new ChatMessage("system", 
-                        SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)));
-                }
+                // Load messages from the messages table
+                var messageRecords = await SqliteService.Instance.GetSessionMessagesAsync(sessionId);
+                var messages = ReconstructMessagesFromRecords(messageRecords, sessionData.SystemPrompt);
 
                 return new WebAgentSession
                 {
@@ -281,6 +290,141 @@ namespace thuvu.Web.Services
         }
 
         /// <summary>
+        /// Reconstruct ChatMessage list from MessageRecord entries.
+        /// </summary>
+        private static List<ChatMessage> ReconstructMessagesFromRecords(List<MessageRecord> records, string? systemPrompt)
+        {
+            var messages = new List<ChatMessage>();
+            
+            // Always add system prompt first
+            messages.Add(new ChatMessage("system", 
+                systemPrompt ?? SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)));
+            
+            // Group records by depth 0 (main agent messages only for context reconstruction)
+            foreach (var record in records.Where(r => r.AgentDepth == 0))
+            {
+                switch (record.MessageType)
+                {
+                    case "user":
+                        if (!string.IsNullOrEmpty(record.RequestContent))
+                            messages.Add(new ChatMessage("user", record.RequestContent));
+                        break;
+                    case "assistant":
+                        if (!string.IsNullOrEmpty(record.ResponseContent))
+                            messages.Add(new ChatMessage("assistant", record.ResponseContent));
+                        break;
+                    case "tool_result":
+                        if (!string.IsNullOrEmpty(record.ToolResultJson))
+                            messages.Add(new ChatMessage("tool", record.ToolResultJson));
+                        break;
+                }
+            }
+            
+            return messages;
+        }
+
+        /// <summary>
+        /// Record a user message to the database.
+        /// </summary>
+        public async Task<long> RecordUserMessageAsync(string sessionId, string content)
+        {
+            var record = new MessageRecord
+            {
+                SessionId = sessionId,
+                StartedAt = DateTime.Now,
+                AgentRole = "main",
+                AgentDepth = 0,
+                ModelId = AgentConfig.Config.Model,
+                MessageType = "user",
+                RequestContent = content,
+                Status = "completed"
+            };
+            
+            var messageId = await SqliteService.Instance.StartMessageAsync(record);
+            
+            // Immediately complete user messages
+            await SqliteService.Instance.CompleteMessageAsync(messageId, new MessageCompleteInfo
+            {
+                CompletedAt = DateTime.Now,
+                DurationMs = 0
+            });
+            
+            return messageId;
+        }
+
+        /// <summary>
+        /// Start recording an assistant message (call when sending to LLM).
+        /// </summary>
+        public async Task<long> StartAssistantMessageAsync(string sessionId, int? contextTokens = null)
+        {
+            var record = new MessageRecord
+            {
+                SessionId = sessionId,
+                StartedAt = DateTime.Now,
+                AgentRole = "main",
+                AgentDepth = 0,
+                ModelId = AgentConfig.Config.Model,
+                MessageType = "assistant",
+                ContextMode = "full",
+                ContextTokenCount = contextTokens,
+                Status = "running"
+            };
+            
+            return await SqliteService.Instance.StartMessageAsync(record);
+        }
+
+        /// <summary>
+        /// Complete an assistant message with response data.
+        /// </summary>
+        public async Task CompleteAssistantMessageAsync(long messageId, string response, int? promptTokens = null, int? completionTokens = null, long durationMs = 0)
+        {
+            await SqliteService.Instance.CompleteMessageAsync(messageId, new MessageCompleteInfo
+            {
+                CompletedAt = DateTime.Now,
+                DurationMs = durationMs,
+                ResponseContent = response,
+                PromptTokens = promptTokens,
+                CompletionTokens = completionTokens,
+                TotalTokens = (promptTokens ?? 0) + (completionTokens ?? 0)
+            });
+        }
+
+        /// <summary>
+        /// Record a tool call.
+        /// </summary>
+        public async Task<long> RecordToolCallAsync(string sessionId, string toolName, string argsJson, long? parentMessageId = null)
+        {
+            var record = new MessageRecord
+            {
+                SessionId = sessionId,
+                ParentMessageId = parentMessageId,
+                StartedAt = DateTime.Now,
+                AgentRole = "main",
+                AgentDepth = 0,
+                ModelId = AgentConfig.Config.Model,
+                MessageType = "tool_call",
+                ToolName = toolName,
+                ToolArgsJson = argsJson,
+                Status = "running"
+            };
+            
+            return await SqliteService.Instance.StartMessageAsync(record);
+        }
+
+        /// <summary>
+        /// Complete a tool call with result.
+        /// </summary>
+        public async Task CompleteToolCallAsync(long messageId, string resultJson, long durationMs = 0)
+        {
+            await SqliteService.Instance.CompleteMessageAsync(messageId, new MessageCompleteInfo
+            {
+                CompletedAt = DateTime.Now,
+                DurationMs = durationMs,
+                ToolResultJson = resultJson
+            });
+        }
+
+        /// <summary>
         /// Get list of recent sessions for the UI.
         /// </summary>
         public async Task<List<SessionSummary>> GetRecentSessionsAsync(int limit = 10)
@@ -293,7 +437,7 @@ namespace thuvu.Web.Services
                     SessionId = s.SessionId,
                     CreatedAt = s.CreatedAt,
                     LastActivityAt = s.LastActivityAt,
-                    MessageCount = CountMessages(s.MessagesJson),
+                    MessageCount = s.MessageCount,
                     IsActive = _sessions.ContainsKey(s.SessionId)
                 }).ToList();
             }
@@ -301,23 +445,6 @@ namespace thuvu.Web.Services
             {
                 AgentLogger.LogError("Failed to get recent sessions: {Error}", ex.Message);
                 return new List<SessionSummary>();
-            }
-        }
-
-        private static int CountMessages(string messagesJson)
-        {
-            try
-            {
-                var messages = JsonSerializer.Deserialize<List<JsonElement>>(messagesJson);
-                // Count non-system, non-tool messages
-                return messages?.Count(m => 
-                    m.TryGetProperty("Role", out var role) && 
-                    role.GetString() != "system" && 
-                    role.GetString() != "tool") ?? 0;
-            }
-            catch
-            {
-                return 0;
             }
         }
 

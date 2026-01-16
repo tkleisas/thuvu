@@ -115,17 +115,79 @@ namespace thuvu.Tools
                     symbol_count INTEGER DEFAULT 0
                 );
 
-                -- Web agent sessions for persistence across reconnections
+                -- Web agent sessions (lightweight metadata, messages stored separately)
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
-                    messages_json TEXT NOT NULL,  -- JSON serialized List<ChatMessage>
-                    tools_json TEXT,              -- JSON serialized List<Tool> (optional, can rebuild)
-                    system_prompt TEXT,
-                    model_id TEXT,
                     created_at TEXT DEFAULT (datetime('now')),
                     last_activity_at TEXT DEFAULT (datetime('now')),
-                    is_processing INTEGER DEFAULT 0,
-                    metadata_json TEXT            -- Additional metadata as JSON
+                    system_prompt TEXT,
+                    model_id TEXT,
+                    agent_role TEXT DEFAULT 'main',
+                    title TEXT,                    -- Auto-generated or user-set session title
+                    work_directory TEXT,
+                    metadata_json TEXT
+                );
+
+                -- Messages table for all LLM interactions (supports sub-agent hierarchy)
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    parent_message_id INTEGER,     -- Self-referential FK for sub-agent hierarchy
+                    
+                    -- Timing
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    duration_ms INTEGER,
+                    
+                    -- Agent Info
+                    agent_role TEXT,               -- 'main', 'planner', 'coder', 'tester', 'reviewer', etc.
+                    agent_depth INTEGER DEFAULT 0, -- 0=main, 1=sub-agent, 2=sub-sub-agent
+                    model_id TEXT,
+                    system_prompt_id TEXT,         -- Reference to role's system prompt
+                    
+                    -- Message type and direction
+                    message_type TEXT NOT NULL,    -- 'user', 'assistant', 'tool_call', 'tool_result', 'delegation', 'system'
+                    
+                    -- Request (for user/delegation messages)
+                    request_content TEXT,          -- User prompt or delegation task
+                    context_mode TEXT,             -- 'full', 'summary', 'selective'
+                    context_token_count INTEGER,
+                    
+                    -- Response (for assistant messages)
+                    response_content TEXT,         -- Full LLM response
+                    response_summary TEXT,         -- Condensed summary for parent (sub-agents)
+                    
+                    -- Tool calls
+                    tool_name TEXT,                -- Tool name if this is a tool call/result
+                    tool_args_json TEXT,           -- Tool arguments as JSON
+                    tool_result_json TEXT,         -- Tool result as JSON
+                    
+                    -- Files tracking
+                    files_modified_json TEXT,      -- JSON array of files touched
+                    files_created_json TEXT,       -- JSON array of files created
+                    
+                    -- Token metrics
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER,
+                    
+                    -- Iteration tracking (for agent loops)
+                    iteration_number INTEGER DEFAULT 0,
+                    
+                    -- Bailout tracking
+                    max_iterations INTEGER,
+                    max_duration_ms INTEGER,
+                    bailout_reason TEXT,           -- 'timeout', 'max_iterations', 'error', 'user_cancelled'
+                    
+                    -- Status
+                    status TEXT DEFAULT 'pending', -- 'pending', 'running', 'completed', 'failed', 'cancelled', 'timeout'
+                    error_message TEXT,
+                    
+                    -- Metadata
+                    metadata_json TEXT,
+                    
+                    FOREIGN KEY (parent_message_id) REFERENCES messages(id),
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
                 );
 
                 -- Indexes for performance
@@ -140,6 +202,13 @@ namespace thuvu.Tools
                 CREATE INDEX IF NOT EXISTS idx_context_project ON context(project_path);
                 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
                 CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity_at);
+                CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(agent_role);
+                CREATE INDEX IF NOT EXISTS idx_messages_depth ON messages(agent_depth);
+                CREATE INDEX IF NOT EXISTS idx_messages_started ON messages(started_at);
+                CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
+                CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type);
             ";
 
             await using var cmd = conn.CreateCommand();
@@ -624,28 +693,28 @@ namespace thuvu.Tools
             await using var cmd = conn.CreateCommand();
 
             cmd.CommandText = @"
-                INSERT INTO sessions (session_id, messages_json, tools_json, system_prompt, model_id, 
-                                      created_at, last_activity_at, is_processing, metadata_json)
-                VALUES (@session_id, @messages_json, @tools_json, @system_prompt, @model_id,
-                        @created_at, @last_activity_at, @is_processing, @metadata_json)
+                INSERT INTO sessions (session_id, system_prompt, model_id, agent_role, title, 
+                                      work_directory, created_at, last_activity_at, metadata_json)
+                VALUES (@session_id, @system_prompt, @model_id, @agent_role, @title,
+                        @work_directory, @created_at, @last_activity_at, @metadata_json)
                 ON CONFLICT(session_id) DO UPDATE SET
-                    messages_json = @messages_json,
-                    tools_json = @tools_json,
                     system_prompt = @system_prompt,
                     model_id = @model_id,
+                    agent_role = @agent_role,
+                    title = @title,
+                    work_directory = @work_directory,
                     last_activity_at = @last_activity_at,
-                    is_processing = @is_processing,
                     metadata_json = @metadata_json
             ";
 
             cmd.Parameters.AddWithValue("@session_id", session.SessionId);
-            cmd.Parameters.AddWithValue("@messages_json", session.MessagesJson);
-            cmd.Parameters.AddWithValue("@tools_json", (object?)session.ToolsJson ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@system_prompt", (object?)session.SystemPrompt ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@model_id", (object?)session.ModelId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@agent_role", (object?)session.AgentRole ?? "main");
+            cmd.Parameters.AddWithValue("@title", (object?)session.Title ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@work_directory", (object?)session.WorkDirectory ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@created_at", session.CreatedAt.ToString("o"));
             cmd.Parameters.AddWithValue("@last_activity_at", session.LastActivityAt.ToString("o"));
-            cmd.Parameters.AddWithValue("@is_processing", session.IsProcessing ? 1 : 0);
             cmd.Parameters.AddWithValue("@metadata_json", (object?)session.MetadataJson ?? DBNull.Value);
 
             await cmd.ExecuteNonQueryAsync(ct);
@@ -661,8 +730,8 @@ namespace thuvu.Tools
             await using var cmd = conn.CreateCommand();
 
             cmd.CommandText = @"
-                SELECT session_id, messages_json, tools_json, system_prompt, model_id,
-                       created_at, last_activity_at, is_processing, metadata_json
+                SELECT session_id, system_prompt, model_id, agent_role, title,
+                       work_directory, created_at, last_activity_at, metadata_json
                 FROM sessions
                 WHERE session_id = @session_id
             ";
@@ -677,7 +746,7 @@ namespace thuvu.Tools
         }
 
         /// <summary>
-        /// Get list of recent sessions.
+        /// Get list of recent sessions with message counts.
         /// </summary>
         public async Task<List<SessionData>> GetRecentSessionsAsync(int limit = 10, CancellationToken ct = default)
         {
@@ -685,10 +754,11 @@ namespace thuvu.Tools
             await using var cmd = conn.CreateCommand();
 
             cmd.CommandText = @"
-                SELECT session_id, messages_json, tools_json, system_prompt, model_id,
-                       created_at, last_activity_at, is_processing, metadata_json
-                FROM sessions
-                ORDER BY last_activity_at DESC
+                SELECT s.session_id, s.system_prompt, s.model_id, s.agent_role, s.title,
+                       s.work_directory, s.created_at, s.last_activity_at, s.metadata_json,
+                       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.session_id) as message_count
+                FROM sessions s
+                ORDER BY s.last_activity_at DESC
                 LIMIT @limit
             ";
             cmd.Parameters.AddWithValue("@limit", limit);
@@ -697,19 +767,30 @@ namespace thuvu.Tools
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
             {
-                results.Add(ReadSession(reader));
+                var session = ReadSession(reader);
+                session.MessageCount = reader.IsDBNull(9) ? 0 : reader.GetInt32(9);
+                results.Add(session);
             }
             return results;
         }
 
         /// <summary>
-        /// Delete a session from the database.
+        /// Delete a session and its messages from the database.
         /// </summary>
         public async Task<bool> DeleteSessionAsync(string sessionId, CancellationToken ct = default)
         {
             await using var conn = await GetConnectionAsync(ct);
+            
+            // Delete messages first (FK constraint)
+            await using (var msgCmd = conn.CreateCommand())
+            {
+                msgCmd.CommandText = "DELETE FROM messages WHERE session_id = @session_id";
+                msgCmd.Parameters.AddWithValue("@session_id", sessionId);
+                await msgCmd.ExecuteNonQueryAsync(ct);
+            }
+            
+            // Delete session
             await using var cmd = conn.CreateCommand();
-
             cmd.CommandText = "DELETE FROM sessions WHERE session_id = @session_id";
             cmd.Parameters.AddWithValue("@session_id", sessionId);
 
@@ -718,13 +799,41 @@ namespace thuvu.Tools
         }
 
         /// <summary>
-        /// Clean up old sessions (older than specified days).
+        /// Clean up old sessions and their messages (older than specified days).
         /// </summary>
         public async Task<int> CleanupOldSessionsAsync(int olderThanDays = 7, CancellationToken ct = default)
         {
             await using var conn = await GetConnectionAsync(ct);
-            await using var cmd = conn.CreateCommand();
+            
+            // Get old session IDs
+            var oldSessionIds = new List<string>();
+            await using (var selectCmd = conn.CreateCommand())
+            {
+                selectCmd.CommandText = @"
+                    SELECT session_id FROM sessions 
+                    WHERE last_activity_at < datetime('now', @days_ago)
+                ";
+                selectCmd.Parameters.AddWithValue("@days_ago", $"-{olderThanDays} days");
+                await using var reader = await selectCmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    oldSessionIds.Add(reader.GetString(0));
+                }
+            }
 
+            if (oldSessionIds.Count == 0) return 0;
+
+            // Delete messages for old sessions
+            foreach (var sid in oldSessionIds)
+            {
+                await using var msgCmd = conn.CreateCommand();
+                msgCmd.CommandText = "DELETE FROM messages WHERE session_id = @session_id";
+                msgCmd.Parameters.AddWithValue("@session_id", sid);
+                await msgCmd.ExecuteNonQueryAsync(ct);
+            }
+
+            // Delete old sessions
+            await using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
                 DELETE FROM sessions 
                 WHERE last_activity_at < datetime('now', @days_ago)
@@ -735,20 +844,19 @@ namespace thuvu.Tools
         }
 
         /// <summary>
-        /// Update session's last activity timestamp and processing state.
+        /// Update session's last activity timestamp.
         /// </summary>
-        public async Task UpdateSessionActivityAsync(string sessionId, bool isProcessing = false, CancellationToken ct = default)
+        public async Task UpdateSessionActivityAsync(string sessionId, CancellationToken ct = default)
         {
             await using var conn = await GetConnectionAsync(ct);
             await using var cmd = conn.CreateCommand();
 
             cmd.CommandText = @"
                 UPDATE sessions 
-                SET last_activity_at = datetime('now'), is_processing = @is_processing
+                SET last_activity_at = datetime('now')
                 WHERE session_id = @session_id
             ";
             cmd.Parameters.AddWithValue("@session_id", sessionId);
-            cmd.Parameters.AddWithValue("@is_processing", isProcessing ? 1 : 0);
 
             await cmd.ExecuteNonQueryAsync(ct);
         }
@@ -758,14 +866,296 @@ namespace thuvu.Tools
             return new SessionData
             {
                 SessionId = reader.GetString(0),
-                MessagesJson = reader.GetString(1),
-                ToolsJson = reader.IsDBNull(2) ? null : reader.GetString(2),
-                SystemPrompt = reader.IsDBNull(3) ? null : reader.GetString(3),
-                ModelId = reader.IsDBNull(4) ? null : reader.GetString(4),
-                CreatedAt = reader.IsDBNull(5) ? DateTime.Now : DateTime.Parse(reader.GetString(5)),
-                LastActivityAt = reader.IsDBNull(6) ? DateTime.Now : DateTime.Parse(reader.GetString(6)),
-                IsProcessing = !reader.IsDBNull(7) && reader.GetInt32(7) == 1,
+                SystemPrompt = reader.IsDBNull(1) ? null : reader.GetString(1),
+                ModelId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                AgentRole = reader.IsDBNull(3) ? "main" : reader.GetString(3),
+                Title = reader.IsDBNull(4) ? null : reader.GetString(4),
+                WorkDirectory = reader.IsDBNull(5) ? null : reader.GetString(5),
+                CreatedAt = reader.IsDBNull(6) ? DateTime.Now : DateTime.Parse(reader.GetString(6)),
+                LastActivityAt = reader.IsDBNull(7) ? DateTime.Now : DateTime.Parse(reader.GetString(7)),
                 MetadataJson = reader.IsDBNull(8) ? null : reader.GetString(8)
+            };
+        }
+
+        #endregion
+
+        #region Message Operations
+
+        /// <summary>
+        /// Start a new message record (returns message ID).
+        /// </summary>
+        public async Task<long> StartMessageAsync(MessageRecord message, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                INSERT INTO messages (
+                    session_id, parent_message_id, started_at, agent_role, agent_depth, model_id,
+                    system_prompt_id, message_type, request_content, context_mode, context_token_count,
+                    max_iterations, max_duration_ms, status
+                )
+                VALUES (
+                    @session_id, @parent_message_id, @started_at, @agent_role, @agent_depth, @model_id,
+                    @system_prompt_id, @message_type, @request_content, @context_mode, @context_token_count,
+                    @max_iterations, @max_duration_ms, 'running'
+                )
+                RETURNING id
+            ";
+
+            cmd.Parameters.AddWithValue("@session_id", message.SessionId);
+            cmd.Parameters.AddWithValue("@parent_message_id", message.ParentMessageId.HasValue ? message.ParentMessageId.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@started_at", message.StartedAt.ToString("o"));
+            cmd.Parameters.AddWithValue("@agent_role", (object?)message.AgentRole ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@agent_depth", message.AgentDepth);
+            cmd.Parameters.AddWithValue("@model_id", (object?)message.ModelId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@system_prompt_id", (object?)message.SystemPromptId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@message_type", message.MessageType);
+            cmd.Parameters.AddWithValue("@request_content", (object?)message.RequestContent ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@context_mode", (object?)message.ContextMode ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@context_token_count", message.ContextTokenCount.HasValue ? message.ContextTokenCount.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@max_iterations", message.MaxIterations.HasValue ? message.MaxIterations.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@max_duration_ms", message.MaxDurationMs.HasValue ? message.MaxDurationMs.Value : DBNull.Value);
+
+            var result = await cmd.ExecuteScalarAsync(ct);
+            var messageId = result != null ? Convert.ToInt64(result) : 0;
+            
+            // Update session activity
+            await UpdateSessionActivityAsync(message.SessionId, ct);
+            
+            return messageId;
+        }
+
+        /// <summary>
+        /// Complete a message with response data.
+        /// </summary>
+        public async Task CompleteMessageAsync(long messageId, MessageCompleteInfo info, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                UPDATE messages SET
+                    completed_at = @completed_at,
+                    duration_ms = @duration_ms,
+                    response_content = @response_content,
+                    response_summary = @response_summary,
+                    tool_name = @tool_name,
+                    tool_args_json = @tool_args_json,
+                    tool_result_json = @tool_result_json,
+                    files_modified_json = @files_modified_json,
+                    files_created_json = @files_created_json,
+                    prompt_tokens = @prompt_tokens,
+                    completion_tokens = @completion_tokens,
+                    total_tokens = @total_tokens,
+                    iteration_number = @iteration_number,
+                    status = 'completed'
+                WHERE id = @id
+            ";
+
+            cmd.Parameters.AddWithValue("@id", messageId);
+            cmd.Parameters.AddWithValue("@completed_at", info.CompletedAt.ToString("o"));
+            cmd.Parameters.AddWithValue("@duration_ms", info.DurationMs);
+            cmd.Parameters.AddWithValue("@response_content", (object?)info.ResponseContent ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@response_summary", (object?)info.ResponseSummary ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@tool_name", (object?)info.ToolName ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@tool_args_json", (object?)info.ToolArgsJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@tool_result_json", (object?)info.ToolResultJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@files_modified_json", (object?)info.FilesModifiedJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@files_created_json", (object?)info.FilesCreatedJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@prompt_tokens", info.PromptTokens.HasValue ? info.PromptTokens.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@completion_tokens", info.CompletionTokens.HasValue ? info.CompletionTokens.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@total_tokens", info.TotalTokens.HasValue ? info.TotalTokens.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@iteration_number", info.IterationNumber);
+
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        /// <summary>
+        /// Mark a message as failed.
+        /// </summary>
+        public async Task FailMessageAsync(long messageId, string error, string? bailoutReason = null, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                UPDATE messages SET
+                    completed_at = datetime('now'),
+                    status = @status,
+                    error_message = @error_message,
+                    bailout_reason = @bailout_reason
+                WHERE id = @id
+            ";
+
+            cmd.Parameters.AddWithValue("@id", messageId);
+            cmd.Parameters.AddWithValue("@status", bailoutReason != null ? "timeout" : "failed");
+            cmd.Parameters.AddWithValue("@error_message", error);
+            cmd.Parameters.AddWithValue("@bailout_reason", (object?)bailoutReason ?? DBNull.Value);
+
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        /// <summary>
+        /// Get all messages for a session, ordered by start time.
+        /// </summary>
+        public async Task<List<MessageRecord>> GetSessionMessagesAsync(string sessionId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                SELECT id, session_id, parent_message_id, started_at, completed_at, duration_ms,
+                       agent_role, agent_depth, model_id, system_prompt_id, message_type,
+                       request_content, context_mode, context_token_count, response_content, response_summary,
+                       tool_name, tool_args_json, tool_result_json, files_modified_json, files_created_json,
+                       prompt_tokens, completion_tokens, total_tokens, iteration_number,
+                       max_iterations, max_duration_ms, bailout_reason, status, error_message, metadata_json
+                FROM messages
+                WHERE session_id = @session_id
+                ORDER BY started_at ASC
+            ";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+
+            var results = new List<MessageRecord>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                results.Add(ReadMessage(reader));
+            }
+            return results;
+        }
+
+        /// <summary>
+        /// Get child messages of a parent message (for sub-agent hierarchy).
+        /// </summary>
+        public async Task<List<MessageRecord>> GetChildMessagesAsync(long parentMessageId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                SELECT id, session_id, parent_message_id, started_at, completed_at, duration_ms,
+                       agent_role, agent_depth, model_id, system_prompt_id, message_type,
+                       request_content, context_mode, context_token_count, response_content, response_summary,
+                       tool_name, tool_args_json, tool_result_json, files_modified_json, files_created_json,
+                       prompt_tokens, completion_tokens, total_tokens, iteration_number,
+                       max_iterations, max_duration_ms, bailout_reason, status, error_message, metadata_json
+                FROM messages
+                WHERE parent_message_id = @parent_id
+                ORDER BY started_at ASC
+            ";
+            cmd.Parameters.AddWithValue("@parent_id", parentMessageId);
+
+            var results = new List<MessageRecord>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                results.Add(ReadMessage(reader));
+            }
+            return results;
+        }
+
+        /// <summary>
+        /// Get a single message by ID.
+        /// </summary>
+        public async Task<MessageRecord?> GetMessageAsync(long messageId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                SELECT id, session_id, parent_message_id, started_at, completed_at, duration_ms,
+                       agent_role, agent_depth, model_id, system_prompt_id, message_type,
+                       request_content, context_mode, context_token_count, response_content, response_summary,
+                       tool_name, tool_args_json, tool_result_json, files_modified_json, files_created_json,
+                       prompt_tokens, completion_tokens, total_tokens, iteration_number,
+                       max_iterations, max_duration_ms, bailout_reason, status, error_message, metadata_json
+                FROM messages
+                WHERE id = @id
+            ";
+            cmd.Parameters.AddWithValue("@id", messageId);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                return ReadMessage(reader);
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Get token usage statistics for a session.
+        /// </summary>
+        public async Task<SessionTokenStats> GetSessionTokenStatsAsync(string sessionId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                SELECT 
+                    COUNT(*) as message_count,
+                    SUM(COALESCE(prompt_tokens, 0)) as total_prompt_tokens,
+                    SUM(COALESCE(completion_tokens, 0)) as total_completion_tokens,
+                    SUM(COALESCE(total_tokens, 0)) as total_tokens,
+                    SUM(COALESCE(duration_ms, 0)) as total_duration_ms,
+                    MAX(agent_depth) as max_depth
+                FROM messages
+                WHERE session_id = @session_id
+            ";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                return new SessionTokenStats
+                {
+                    MessageCount = reader.GetInt32(0),
+                    TotalPromptTokens = reader.IsDBNull(1) ? 0 : reader.GetInt64(1),
+                    TotalCompletionTokens = reader.IsDBNull(2) ? 0 : reader.GetInt64(2),
+                    TotalTokens = reader.IsDBNull(3) ? 0 : reader.GetInt64(3),
+                    TotalDurationMs = reader.IsDBNull(4) ? 0 : reader.GetInt64(4),
+                    MaxDepth = reader.IsDBNull(5) ? 0 : reader.GetInt32(5)
+                };
+            }
+            return new SessionTokenStats();
+        }
+
+        private static MessageRecord ReadMessage(SqliteDataReader reader)
+        {
+            return new MessageRecord
+            {
+                Id = reader.GetInt64(0),
+                SessionId = reader.GetString(1),
+                ParentMessageId = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                StartedAt = DateTime.Parse(reader.GetString(3)),
+                CompletedAt = reader.IsDBNull(4) ? null : DateTime.Parse(reader.GetString(4)),
+                DurationMs = reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                AgentRole = reader.IsDBNull(6) ? null : reader.GetString(6),
+                AgentDepth = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+                ModelId = reader.IsDBNull(8) ? null : reader.GetString(8),
+                SystemPromptId = reader.IsDBNull(9) ? null : reader.GetString(9),
+                MessageType = reader.GetString(10),
+                RequestContent = reader.IsDBNull(11) ? null : reader.GetString(11),
+                ContextMode = reader.IsDBNull(12) ? null : reader.GetString(12),
+                ContextTokenCount = reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                ResponseContent = reader.IsDBNull(14) ? null : reader.GetString(14),
+                ResponseSummary = reader.IsDBNull(15) ? null : reader.GetString(15),
+                ToolName = reader.IsDBNull(16) ? null : reader.GetString(16),
+                ToolArgsJson = reader.IsDBNull(17) ? null : reader.GetString(17),
+                ToolResultJson = reader.IsDBNull(18) ? null : reader.GetString(18),
+                FilesModifiedJson = reader.IsDBNull(19) ? null : reader.GetString(19),
+                FilesCreatedJson = reader.IsDBNull(20) ? null : reader.GetString(20),
+                PromptTokens = reader.IsDBNull(21) ? null : reader.GetInt32(21),
+                CompletionTokens = reader.IsDBNull(22) ? null : reader.GetInt32(22),
+                TotalTokens = reader.IsDBNull(23) ? null : reader.GetInt32(23),
+                IterationNumber = reader.IsDBNull(24) ? 0 : reader.GetInt32(24),
+                MaxIterations = reader.IsDBNull(25) ? null : reader.GetInt32(25),
+                MaxDurationMs = reader.IsDBNull(26) ? null : reader.GetInt64(26),
+                BailoutReason = reader.IsDBNull(27) ? null : reader.GetString(27),
+                Status = reader.GetString(28),
+                ErrorMessage = reader.IsDBNull(29) ? null : reader.GetString(29),
+                MetadataJson = reader.IsDBNull(30) ? null : reader.GetString(30)
             };
         }
 
@@ -841,14 +1231,112 @@ namespace thuvu.Tools
     public class SessionData
     {
         public string SessionId { get; set; } = "";
-        public string MessagesJson { get; set; } = "[]";
-        public string? ToolsJson { get; set; }
         public string? SystemPrompt { get; set; }
         public string? ModelId { get; set; }
+        public string AgentRole { get; set; } = "main";
+        public string? Title { get; set; }
+        public string? WorkDirectory { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public DateTime LastActivityAt { get; set; } = DateTime.Now;
-        public bool IsProcessing { get; set; }
         public string? MetadataJson { get; set; }
+        
+        // Computed properties (not stored directly)
+        public int MessageCount { get; set; }
+    }
+
+    /// <summary>
+    /// Message record for tracking all LLM interactions including sub-agent hierarchy.
+    /// </summary>
+    public class MessageRecord
+    {
+        public long Id { get; set; }
+        public string SessionId { get; set; } = "";
+        public long? ParentMessageId { get; set; }
+        
+        // Timing
+        public DateTime StartedAt { get; set; } = DateTime.Now;
+        public DateTime? CompletedAt { get; set; }
+        public long? DurationMs { get; set; }
+        
+        // Agent Info
+        public string? AgentRole { get; set; }
+        public int AgentDepth { get; set; }
+        public string? ModelId { get; set; }
+        public string? SystemPromptId { get; set; }
+        
+        // Message type and direction
+        public string MessageType { get; set; } = "user"; // 'user', 'assistant', 'tool_call', 'tool_result', 'delegation', 'system'
+        
+        // Request
+        public string? RequestContent { get; set; }
+        public string? ContextMode { get; set; }
+        public int? ContextTokenCount { get; set; }
+        
+        // Response
+        public string? ResponseContent { get; set; }
+        public string? ResponseSummary { get; set; }
+        
+        // Tool calls
+        public string? ToolName { get; set; }
+        public string? ToolArgsJson { get; set; }
+        public string? ToolResultJson { get; set; }
+        
+        // Files tracking
+        public string? FilesModifiedJson { get; set; }
+        public string? FilesCreatedJson { get; set; }
+        
+        // Token metrics
+        public int? PromptTokens { get; set; }
+        public int? CompletionTokens { get; set; }
+        public int? TotalTokens { get; set; }
+        
+        // Iteration tracking
+        public int IterationNumber { get; set; }
+        
+        // Bailout tracking
+        public int? MaxIterations { get; set; }
+        public long? MaxDurationMs { get; set; }
+        public string? BailoutReason { get; set; }
+        
+        // Status
+        public string Status { get; set; } = "pending"; // 'pending', 'running', 'completed', 'failed', 'cancelled', 'timeout'
+        public string? ErrorMessage { get; set; }
+        
+        // Metadata
+        public string? MetadataJson { get; set; }
+    }
+
+    /// <summary>
+    /// Information for completing a message record.
+    /// </summary>
+    public class MessageCompleteInfo
+    {
+        public DateTime CompletedAt { get; set; } = DateTime.Now;
+        public long DurationMs { get; set; }
+        public string? ResponseContent { get; set; }
+        public string? ResponseSummary { get; set; }
+        public string? ToolName { get; set; }
+        public string? ToolArgsJson { get; set; }
+        public string? ToolResultJson { get; set; }
+        public string? FilesModifiedJson { get; set; }
+        public string? FilesCreatedJson { get; set; }
+        public int? PromptTokens { get; set; }
+        public int? CompletionTokens { get; set; }
+        public int? TotalTokens { get; set; }
+        public int IterationNumber { get; set; }
+    }
+
+    /// <summary>
+    /// Token usage statistics for a session.
+    /// </summary>
+    public class SessionTokenStats
+    {
+        public int MessageCount { get; set; }
+        public long TotalPromptTokens { get; set; }
+        public long TotalCompletionTokens { get; set; }
+        public long TotalTokens { get; set; }
+        public long TotalDurationMs { get; set; }
+        public int MaxDepth { get; set; }
     }
 
     #endregion
