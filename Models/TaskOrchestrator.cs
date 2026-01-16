@@ -681,7 +681,7 @@ namespace thuvu.Models
                     onToken: token => OnAgentOutput?.Invoke(agentId, token),
                     onToolResult: (toolName, result) => OnAgentToolCall?.Invoke(agentId, toolName, result.Length > 100 ? result.Substring(0, 100) + "..." : result),
                     onUsage: null,
-                    onToolComplete: (toolName, result, elapsed) => OnAgentToolCall?.Invoke(agentId, toolName, $"[{elapsed.TotalSeconds:F1}s] Done"),
+                    onToolComplete: (toolName, args, result, elapsed) => OnAgentToolCall?.Invoke(agentId, toolName, $"[{elapsed.TotalSeconds:F1}s] Done"),
                     onToolProgress: progress => OnAgentToolProgress?.Invoke(agentId, progress),
                     maxIterations: maxIterations);
                 

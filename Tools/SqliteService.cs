@@ -125,6 +125,7 @@ namespace thuvu.Tools
                     agent_role TEXT DEFAULT 'main',
                     title TEXT,                    -- Auto-generated or user-set session title
                     work_directory TEXT,
+                    is_active INTEGER DEFAULT 0,   -- 1 if session is currently processing
                     metadata_json TEXT
                 );
 
@@ -861,6 +862,39 @@ namespace thuvu.Tools
             await cmd.ExecuteNonQueryAsync(ct);
         }
 
+        /// <summary>
+        /// Set session active/inactive status.
+        /// </summary>
+        public async Task SetSessionActiveAsync(string sessionId, bool isActive, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                UPDATE sessions 
+                SET is_active = @is_active, last_activity_at = datetime('now')
+                WHERE session_id = @session_id
+            ";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+            cmd.Parameters.AddWithValue("@is_active", isActive ? 1 : 0);
+
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
+        /// <summary>
+        /// Delete all messages for a session (used before re-syncing).
+        /// </summary>
+        public async Task DeleteSessionMessagesAsync(string sessionId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = "DELETE FROM messages WHERE session_id = @session_id";
+            cmd.Parameters.AddWithValue("@session_id", sessionId);
+
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+
         private static SessionData ReadSession(SqliteDataReader reader)
         {
             return new SessionData
@@ -893,11 +927,15 @@ namespace thuvu.Tools
                 INSERT INTO messages (
                     session_id, parent_message_id, started_at, agent_role, agent_depth, model_id,
                     system_prompt_id, message_type, request_content, response_content, context_mode, context_token_count,
+                    tool_name, tool_args_json, tool_result_json,
+                    prompt_tokens, completion_tokens, total_tokens,
                     max_iterations, max_duration_ms, status
                 )
                 VALUES (
                     @session_id, @parent_message_id, @started_at, @agent_role, @agent_depth, @model_id,
                     @system_prompt_id, @message_type, @request_content, @response_content, @context_mode, @context_token_count,
+                    @tool_name, @tool_args_json, @tool_result_json,
+                    @prompt_tokens, @completion_tokens, @total_tokens,
                     @max_iterations, @max_duration_ms, @status
                 )
                 RETURNING id
@@ -915,6 +953,12 @@ namespace thuvu.Tools
             cmd.Parameters.AddWithValue("@response_content", (object?)message.ResponseContent ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@context_mode", (object?)message.ContextMode ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@context_token_count", message.ContextTokenCount.HasValue ? message.ContextTokenCount.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@tool_name", (object?)message.ToolName ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@tool_args_json", (object?)message.ToolArgsJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@tool_result_json", (object?)message.ToolResultJson ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@prompt_tokens", message.PromptTokens.HasValue ? message.PromptTokens.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@completion_tokens", message.CompletionTokens.HasValue ? message.CompletionTokens.Value : DBNull.Value);
+            cmd.Parameters.AddWithValue("@total_tokens", message.TotalTokens.HasValue ? message.TotalTokens.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("@max_iterations", message.MaxIterations.HasValue ? message.MaxIterations.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("@max_duration_ms", message.MaxDurationMs.HasValue ? message.MaxDurationMs.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("@status", message.Status ?? "running");

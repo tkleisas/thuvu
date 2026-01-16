@@ -118,7 +118,7 @@ namespace thuvu.Tui
                     {
                         _updateWorkLabel($"Tokens: {usage.TotalTokens}");
                     },
-                    onToolComplete: (name, result, elapsed) =>
+                    onToolComplete: (name, args, result, elapsed) =>
                     {
                         AppendToolText(name, result, elapsed);
                     },
@@ -148,7 +148,7 @@ namespace thuvu.Tui
             return await AgentLoop.CompleteWithToolsAsync(
                 _http, AgentConfig.Config.Model, messages, _tools, ct,
                 onToolResult: null,
-                onToolComplete: (name, result, elapsed) => AppendToolText(name, result, elapsed),
+                onToolComplete: (name, args, result, elapsed) => AppendToolText(name, result, elapsed),
                 onToolProgress: _updateToolProgress
             );
         }

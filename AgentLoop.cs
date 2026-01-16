@@ -50,7 +50,7 @@ namespace thuvu
             List<Tool> tools,
             CancellationToken ct,
             Action<string, string>? onToolResult = null,
-            Action<string, string, TimeSpan>? onToolComplete = null,
+            Action<string, string, string, TimeSpan>? onToolComplete = null,  // name, argsJson, result, elapsed
             ToolProgressCallback? onToolProgress = null,
             Action<string, string>? onToolCall = null,
             int? maxIterations = null)
@@ -144,7 +144,7 @@ namespace thuvu
                         var toolElapsed = DateTime.Now - toolStart;
                         ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
-                        onToolComplete?.Invoke(name, toolResult, toolElapsed);
+                        onToolComplete?.Invoke(name, argsJson, toolResult, toolElapsed);
                         
                         // Track failures for loop detection
                         // Check for actual error values, not "error":null which indicates success
@@ -205,7 +205,7 @@ namespace thuvu
             Action<string>? onToken = null,
             Action<string, string>? onToolResult = null,
             Action<Usage>? onUsage = null,
-            Action<string, string, TimeSpan>? onToolComplete = null,
+            Action<string, string, string, TimeSpan>? onToolComplete = null,  // name, argsJson, result, elapsed
             ToolProgressCallback? onToolProgress = null,
             Action<string, string>? onToolCall = null,
             int? maxIterations = null)
@@ -336,7 +336,7 @@ namespace thuvu
                         LogAgent($"Tool {name} completed in {toolElapsed.TotalSeconds:F1}s, result length={toolResult.Length}");
                         ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
-                        onToolComplete?.Invoke(name, toolResult, toolElapsed);
+                        onToolComplete?.Invoke(name, argsJson, toolResult, toolElapsed);
                         
                         // Track failures for loop detection
                         // Check for actual error values, not "error":null which indicates success

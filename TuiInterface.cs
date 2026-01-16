@@ -765,7 +765,7 @@ namespace thuvu
                                 });
                                 Application.Wakeup();
                             },
-                            onToolComplete: (name, result, elapsed) =>
+                            onToolComplete: (name, args, result, elapsed) =>
                             {
                                 AppendToolText(name, result, elapsed);
                             },
@@ -788,7 +788,7 @@ namespace thuvu
                         final = await AgentLoop.CompleteWithToolsAsync(
                             _http, AgentConfig.Config.Model, _messages, _tools, ct,
                             onToolResult: null,
-                            onToolComplete: (name, result, elapsed) => AppendToolText(name, result, elapsed),
+                            onToolComplete: (name, args, result, elapsed) => AppendToolText(name, result, elapsed),
                             onToolProgress: UpdateToolProgress
                         );
                     }

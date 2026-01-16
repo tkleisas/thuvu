@@ -575,12 +575,23 @@ namespace thuvu.Web.Services
             session.CurrentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var linkedCt = session.CurrentCts.Token;
             
+            // Set session as active in database
+            _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, true, linkedCt);
+            
             // Set up async permission handler for this session
             SetupAsyncPermissionHandler(sessionId);
             
             // Declare handler outside try block so we can unsubscribe in finally
             Action<string, PendingPermissionRequest>? permissionHandler = null;
             System.Threading.Channels.ChannelWriter<AgentStreamEvent>? channelWriter = null;
+            
+            // Track pending tool calls (name -> args) for combining with results
+            var pendingToolCalls = new System.Collections.Concurrent.ConcurrentDictionary<string, (string ArgsJson, DateTime StartedAt)>();
+            
+            // Track token usage for final message
+            int? lastPromptTokens = null;
+            int? lastCompletionTokens = null;
+            int? lastTotalTokens = null;
 
             try
             {
@@ -590,7 +601,7 @@ namespace thuvu.Web.Services
                 session.Messages.Add(new ChatMessage("user", processedMessage));
                 session.LastActivityAt = DateTime.Now;
                 
-                // Record user message to database
+                // Record user message to database immediately
                 await RecordUserMessageAsync(sessionId, processedMessage);
 
                 yield return new AgentStreamEvent { Type = "status", Data = "Processing..." };
@@ -673,14 +684,45 @@ namespace thuvu.Web.Services
                                         usagePercent = tokenTracker.UsagePercent * 100
                                     })
                                 });
+                                
+                                // Track token usage for the final assistant message
+                                lastPromptTokens = usage.PromptTokens;
+                                lastCompletionTokens = usage.CompletionTokens;
+                                lastTotalTokens = usage.TotalTokens;
                             },
-                            onToolComplete: (name, result, elapsed) =>
+                            onToolComplete: (name, argsJson, toolResult, elapsed) =>
                             {
                                 writer.TryWrite(new AgentStreamEvent 
                                 { 
                                     Type = "tool_complete",
                                     ToolName = name,
                                     Data = $"Completed in {elapsed.TotalSeconds:F1}s"
+                                });
+                                
+                                // Record tool call + result to database immediately
+                                _ = Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        var toolRecord = new MessageRecord
+                                        {
+                                            SessionId = sessionId,
+                                            StartedAt = DateTime.Now.AddMilliseconds(-elapsed.TotalMilliseconds),
+                                            AgentRole = "main",
+                                            AgentDepth = 0,
+                                            ModelId = AgentConfig.Config.Model,
+                                            MessageType = "tool_call",
+                                            ToolName = name,
+                                            ToolArgsJson = argsJson,
+                                            ToolResultJson = TruncateForDb(toolResult),
+                                            Status = "completed"
+                                        };
+                                        await SqliteService.Instance.StartMessageAsync(toolRecord);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        AgentLogger.LogError("Failed to record tool call: {Error}", ex.Message);
+                                    }
                                 });
                             },
                             onToolProgress: progress =>
@@ -764,7 +806,7 @@ namespace thuvu.Web.Services
                             }
                         }
 
-                        // Record assistant response to database
+                        // Record assistant response to database with token usage
                         if (!string.IsNullOrEmpty(result))
                         {
                             try
@@ -778,6 +820,9 @@ namespace thuvu.Web.Services
                                     ModelId = AgentConfig.Config.Model,
                                     MessageType = "assistant",
                                     ResponseContent = result,
+                                    PromptTokens = lastPromptTokens,
+                                    CompletionTokens = lastCompletionTokens,
+                                    TotalTokens = lastTotalTokens,
                                     Status = "completed"
                                 };
                                 await SqliteService.Instance.StartMessageAsync(msgRecord, linkedCt);
@@ -793,10 +838,16 @@ namespace thuvu.Web.Services
                     catch (OperationCanceledException)
                     {
                         writer.TryWrite(new AgentStreamEvent { Type = "cancelled", Data = "Request cancelled" });
+                        
+                        // Record cancellation
+                        _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, false);
                     }
                     catch (Exception ex)
                     {
                         writer.TryWrite(new AgentStreamEvent { Type = "error", Data = ex.Message });
+                        
+                        // Record error
+                        _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, false);
                     }
                     finally
                     {
@@ -820,7 +871,10 @@ namespace thuvu.Web.Services
                 session.CurrentCts?.Dispose();
                 session.CurrentCts = null;
                 
-                // Save session to database after processing completes
+                // Set session as inactive in database
+                _ = SqliteService.Instance.SetSessionActiveAsync(sessionId, false);
+                
+                // Save session metadata
                 _ = SaveSessionToDatabaseAsync(session);
             }
         }
@@ -2121,6 +2175,17 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
                 }
                 return result;
             }
+        }
+
+        /// <summary>
+        /// Truncate result for database storage (larger limit than UI display)
+        /// </summary>
+        private static string TruncateForDb(string result, int maxLength = 50000)
+        {
+            if (string.IsNullOrWhiteSpace(result) || result.Length <= maxLength)
+                return result;
+            
+            return result[..maxLength] + $"\n... (truncated, {result.Length - maxLength} more chars)";
         }
         
         /// <summary>
