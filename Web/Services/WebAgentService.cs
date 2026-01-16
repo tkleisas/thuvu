@@ -195,6 +195,27 @@ namespace thuvu.Web.Services
                     return loaded;
                 }
             }
+            
+            // If no session ID provided, try to load the most recent session from database
+            if (sessionId == null)
+            {
+                var recentSessions = SqliteService.Instance.GetRecentSessionsAsync(1).GetAwaiter().GetResult();
+                if (recentSessions.Count > 0)
+                {
+                    var mostRecent = recentSessions[0];
+                    // Check if it's recent enough (e.g., within the last 24 hours)
+                    if (mostRecent.LastActivityAt > DateTime.Now.AddHours(-24))
+                    {
+                        var loaded = LoadSessionFromDatabaseAsync(mostRecent.SessionId).GetAwaiter().GetResult();
+                        if (loaded != null)
+                        {
+                            _sessions[loaded.SessionId] = loaded;
+                            AgentLogger.LogInfo("Restored most recent session {SessionId} from database", mostRecent.SessionId);
+                            return loaded;
+                        }
+                    }
+                }
+            }
 
             var session = new WebAgentSession
             {
@@ -568,6 +589,9 @@ namespace thuvu.Web.Services
                 
                 session.Messages.Add(new ChatMessage("user", processedMessage));
                 session.LastActivityAt = DateTime.Now;
+                
+                // Record user message to database
+                await RecordUserMessageAsync(sessionId, processedMessage);
 
                 yield return new AgentStreamEvent { Type = "status", Data = "Processing..." };
 
@@ -737,6 +761,30 @@ namespace thuvu.Web.Services
                                     Type = "context_summarized",
                                     Data = "Conversation summarized to reduce context size"
                                 });
+                            }
+                        }
+
+                        // Record assistant response to database
+                        if (!string.IsNullOrEmpty(result))
+                        {
+                            try
+                            {
+                                var msgRecord = new MessageRecord
+                                {
+                                    SessionId = sessionId,
+                                    StartedAt = DateTime.Now,
+                                    AgentRole = "main",
+                                    AgentDepth = 0,
+                                    ModelId = AgentConfig.Config.Model,
+                                    MessageType = "assistant",
+                                    ResponseContent = result,
+                                    Status = "completed"
+                                };
+                                await SqliteService.Instance.StartMessageAsync(msgRecord, linkedCt);
+                            }
+                            catch (Exception dbEx)
+                            {
+                                AgentLogger.LogError("Failed to record assistant message: {Error}", dbEx.Message);
                             }
                         }
 
