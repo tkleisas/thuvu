@@ -35,21 +35,54 @@ public static class UnifiedDiff
 
             foreach (var hunk in file.Hunks)
             {
-                // Try to find the actual start position using fuzzy matching
-                int wantStart = Math.Max(0, hunk.OldStart - 1);
-                int actualStart = FindHunkStart(oldLines, hunk, wantStart, cursor);
+                // Calculate expected start position (1-indexed to 0-indexed)
+                int expectedStart = Math.Max(0, hunk.OldStart - 1);
+                
+                // Get all context and delete lines from hunk for matching
+                var matchLines = hunk.Lines
+                    .Where(hl => hl.Prefix == ' ' || hl.Prefix == '-')
+                    .Select(hl => hl.Text)
+                    .ToList();
+                
+                // First try exact match at expected position
+                int actualStart = -1;
+                if (expectedStart >= cursor && MatchesAt(oldLines, matchLines, expectedStart))
+                {
+                    actualStart = expectedStart;
+                }
+                else
+                {
+                    // Fuzzy search - but be strict: require ALL context lines to match
+                    actualStart = FindHunkStartStrict(oldLines, matchLines, expectedStart, cursor);
+                }
                 
                 if (actualStart < 0)
                 {
+                    // Provide detailed diagnostic
+                    var expected = string.Join("\\n", matchLines.Take(3).Select(l => l.Length > 40 ? l.Substring(0, 40) + "..." : l));
                     rejects.AppendLine($"Reject: could not find hunk context in {file.DisplayPath} at {hunk.Header}");
-                    fileOk = false; break;
+                    rejects.AppendLine($"  Expected at line {hunk.OldStart}, looking for: {expected}");
+                    if (expectedStart < oldLines.Count)
+                    {
+                        var actual = oldLines[expectedStart];
+                        rejects.AppendLine($"  Actual at line {hunk.OldStart}: {(actual.Length > 60 ? actual.Substring(0, 60) + "..." : actual)}");
+                    }
+                    fileOk = false; 
+                    break;
                 }
                 
                 if (actualStart < cursor)
                 {
                     // Overlap means context mismatch—reject
-                    rejects.AppendLine($"Reject: overlap before hunk in {file.DisplayPath} at {hunk.Header}");
-                    fileOk = false; break;
+                    rejects.AppendLine($"Reject: overlap before hunk in {file.DisplayPath} at {hunk.Header} (actualStart={actualStart}, cursor={cursor})");
+                    fileOk = false; 
+                    break;
+                }
+                
+                // Log if we had to adjust position
+                if (actualStart != expectedStart)
+                {
+                    Console.WriteLine($"[UnifiedDiff] Adjusted hunk position: expected line {hunk.OldStart}, found at line {actualStart + 1}");
                 }
 
                 // Copy lines up to hunk start
@@ -66,8 +99,12 @@ public static class UnifiedDiff
                         // context: must match
                         if (cursor >= oldLines.Count || !LineEq(oldLines[cursor], hl.Text))
                         {
-                            rejects.AppendLine($"Reject: context mismatch in {file.DisplayPath} at {hunk.Header}");
-                            fileOk = false; break;
+                            var actualLine = cursor < oldLines.Count ? oldLines[cursor] : "<EOF>";
+                            rejects.AppendLine($"Reject: context mismatch in {file.DisplayPath} at {hunk.Header}, line {cursor + 1}");
+                            rejects.AppendLine($"  Expected: {(hl.Text.Length > 60 ? hl.Text.Substring(0, 60) + "..." : hl.Text)}");
+                            rejects.AppendLine($"  Actual:   {(actualLine.Length > 60 ? actualLine.Substring(0, 60) + "..." : actualLine)}");
+                            fileOk = false; 
+                            break;
                         }
                         output.Add(oldLines[cursor++]);
                     }
@@ -76,8 +113,12 @@ public static class UnifiedDiff
                         // delete: must match
                         if (cursor >= oldLines.Count || !LineEq(oldLines[cursor], hl.Text))
                         {
-                            rejects.AppendLine($"Reject: delete mismatch in {file.DisplayPath} at {hunk.Header}");
-                            fileOk = false; break;
+                            var actualLine = cursor < oldLines.Count ? oldLines[cursor] : "<EOF>";
+                            rejects.AppendLine($"Reject: delete mismatch in {file.DisplayPath} at {hunk.Header}, line {cursor + 1}");
+                            rejects.AppendLine($"  Expected to delete: {(hl.Text.Length > 60 ? hl.Text.Substring(0, 60) + "..." : hl.Text)}");
+                            rejects.AppendLine($"  Actual line:        {(actualLine.Length > 60 ? actualLine.Substring(0, 60) + "..." : actualLine)}");
+                            fileOk = false; 
+                            break;
                         }
                         cursor++; // drop it
                     }
@@ -93,7 +134,8 @@ public static class UnifiedDiff
                     else
                     {
                         rejects.AppendLine($"Reject: unknown hunk line prefix '{hl.Prefix}' in {file.DisplayPath}");
-                        fileOk = false; break;
+                        fileOk = false; 
+                        break;
                     }
                 }
 
@@ -125,56 +167,53 @@ public static class UnifiedDiff
     // ----- helpers -----
 
     /// <summary>
-    /// Find the actual start position for a hunk using fuzzy matching.
-    /// Searches within a range around the expected position for matching context lines.
+    /// Find the actual start position for a hunk using strict matching.
+    /// ALL context/delete lines must match, not just the first few.
+    /// Search range is limited to prevent matching wrong occurrences.
     /// </summary>
-    private static int FindHunkStart(List<string> oldLines, Hunk hunk, int expectedStart, int minStart)
+    private static int FindHunkStartStrict(List<string> oldLines, List<string> matchLines, int expectedStart, int minStart)
     {
-        // Get the first context or delete lines from the hunk to use as anchor
-        var anchorLines = new List<string>();
-        foreach (var hl in hunk.Lines)
+        if (matchLines.Count == 0)
         {
-            if (hl.Prefix == ' ' || hl.Prefix == '-')
-                anchorLines.Add(hl.Text);
-            else if (hl.Prefix == '+')
-                continue; // Skip additions
-            
-            if (anchorLines.Count >= 3) break; // Use up to 3 lines for matching
+            // No context lines (pure addition), use expected start if valid
+            return expectedStart >= minStart && expectedStart <= oldLines.Count ? expectedStart : -1;
         }
         
-        if (anchorLines.Count == 0)
-        {
-            // No context lines, just use the expected start if valid
-            return expectedStart < oldLines.Count ? expectedStart : -1;
-        }
-        
-        // Search range: 50 lines before and after expected position
-        const int searchRange = 50;
+        // Limit search range to 20 lines to avoid matching wrong occurrences
+        const int searchRange = 20;
         int searchStart = Math.Max(minStart, expectedStart - searchRange);
-        int searchEnd = Math.Min(oldLines.Count - anchorLines.Count, expectedStart + searchRange);
+        int searchEnd = Math.Min(oldLines.Count - matchLines.Count, expectedStart + searchRange);
         
-        // First try exact match at expected position
-        if (expectedStart >= minStart && expectedStart <= oldLines.Count - anchorLines.Count)
+        // Search outward from expected position (prefer closer matches)
+        for (int offset = 0; offset <= searchRange; offset++)
         {
-            if (MatchesAt(oldLines, anchorLines, expectedStart))
-                return expectedStart;
-        }
-        
-        // Search outward from expected position
-        for (int offset = 1; offset <= searchRange; offset++)
-        {
-            // Try before
-            int tryPos = expectedStart - offset;
-            if (tryPos >= searchStart && MatchesAt(oldLines, anchorLines, tryPos))
-                return tryPos;
+            // Try before expected
+            if (offset > 0)
+            {
+                int tryPos = expectedStart - offset;
+                if (tryPos >= searchStart && MatchesAt(oldLines, matchLines, tryPos))
+                    return tryPos;
+            }
             
-            // Try after
-            tryPos = expectedStart + offset;
-            if (tryPos <= searchEnd && MatchesAt(oldLines, anchorLines, tryPos))
-                return tryPos;
+            // Try at/after expected
+            int tryPosAfter = expectedStart + offset;
+            if (tryPosAfter >= searchStart && tryPosAfter <= searchEnd && MatchesAt(oldLines, matchLines, tryPosAfter))
+                return tryPosAfter;
         }
         
         return -1; // Not found
+    }
+
+    /// <summary>
+    /// Original fuzzy finder - kept for reference but not used
+    /// </summary>
+    private static int FindHunkStart(List<string> oldLines, Hunk hunk, int expectedStart, int minStart)
+    {
+        var matchLines = hunk.Lines
+            .Where(hl => hl.Prefix == ' ' || hl.Prefix == '-')
+            .Select(hl => hl.Text)
+            .ToList();
+        return FindHunkStartStrict(oldLines, matchLines, expectedStart, minStart);
     }
     
     private static bool MatchesAt(List<string> oldLines, List<string> anchorLines, int position)

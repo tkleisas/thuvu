@@ -86,25 +86,37 @@ Requires global UI permission. Useful for debugging GUI applications.
 5. ui_capture analyze=true  -> check game state
 ```
 
-### Code Indexing & Context
+### Code Navigation Strategy (IMPORTANT)
 
-**Index and search code symbols:**
-- `code_index` - index source files (supports incremental updates)
-- `code_query` - search by name, kind (class/method/property), or file
-- `index_stats` - see index statistics
-- `index_clear` - clear all indexed data
+**Use `code_index` + `code_query` for symbol-based navigation:**
+- `code_index` - index source files (fast, incremental updates)
+- `code_query` - search symbols by name, kind, file; find references
 
-**Store and retrieve context:**
+**Use `search_files` for text/content search:**
+- grep-like search for strings, comments, patterns
+
+**Best practice:**
+```
+1. code_index path='.'  -> index project once per session
+2. code_query search='UserService' kind='class'  -> find classes by name
+3. code_query file='Services/UserService.cs'  -> list all symbols in file
+4. code_query symbol_id=42 find_references=true  -> find usages
+5. read_file path='...'  -> view implementation
+```
+
+**code_query is faster and more precise for:**
+- Finding class/method/property definitions
+- Understanding code structure
+- Locating symbol declarations
+
+### Context Memory
 - `context_store` - save decisions, patterns, notes with categories
 - `context_get` - retrieve by key pattern or category
 
-**Example workflow:**
+Example:
 ```
-1. code_index path='.'  -> index the project
-2. code_query search='Service' kind='class'  -> find service classes
-3. code_query file='Controllers/UserController.cs'  -> symbols in file
-4. context_store key='architecture' value='Clean architecture with CQRS' category='decision'
-5. context_get category='decision'  -> recall all decisions
+context_store key='db_choice' value='PostgreSQL' category='decision'
+context_get category='decision'  -> recall all decisions
 ```
 {{/STANDARD}}
 

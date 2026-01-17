@@ -4,11 +4,18 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using thuvu.Models;
 
 namespace thuvu.Tools
 {
     public class ApplyPatchToolImpl
     {
+        // File extensions that should trigger code index updates
+        private static readonly HashSet<string> IndexableExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".cs", ".ts", ".js", ".tsx", ".jsx", ".py", ".go", ".java", ".rb", ".rs"
+        };
+        
         public static string ApplyPatchTool(string rawArgs)
         {
             try
@@ -42,10 +49,20 @@ namespace thuvu.Tools
                     });
                 }
 
+                // Extract file path from patch for indexing later
+                string? targetFile = ExtractTargetFilePath(patch);
+                
                 var (applied, rejects) = UnifiedDiff.Apply(patch, rootDir);
                 
                 if (applied)
                 {
+                    // Trigger code index update for the patched file
+                    if (targetFile != null)
+                    {
+                        var fullPath = Path.Combine(rootDir, targetFile);
+                        TriggerIndexUpdateAsync(fullPath);
+                    }
+                    
                     return JsonSerializer.Serialize(new 
                     { 
                         applied = true,
@@ -56,19 +73,6 @@ namespace thuvu.Tools
                 {
                     // Try to provide helpful diagnostics
                     var diagnostics = new List<string>();
-                    
-                    // Extract file path from patch
-                    var lines = patch.Split('\n');
-                    string? targetFile = null;
-                    foreach (var line in lines)
-                    {
-                        if (line.StartsWith("+++ "))
-                        {
-                            targetFile = line.Substring(4).Trim();
-                            if (targetFile.StartsWith("b/")) targetFile = targetFile.Substring(2);
-                            break;
-                        }
-                    }
                     
                     if (targetFile != null)
                     {
@@ -83,6 +87,7 @@ namespace thuvu.Tools
                             diagnostics.Add($"File has {fileLines.Length} lines");
                             
                             // Try to find the context that didn't match
+                            var lines = patch.Split('\n');
                             foreach (var line in lines)
                             {
                                 if (line.StartsWith("@@"))
@@ -111,6 +116,31 @@ namespace thuvu.Tools
                     message = ex.Message
                 });
             }
+            catch (JsonException ex)
+            {
+                // Detect truncation
+                var isTruncated = ex.Message.Contains("end of data", StringComparison.OrdinalIgnoreCase) ||
+                                  ex.Message.Contains("end of string", StringComparison.OrdinalIgnoreCase) ||
+                                  ex.Message.Contains("unexpected end", StringComparison.OrdinalIgnoreCase);
+                
+                if (isTruncated)
+                {
+                    return JsonSerializer.Serialize(new 
+                    { 
+                        applied = false, 
+                        error = "truncated_patch",
+                        message = "The patch content was truncated by the LLM output limit. For large patches, apply changes in smaller increments.",
+                        raw_args_length = rawArgs.Length
+                    });
+                }
+                
+                return JsonSerializer.Serialize(new 
+                { 
+                    applied = false, 
+                    error = "invalid_arguments",
+                    message = $"Failed to parse arguments: {ex.Message}"
+                });
+            }
             catch (Exception ex)
             {
                 return JsonSerializer.Serialize(new 
@@ -119,6 +149,56 @@ namespace thuvu.Tools
                     error = "unexpected_error",
                     message = ex.Message
                 });
+            }
+        }
+        
+        /// <summary>
+        /// Extracts the target file path from a unified diff patch.
+        /// </summary>
+        private static string? ExtractTargetFilePath(string patch)
+        {
+            var lines = patch.Split('\n');
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("+++ "))
+                {
+                    var targetFile = line.Substring(4).Trim();
+                    if (targetFile.StartsWith("b/")) targetFile = targetFile.Substring(2);
+                    return targetFile;
+                }
+            }
+            return null;
+        }
+        
+        /// <summary>
+        /// Triggers a code index update for a file if it's an indexable source file.
+        /// This is fire-and-forget to not slow down patch operations.
+        /// </summary>
+        private static void TriggerIndexUpdateAsync(string fullPath)
+        {
+            try
+            {
+                var extension = Path.GetExtension(fullPath);
+                if (SqliteConfig.Instance.Enabled && IndexableExtensions.Contains(extension))
+                {
+                    // Fire and forget - don't await
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await SqliteToolImpl.CodeIndexAsync(fullPath, force: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Log but don't throw - indexing errors shouldn't affect patch success
+                            Console.WriteLine($"[ApplyPatchToolImpl] Index update failed for {fullPath}: {ex.Message}");
+                        }
+                    });
+                }
+            }
+            catch
+            {
+                // Ignore any errors in triggering the update
             }
         }
     }

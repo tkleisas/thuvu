@@ -233,7 +233,7 @@ namespace thuvu
             };
 
             // Tools you expose to the model
-            var tools = BuildTools.GetBuildTools();
+            var tools = BuildTools.GetToolsForSession();
 
             // If API mode is enabled, start the web server with agent API and set up job processor
             if (useApi)

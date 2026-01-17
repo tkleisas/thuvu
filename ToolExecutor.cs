@@ -183,6 +183,7 @@ namespace thuvu
                     JsonSerializer.Serialize(new { matches = SearchFilesToolImpl.SearchFilesTool(argsJson, ct) }), ct).ConfigureAwait(false),
                 "read_file" => await Task.Run(() => ReadFileToolImpl.ReadFileTool(argsJson), ct).ConfigureAwait(false),
                 "write_file" => await Task.Run(() => WriteFileToolImpl.WriteFileTool(argsJson), ct).ConfigureAwait(false),
+                "write_file_chunk" => await Task.Run(() => WriteFileToolImpl.WriteFileChunkTool(argsJson), ct).ConfigureAwait(false),
                 "apply_patch" => await Task.Run(() => ApplyPatchToolImpl.ApplyPatchTool(argsJson), ct).ConfigureAwait(false),
                 
                 // Process runner
@@ -262,6 +263,10 @@ namespace thuvu
                 
                 // Sub-Agent Delegation tool
                 "delegate_to_agent" => await DelegateToAgentToolImpl.ExecuteAsync(argsJson, ct).ConfigureAwait(false),
+                
+                // Tool Search/Discovery (for deferred loading)
+                "tool_search" => await Task.Run(() => ExecuteToolSearch(argsJson), ct).ConfigureAwait(false),
+                "tool_load" => await Task.Run(() => ExecuteToolLoad(argsJson), ct).ConfigureAwait(false),
                 
                 _ => JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" })
             };
@@ -508,15 +513,15 @@ namespace thuvu
             {
                 using var doc = JsonDocument.Parse(argsJson);
                 var root = doc.RootElement;
-                
+
                 if (!root.TryGetProperty("agent_name", out var nameProp))
                     return JsonSerializer.Serialize(new { success = false, error = "Missing 'agent_name' parameter" });
                 if (!root.TryGetProperty("job_id", out var jobProp))
                     return JsonSerializer.Serialize(new { success = false, error = "Missing 'job_id' parameter" });
-                
+
                 var agentName = nameProp.GetString() ?? "";
                 var jobId = jobProp.GetString() ?? "";
-                
+
                 return await AgentCommunicationToolImpl.AgentCancelAsync(agentName, jobId, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
@@ -525,6 +530,141 @@ namespace thuvu
             }
         }
 
+        #endregion
+        
+        #region Tool Search and Discovery
+        
+        /// <summary>
+        /// Search for available tools by query or category.
+        /// </summary>
+        private static string ExecuteToolSearch(string argsJson)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                var query = root.TryGetProperty("query", out var q) ? q.GetString() ?? "" : "";
+                var maxResults = root.TryGetProperty("max_results", out var m) ? m.GetInt32() : 10;
+                
+                // Check if category filter provided
+                ToolCategory? categoryFilter = null;
+                if (root.TryGetProperty("category", out var catProp) && catProp.ValueKind == JsonValueKind.String)
+                {
+                    var catStr = catProp.GetString();
+                    if (Enum.TryParse<ToolCategory>(catStr, true, out var cat))
+                        categoryFilter = cat;
+                }
+                
+                var registry = ToolRegistry.Instance;
+                
+                // If query is empty but category is specified, list all tools in category
+                if (string.IsNullOrWhiteSpace(query) && categoryFilter.HasValue)
+                {
+                    var categoryTools = registry.GetToolsInCategory(categoryFilter.Value);
+                    return JsonSerializer.Serialize(new
+                    {
+                        success = true,
+                        category = categoryFilter.Value.ToString(),
+                        tools = categoryTools.Select(t => new
+                        {
+                            name = t.Function.Name,
+                            description = TruncateDescription(t.Function.Description, 100),
+                            is_loaded = registry.IsToolLoaded(t.Function.Name)
+                        }).ToList(),
+                        count = categoryTools.Count
+                    });
+                }
+                
+                // Search by query
+                var results = registry.SearchTools(query, maxResults);
+                
+                return JsonSerializer.Serialize(new
+                {
+                    success = true,
+                    query,
+                    results = results.Select(r => new
+                    {
+                        name = r.Name,
+                        description = TruncateDescription(r.Description, 100),
+                        category = r.Category,
+                        is_loaded = r.IsLoaded,
+                        score = r.Score
+                    }).ToList(),
+                    count = results.Count,
+                    categories_available = registry.GetCategorySummary()
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+        
+        /// <summary>
+        /// Load specific tools by name or load all tools in a category.
+        /// Returns the full tool definitions that can be added to the tool list.
+        /// </summary>
+        private static string ExecuteToolLoad(string argsJson)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                var registry = ToolRegistry.Instance;
+                var loadedTools = new List<Tool>();
+                
+                // Load specific tools by name
+                if (root.TryGetProperty("tools", out var toolsProp) && toolsProp.ValueKind == JsonValueKind.Array)
+                {
+                    var toolNames = new List<string>();
+                    foreach (var t in toolsProp.EnumerateArray())
+                    {
+                        if (t.ValueKind == JsonValueKind.String)
+                            toolNames.Add(t.GetString()!);
+                    }
+                    loadedTools.AddRange(registry.LoadTools(toolNames));
+                }
+                
+                // Load entire category
+                if (root.TryGetProperty("category", out var catProp) && catProp.ValueKind == JsonValueKind.String)
+                {
+                    var catStr = catProp.GetString();
+                    if (Enum.TryParse<ToolCategory>(catStr, true, out var category))
+                    {
+                        loadedTools.AddRange(registry.LoadCategory(category));
+                    }
+                }
+                
+                return JsonSerializer.Serialize(new
+                {
+                    success = true,
+                    loaded = loadedTools.Select(t => new
+                    {
+                        name = t.Function.Name,
+                        description = t.Function.Description,
+                        category = t.Category.ToString()
+                    }).ToList(),
+                    count = loadedTools.Count,
+                    total_loaded = registry.GetLoadedToolNames().Count
+                });
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+        
+        private static string TruncateDescription(string? description, int maxLength)
+        {
+            if (string.IsNullOrEmpty(description))
+                return "";
+            if (description.Length <= maxLength)
+                return description;
+            return description.Substring(0, maxLength - 3) + "...";
+        }
+        
         #endregion
     }
 }

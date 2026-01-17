@@ -92,7 +92,8 @@ namespace thuvu
                 var retryResult = await RetryHandler.ExecuteWithRetryAsync(
                     async (token) =>
                     {
-                        using var resp = await http.PostAsJsonAsync("/v1/chat/completions", req, JsonOpts, token);
+                        // Use relative path (no leading /) so it appends to BaseAddress path correctly
+                        using var resp = await http.PostAsJsonAsync("v1/chat/completions", req, JsonOpts, token);
                         resp.EnsureSuccessStatusCode();
                         return await resp.Content.ReadFromJsonAsync<ChatResponse>(JsonOpts, token)
                                ?? throw new InvalidOperationException("Empty response.");

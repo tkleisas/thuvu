@@ -402,6 +402,10 @@
     private bool _showCopyToast;
     private bool _workspaceExpanded = false;
     
+    // Sub-agent streaming state
+    private string? _activeSubAgentRole;
+    private string _subAgentStreamingContent = "";
+    
     // Attached image state
     private string? _attachedImageBase64;
     private string? _attachedImageMimeType;
@@ -767,6 +771,19 @@
                             Content = "Request cancelled",
                             Timestamp = DateTime.Now
                         });
+                        break;
+                    // Sub-agent streaming events
+                    case "subagent_token":
+                        HandleSubAgentToken(evt.SubAgentRole, evt.Data);
+                        break;
+                    case "subagent_tool_call":
+                        HandleSubAgentToolCall(evt.SubAgentRole, evt.ToolName, evt.Data);
+                        break;
+                    case "subagent_tool_result":
+                        HandleSubAgentToolResult(evt.SubAgentRole, evt.ToolName, evt.Data);
+                        break;
+                    case "subagent_status":
+                        HandleSubAgentStatus(evt.SubAgentRole, evt.Data);
                         break;
                 }
                 StateHasChanged();
@@ -1507,6 +1524,80 @@
         };
     }
     
+    // Sub-agent streaming event handlers
+    private void HandleSubAgentToken(string? role, string token)
+    {
+        // Track which sub-agent is active
+        if (_activeSubAgentRole != role)
+        {
+            // Finalize previous sub-agent content if switching
+            FinalizeSubAgentContent();
+            _activeSubAgentRole = role;
+            _subAgentStreamingContent = "";
+            
+            // Add a header message for the sub-agent
+            _messages.Add(new ChatMessageDisplay
+            {
+                Role = "subagent_header",
+                Content = $"{GetRoleIcon(role)} {GetRoleDisplayName(role)} working...",
+                AgentRole = role,
+                AgentDepth = 1,
+                Timestamp = DateTime.Now
+            });
+        }
+        _subAgentStreamingContent += token;
+    }
+    
+    private void HandleSubAgentToolCall(string? role, string? toolName, string args)
+    {
+        _messages.Add(new ChatMessageDisplay
+        {
+            Role = "subagent_tool",
+            ToolName = toolName ?? "unknown",
+            ToolArgs = args,
+            Content = $"🔧 {toolName}",
+            AgentRole = role,
+            AgentDepth = 1,
+            Timestamp = DateTime.Now
+        });
+    }
+    
+    private void HandleSubAgentToolResult(string? role, string? toolName, string result)
+    {
+        // Update the last subagent_tool message with the result
+        var lastToolMsg = _messages.LastOrDefault(m => m.Role == "subagent_tool" && m.ToolName == toolName);
+        if (lastToolMsg != null)
+        {
+            lastToolMsg.Content = result;
+        }
+    }
+    
+    private void HandleSubAgentStatus(string? role, string status)
+    {
+        // Finalize sub-agent when done
+        if (status.Contains("completed") || status.Contains("finished") || status.Contains("done"))
+        {
+            FinalizeSubAgentContent();
+        }
+    }
+    
+    private void FinalizeSubAgentContent()
+    {
+        if (!string.IsNullOrEmpty(_subAgentStreamingContent))
+        {
+            _messages.Add(new ChatMessageDisplay
+            {
+                Role = "subagent_response",
+                Content = _subAgentStreamingContent,
+                AgentRole = _activeSubAgentRole,
+                AgentDepth = 1,
+                Timestamp = DateTime.Now
+            });
+            _subAgentStreamingContent = "";
+        }
+        _activeSubAgentRole = null;
+    }
+    
     private async Task TryReconnectAsync()
     {
         // Don't reconnect if disposed
@@ -1689,6 +1780,8 @@
         public string Data { get; set; } = "";
         [System.Text.Json.Serialization.JsonPropertyName("toolName")]
         public string? ToolName { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("subAgentRole")]
+        public string? SubAgentRole { get; set; }
     }
 
     private class AutocompleteSuggestion

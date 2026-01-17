@@ -725,6 +725,17 @@ namespace thuvu.Tools
                 stats.TotalContextEntries = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
             }
 
+            // Get last indexed timestamp
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT MAX(indexed_at) FROM files";
+                var result = await cmd.ExecuteScalarAsync(ct);
+                if (result != null && result != DBNull.Value)
+                {
+                    stats.LastIndexedAt = DateTime.Parse(result.ToString()!);
+                }
+            }
+
             // Database size
             var dbPath = SqliteConfig.Instance.GetEffectiveDatabasePath();
             if (File.Exists(dbPath))
@@ -1253,7 +1264,7 @@ namespace thuvu.Tools
             }
             else
             {
-                // No summary, get all messages
+                // No summary - get only non-summarized messages (in case summarization happened but summary record is missing)
                 await using var allCmd = conn.CreateCommand();
                 allCmd.CommandText = @"
                     SELECT id, session_id, parent_message_id, started_at, completed_at, duration_ms,
@@ -1265,6 +1276,8 @@ namespace thuvu.Tools
                            is_summarized, summary_id
                     FROM messages
                     WHERE session_id = @session_id
+                      AND is_summarized = 0
+                      AND message_type != 'summary'
                     ORDER BY started_at ASC
                 ";
                 allCmd.Parameters.AddWithValue("@session_id", sessionId);
@@ -1576,6 +1589,7 @@ namespace thuvu.Tools
         public long TotalContextEntries { get; set; }
         public long DatabaseSizeBytes { get; set; }
         public Dictionary<string, long> SymbolsByKind { get; set; } = new();
+        public DateTime LastIndexedAt { get; set; } = DateTime.MinValue;
     }
 
     /// <summary>

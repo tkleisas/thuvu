@@ -56,6 +56,13 @@ namespace thuvu.Models
         /// </summary>
         public int MaxOutputTokens { get; set; } = 16384;
         
+        /// <summary>
+        /// If true, use deferred tool loading to reduce initial context size.
+        /// Only core tools (file ops) are loaded initially; others are discovered via tool_search.
+        /// Default is false for backward compatibility.
+        /// </summary>
+        public bool UseDeferredToolLoading { get; set; } = false;
+        
         public static AgentConfig Config = new();
         
         /// <summary>

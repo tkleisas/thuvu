@@ -78,6 +78,13 @@ namespace thuvu
                 stream = true,
                 stream_options = new { include_usage = true }
             };
+            
+            // Log tool names being sent
+            if (req.Tools != null)
+            {
+                var toolNames = req.Tools.Select(t => t.Function?.Name ?? "?").ToList();
+                Console.WriteLine($"[StreamResult] Sending {toolNames.Count} tools: {string.Join(", ", toolNames)}");
+            }
 
             void LogStream(string msg) 
             {

@@ -652,7 +652,7 @@ namespace thuvu.Models
                 };
                 
                 // Get tool definitions
-                var tools = Tools.BuildTools.GetBuildTools();
+                var tools = Tools.BuildTools.GetToolsForSession();
                 
                 // Calculate iteration limit based on task complexity
                 // Higher limits since real tasks often need many tool calls

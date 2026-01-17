@@ -78,29 +78,61 @@ Combine process_start with UI tools for visual debugging:
 4. ui_click/ui_type -> interact with the UI
 5. process_read -> check console output
 
-## Code Indexing & Context (SQLite):
-- code_index: Index source files for symbol search (classes, methods, properties)
-- code_query: Search symbols by name, kind, or file; find references
-- context_store: Store decisions, patterns, notes for later retrieval
+## Code Navigation Strategy (IMPORTANT):
+
+When exploring or modifying a codebase, use this approach:
+
+### Step 1: Index first (if not already indexed)
+```
+code_index path='.'  -> indexes all source files (~1-2 seconds for most projects)
+```
+
+### Step 2: Use code_query for symbol navigation
+```
+code_query search='UserService' kind='class'  -> find classes by name
+code_query search='ProcessOrder' kind='method'  -> find methods by name  
+code_query file='Services/UserService.cs'  -> list all symbols in a file
+code_query symbol_id=42 find_references=true  -> find where a symbol is used
+```
+
+### Step 3: Use search_files for text/content search
+```
+search_files glob='**/*.cs' query='HttpClient'  -> find text in files
+```
+
+**code_query is faster and more precise than search_files for:**
+- Finding class/method/property definitions
+- Understanding code structure
+- Locating symbol declarations
+
+**search_files is better for:**
+- Finding text patterns/strings
+- Searching comments
+- Finding usages across files
+
+### Best Practice Workflow:
+1. `code_index path='.'` - index once per session (incremental updates are fast)
+2. `code_query` - for navigating symbols (classes, methods, properties)
+3. `read_file` - to view full implementation
+4. `apply_patch` or `write_file` - to make changes
+
+## Context Memory (SQLite):
+- context_store: Save decisions, patterns, notes for later retrieval
 - context_get: Retrieve stored context by key pattern or category
 - index_stats: Get index statistics (symbols, files, database size)
-- index_clear: Clear all indexed data
 
-Use code indexing to understand a codebase:
-1. code_index path='.' -> index the project
-2. code_query search='Controller' kind='class' -> find all controllers
-3. code_query file='Services/UserService.cs' -> see all symbols in a file
-
-Use context storage for memory across sessions:
-1. context_store key='api_design' value='REST with JSON responses' category='decision'
-2. context_get category='decision' -> recall all decisions
+Example:
+```
+context_store key='db_choice' value='PostgreSQL for JSON support' category='decision'
+context_get category='decision'  -> recall all decisions
+```
 
 ## Important guidelines:
 - Programs run non-interactively without a console for direct tools
 - For interactive input, use process_start + process_write
 - Do NOT create programs that wait for keypresses with blocking tools
 - If a tool fails repeatedly, try a different approach
-- Use search_files before claiming a symbol/file doesn't exist
+- Use code_query for symbol search, search_files for text search
 - Do NOT use rag_index for creating files - it only indexes EXISTING files
 
 If write_file returns checksum_mismatch, re-read the file and rebase your patch.

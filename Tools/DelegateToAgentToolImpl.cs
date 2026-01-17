@@ -14,6 +14,12 @@ namespace thuvu.Tools
         private static long? _currentParentMessageId;
         private static int _currentDepth = 0;
         private static List<ChatMessage> _currentContext = new();
+        
+        // Progress callbacks for streaming sub-agent output
+        public static Action<string, string>? OnSubAgentToken { get; set; }  // (role, token)
+        public static Action<string, string, string>? OnSubAgentToolCall { get; set; }  // (role, toolName, args)
+        public static Action<string, string, string>? OnSubAgentToolResult { get; set; }  // (role, toolName, result)
+        public static Action<string, string>? OnSubAgentStatus { get; set; }  // (role, status)
 
         /// <summary>
         /// Initialize the delegation context for the current session.
@@ -38,10 +44,14 @@ namespace thuvu.Tools
         /// </summary>
         public static async Task<string> ExecuteAsync(string argsJson, CancellationToken ct = default)
         {
+            Console.WriteLine($"[DelegateToAgent] ExecuteAsync called with args: {argsJson}");
+            AgentLogger.LogInfo("delegate_to_agent called with args: {Args}", argsJson);
+            
             try
             {
                 // Check if delegation is enabled
                 var rolesConfig = AgentRolesRegistry.Instance;
+                Console.WriteLine($"[DelegateToAgent] AgentRoles.Enabled = {rolesConfig.Enabled}");
                 if (!rolesConfig.Enabled)
                 {
                     return JsonSerializer.Serialize(new
@@ -107,6 +117,12 @@ namespace thuvu.Tools
                     CurrentDepth = _currentDepth,
                     ParentContext = _currentContext
                 };
+
+                // Wire up progress callbacks for streaming
+                _executor.OnToken = (token) => OnSubAgentToken?.Invoke(role, token);
+                _executor.OnToolCall = (name, args) => OnSubAgentToolCall?.Invoke(role, name, args);
+                _executor.OnToolResult = (name, result) => OnSubAgentToolResult?.Invoke(role, name, result);
+                _executor.OnStatus = (status) => OnSubAgentStatus?.Invoke(role, status);
 
                 // Execute sub-agent
                 var result = await _executor.ExecuteAsync(context, ct);

@@ -50,13 +50,19 @@ namespace thuvu.Services
         private readonly HashSet<string> _filesCreated = new();
         private int _iterationCount = 0;
         
+        // Progress callbacks
+        public Action<string>? OnToken { get; set; }
+        public Action<string, string>? OnToolCall { get; set; }
+        public Action<string, string>? OnToolResult { get; set; }
+        public Action<string>? OnStatus { get; set; }
+        
         public SubAgentExecutor(HttpClient httpClient)
         {
             _httpClient = httpClient;
         }
 
         /// <summary>
-        /// Execute a sub-agent task synchronously.
+        /// Execute a sub-agent task with streaming support.
         /// </summary>
         public async Task<SubAgentResult> ExecuteAsync(SubAgentContext context, CancellationToken ct = default)
         {
@@ -131,7 +137,7 @@ namespace thuvu.Services
                 var messages = BuildSubAgentMessages(context, roleDefinition);
                 
                 // Get tools (sub-agents get same tools as parent for now)
-                var tools = BuildTools.GetBuildTools();
+                var tools = BuildTools.GetToolsForSession();
                 
                 // Remove delegate_to_agent if at max depth or role cannot delegate
                 if (context.CurrentDepth + 1 >= rolesConfig.MaxDepth - 1 || !roleDefinition.CanDelegate)
@@ -139,12 +145,19 @@ namespace thuvu.Services
                     tools = tools.Where(t => t.Function?.Name != "delegate_to_agent").ToList();
                 }
 
-                // Get the appropriate HttpClient for this model
-                var modelId = roleDefinition.ModelId ?? AgentConfig.Config.Model;
+                // Get the appropriate model - use role's ModelId, or DefaultModelId from Models config, or fall back to AgentConfig
+                var modelId = roleDefinition.ModelId 
+                    ?? ModelRegistry.Instance?.DefaultModelId 
+                    ?? AgentConfig.Config.Model;
                 var modelConfig = ModelRegistry.Instance?.GetModel(modelId);
                 var httpClient = modelConfig?.CreateHttpClient() ?? _httpClient;
 
-                // Execute using AgentLoop with timeout
+                Console.WriteLine($"[SubAgentExecutor] Starting agent loop: model={modelId}, modelConfig={modelConfig != null}, httpClient.BaseAddress={httpClient.BaseAddress}");
+                OnStatus?.Invoke($"Sub-agent ({context.Role}) starting with {tools.Count} tools...");
+                AgentLogger.LogInfo("Sub-agent starting: model={Model}, messages={Messages}, tools={Tools}", 
+                    modelId, messages.Count, tools.Count);
+
+                // Execute using AgentLoop with timeout - use streaming for real-time feedback
                 var maxDuration = TimeSpan.FromMilliseconds(roleDefinition.MaxDurationMs);
                 using var timeoutCts = new CancellationTokenSource(maxDuration);
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
@@ -152,17 +165,28 @@ namespace thuvu.Services
                 string? response = null;
                 try
                 {
-                    response = await AgentLoop.CompleteWithToolsAsync(
+                    // Use streaming API for real-time progress feedback
+                    response = await AgentLoop.CompleteWithToolsStreamingAsync(
                         httpClient,
                         modelId,
                         messages,
                         tools,
                         linkedCts.Token,
-                        onToolResult: (name, res) => TrackToolResult(name, res),
-                        onToolCall: (name, args) => TrackToolCall(name, args),
+                        onToken: (token) => OnToken?.Invoke(token),
+                        onToolResult: (name, res) => 
+                        {
+                            TrackToolResult(name, res);
+                            OnToolResult?.Invoke(name, res);
+                        },
+                        onToolCall: (name, args) => 
+                        {
+                            TrackToolCall(name, args);
+                            OnToolCall?.Invoke(name, args);
+                        },
                         maxIterations: roleDefinition.MaxIterations
                     );
                     
+                    Console.WriteLine($"[SubAgentExecutor] Agent loop completed, response length: {response?.Length ?? 0}");
                     result.Status = "completed";
                     result.Success = true;
                 }
@@ -219,7 +243,10 @@ namespace thuvu.Services
             catch (Exception ex)
             {
                 sw.Stop();
-                AgentLogger.LogError("Sub-agent failed: role={Role}, error={Error}", context.Role, ex.Message);
+                AgentLogger.LogError("Sub-agent failed: role={Role}, error={Error}, stackTrace={Stack}", 
+                    context.Role, ex.Message, ex.StackTrace);
+                Console.WriteLine($"[SubAgentExecutor] Exception: {ex.Message}");
+                Console.WriteLine($"[SubAgentExecutor] StackTrace: {ex.StackTrace}");
                 
                 return new SubAgentResult
                 {

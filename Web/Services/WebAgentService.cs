@@ -181,6 +181,8 @@ namespace thuvu.Web.Services
             if (sessionId != null && _sessions.TryGetValue(sessionId, out var existing))
             {
                 existing.LastActivityAt = DateTime.Now;
+                // Refresh tools based on current configuration
+                existing.Tools = BuildTools.GetToolsForSession();
                 return existing;
             }
 
@@ -223,7 +225,7 @@ namespace thuvu.Web.Services
                 {
                     new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive))
                 },
-                Tools = BuildTools.GetBuildTools()
+                Tools = BuildTools.GetToolsForSession()
             };
 
             _sessions[session.SessionId] = session;
@@ -231,7 +233,43 @@ namespace thuvu.Web.Services
             // Save new session to database
             _ = SaveSessionToDatabaseAsync(session);
             
+            // Auto-index the work directory in the background
+            _ = AutoIndexWorkDirectoryAsync();
+            
             return session;
+        }
+        
+        /// <summary>
+        /// Automatically index the work directory for code navigation.
+        /// Runs in the background to not block session creation.
+        /// </summary>
+        private async Task AutoIndexWorkDirectoryAsync()
+        {
+            try
+            {
+                if (!SqliteConfig.Instance.Enabled)
+                    return;
+                    
+                var workDir = AgentConfig.GetWorkDirectory();
+                if (!Directory.Exists(workDir))
+                    return;
+                
+                // Check if already indexed recently (within last hour)
+                var stats = await SqliteService.Instance.GetStatsAsync();
+                if (stats.TotalFiles > 0 && stats.LastIndexedAt > DateTime.Now.AddHours(-1))
+                {
+                    AgentLogger.LogDebug("Code index is recent ({Files} files), skipping auto-index", stats.TotalFiles);
+                    return;
+                }
+                
+                AgentLogger.LogInfo("Auto-indexing work directory: {WorkDir}", workDir);
+                var result = await SqliteToolImpl.CodeIndexAsync(workDir, force: false);
+                AgentLogger.LogDebug("Auto-index complete: {Result}", result);
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogWarning("Auto-index failed (non-fatal): {Error}", ex.Message);
+            }
         }
 
         /// <summary>
@@ -292,12 +330,21 @@ namespace thuvu.Web.Services
                 // Load active messages (respecting summarization) from the messages table
                 var messageRecords = await SqliteService.Instance.GetActiveSessionMessagesAsync(sessionId);
                 var messages = ReconstructMessagesFromRecords(messageRecords, sessionData.SystemPrompt);
+                
+                // Check if context is too large and truncate if needed
+                var maxContextTokens = AgentConfig.Config.MaxContextLength > 0 
+                    ? AgentConfig.Config.MaxContextLength 
+                    : 100000; // Default fallback
+                
+                // Reserve ~20% for response and tools
+                var targetTokens = (int)(maxContextTokens * 0.8);
+                messages = TruncateMessagesToFitContext(messages, targetTokens);
 
                 return new WebAgentSession
                 {
                     SessionId = sessionData.SessionId,
                     Messages = messages,
-                    Tools = BuildTools.GetBuildTools(),
+                    Tools = BuildTools.GetToolsForSession(),
                     CreatedAt = sessionData.CreatedAt,
                     LastActivityAt = sessionData.LastActivityAt,
                     IsProcessing = false // Reset processing state on restore
@@ -308,6 +355,299 @@ namespace thuvu.Web.Services
                 AgentLogger.LogError("Failed to load session {SessionId}: {Error}", sessionId, ex.Message);
                 return null;
             }
+        }
+        
+        /// <summary>
+        /// Truncate messages to fit within context limit, preserving system prompt and recent messages.
+        /// Ensures tool calls and their results are always kept together.
+        /// </summary>
+        private static List<ChatMessage> TruncateMessagesToFitContext(List<ChatMessage> messages, int targetTokens)
+        {
+            var estimatedTokens = EstimateMessagesTokens(messages);
+            
+            if (estimatedTokens <= targetTokens)
+                return messages; // Already fits
+            
+            Console.WriteLine($"[WebAgentService] Context too large ({estimatedTokens} tokens), truncating to fit {targetTokens} tokens");
+            AgentLogger.LogInfo("Truncating context from {Current} to {Target} tokens", estimatedTokens, targetTokens);
+            
+            // First, group messages into logical units (tool calls + results must stay together)
+            var messageGroups = GroupMessagesForTruncation(messages);
+            
+            // Strategy: Keep system prompt + summary (if any) + most recent message groups
+            var result = new List<ChatMessage>();
+            var keptGroups = new List<List<ChatMessage>>();
+            
+            // Always keep system prompt (first group if it's system)
+            int startGroupIndex = 0;
+            if (messageGroups.Count > 0 && messageGroups[0].Count == 1 && messageGroups[0][0].Role == "system")
+            {
+                result.AddRange(messageGroups[0]);
+                startGroupIndex = 1;
+            }
+            
+            // Find and keep summary if present
+            int summaryEndGroupIndex = startGroupIndex;
+            for (int i = startGroupIndex; i < messageGroups.Count && i < startGroupIndex + 2; i++)
+            {
+                var group = messageGroups[i];
+                if (group.Count > 0 && group[0].Role == "user" && group[0].Content?.Contains("[CONVERSATION SUMMARY") == true)
+                {
+                    result.AddRange(group);
+                    summaryEndGroupIndex = i + 1;
+                    
+                    // Also keep the acknowledgment if it's the next group
+                    if (i + 1 < messageGroups.Count)
+                    {
+                        var nextGroup = messageGroups[i + 1];
+                        if (nextGroup.Count == 1 && nextGroup[0].Role == "assistant" && 
+                            nextGroup[0].Content?.Contains("I understand") == true)
+                        {
+                            result.AddRange(nextGroup);
+                            summaryEndGroupIndex = i + 2;
+                        }
+                    }
+                    break;
+                }
+            }
+            
+            // Calculate tokens used so far
+            var usedTokens = EstimateMessagesTokens(result);
+            
+            // Add message groups from the end until we run out of space
+            var recentGroups = new List<List<ChatMessage>>();
+            for (int i = messageGroups.Count - 1; i >= summaryEndGroupIndex; i--)
+            {
+                var group = messageGroups[i];
+                var groupTokens = EstimateMessagesTokens(group);
+                
+                if (usedTokens + groupTokens > targetTokens)
+                {
+                    // Can't fit more - but ensure we have at least one user message
+                    if (recentGroups.Count == 0)
+                    {
+                        // Try to find a simple user message group that fits
+                        for (int j = messageGroups.Count - 1; j >= summaryEndGroupIndex; j--)
+                        {
+                            var g = messageGroups[j];
+                            if (g.Count == 1 && g[0].Role == "user")
+                            {
+                                var gTokens = EstimateMessagesTokens(g);
+                                if (usedTokens + gTokens <= targetTokens)
+                                {
+                                    recentGroups.Insert(0, g);
+                                    usedTokens += gTokens;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                
+                recentGroups.Insert(0, group);
+                usedTokens += groupTokens;
+            }
+            
+            // Flatten recent groups into result
+            foreach (var group in recentGroups)
+            {
+                result.AddRange(group);
+            }
+            
+            // Add a context note if we truncated significantly
+            var originalCount = messages.Count;
+            var truncatedCount = originalCount - result.Count;
+            if (truncatedCount > 5)
+            {
+                // Insert after summary or system prompt
+                var insertIndex = result.FindIndex(m => m.Role != "system" && !m.Content?.Contains("[CONVERSATION SUMMARY") == true);
+                if (insertIndex < 0) insertIndex = result.Count > 0 ? 1 : 0;
+                
+                result.Insert(insertIndex, new ChatMessage("user", 
+                    $"[NOTE: {truncatedCount} older messages were truncated to fit context limit.]"));
+                result.Insert(insertIndex + 1, new ChatMessage("assistant", 
+                    "Understood. I'll continue with the available context. Let me know if you need me to re-examine any files."));
+            }
+            
+            // Final validation: ensure no orphaned tool results
+            result = ValidateToolCallPairing(result);
+            
+            var finalTokens = EstimateMessagesTokens(result);
+            Console.WriteLine($"[WebAgentService] Truncated from {messages.Count} to {result.Count} messages ({finalTokens} tokens)");
+            
+            return result;
+        }
+        
+        /// <summary>
+        /// Group messages into logical units where tool calls and their results stay together.
+        /// </summary>
+        private static List<List<ChatMessage>> GroupMessagesForTruncation(List<ChatMessage> messages)
+        {
+            var groups = new List<List<ChatMessage>>();
+            var currentGroup = new List<ChatMessage>();
+            
+            for (int i = 0; i < messages.Count; i++)
+            {
+                var msg = messages[i];
+                
+                // Tool results must be grouped with the preceding assistant message that has tool_calls
+                if (msg.Role == "tool")
+                {
+                    currentGroup.Add(msg);
+                    continue;
+                }
+                
+                // If we have a pending group and this is not a tool result, finalize it
+                if (currentGroup.Count > 0)
+                {
+                    groups.Add(currentGroup);
+                    currentGroup = new List<ChatMessage>();
+                }
+                
+                // Start a new group with this message
+                currentGroup.Add(msg);
+                
+                // If this assistant message has tool calls, the following tool results will be added to this group
+                if (msg.Role == "assistant" && msg.ToolCalls != null && msg.ToolCalls.Count > 0)
+                {
+                    // Don't finalize yet - tool results will follow
+                    continue;
+                }
+                
+                // Finalize single-message groups (user, assistant without tools, system)
+                groups.Add(currentGroup);
+                currentGroup = new List<ChatMessage>();
+            }
+            
+            // Don't forget the last group
+            if (currentGroup.Count > 0)
+            {
+                groups.Add(currentGroup);
+            }
+            
+            return groups;
+        }
+        
+        /// <summary>
+        /// Validate and fix tool call pairing - remove any orphaned tool results.
+        /// </summary>
+        private static List<ChatMessage> ValidateToolCallPairing(List<ChatMessage> messages)
+        {
+            var result = new List<ChatMessage>();
+            var activeToolCallIds = new HashSet<string>();
+            
+            foreach (var msg in messages)
+            {
+                if (msg.Role == "assistant" && msg.ToolCalls != null)
+                {
+                    // Track tool call IDs
+                    foreach (var tc in msg.ToolCalls)
+                    {
+                        if (!string.IsNullOrEmpty(tc.Id))
+                            activeToolCallIds.Add(tc.Id);
+                    }
+                    result.Add(msg);
+                }
+                else if (msg.Role == "tool")
+                {
+                    // Only include tool results that have a matching call
+                    if (!string.IsNullOrEmpty(msg.ToolCallId) && activeToolCallIds.Contains(msg.ToolCallId))
+                    {
+                        result.Add(msg);
+                        activeToolCallIds.Remove(msg.ToolCallId); // Each result can only match once
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[WebAgentService] Removing orphaned tool result: {msg.Name ?? "unknown"}");
+                    }
+                }
+                else
+                {
+                    // Clear active tool calls when we see a non-tool message after tools
+                    // (this handles the case where results were truncated)
+                    if (msg.Role != "assistant" || msg.ToolCalls == null)
+                    {
+                        activeToolCallIds.Clear();
+                    }
+                    result.Add(msg);
+                }
+            }
+            
+            // Remove any assistant messages with tool calls that have no results
+            // (their results were truncated)
+            var finalResult = new List<ChatMessage>();
+            for (int i = 0; i < result.Count; i++)
+            {
+                var msg = result[i];
+                if (msg.Role == "assistant" && msg.ToolCalls != null && msg.ToolCalls.Count > 0)
+                {
+                    // Check if all tool calls have results following
+                    var hasAllResults = true;
+                    var expectedIds = msg.ToolCalls.Select(tc => tc.Id).ToHashSet();
+                    
+                    for (int j = i + 1; j < result.Count && result[j].Role == "tool"; j++)
+                    {
+                        expectedIds.Remove(result[j].ToolCallId);
+                    }
+                    
+                    if (expectedIds.Count > 0)
+                    {
+                        // Missing some results - convert to regular assistant message without tools
+                        Console.WriteLine($"[WebAgentService] Removing incomplete tool calls from assistant message");
+                        var cleanMsg = new ChatMessage("assistant", "[Previous tool calls were truncated]");
+                        finalResult.Add(cleanMsg);
+                        continue;
+                    }
+                }
+                finalResult.Add(msg);
+            }
+            
+            return finalResult;
+        }
+        
+        /// <summary>
+        /// Estimate total tokens for a list of messages.
+        /// </summary>
+        private static int EstimateMessagesTokens(List<ChatMessage> messages)
+        {
+            return messages.Sum(EstimateMessageTokens);
+        }
+        
+        /// <summary>
+        /// Estimate tokens for a single message.
+        /// </summary>
+        private static int EstimateMessageTokens(ChatMessage msg)
+        {
+            var tokens = 4; // Base overhead for message structure
+            
+            if (msg.Content != null)
+                tokens += TokenTracker.EstimateTokens(msg.Content);
+            
+            if (msg.ContentParts != null)
+            {
+                foreach (var part in msg.ContentParts)
+                {
+                    if (part.Text != null)
+                        tokens += TokenTracker.EstimateTokens(part.Text);
+                    if (part.ImageUrl != null)
+                        tokens += 1000; // Images typically use ~1000 tokens
+                }
+            }
+            
+            if (msg.ToolCalls != null)
+            {
+                foreach (var tc in msg.ToolCalls)
+                {
+                    tokens += 10; // Tool call overhead
+                    if (tc.Function?.Name != null)
+                        tokens += TokenTracker.EstimateTokens(tc.Function.Name);
+                    if (tc.Function?.Arguments != null)
+                        tokens += TokenTracker.EstimateTokens(tc.Function.Arguments);
+                }
+            }
+            
+            return tokens;
         }
 
         /// <summary>
@@ -322,12 +662,23 @@ namespace thuvu.Web.Services
             messages.Add(new ChatMessage("system", 
                 systemPrompt ?? SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)));
             
+            // Group tool calls to batch them into single assistant messages
+            var pendingToolCalls = new List<(string name, string args, string id)>();
+            var pendingToolResults = new List<MessageRecord>();
+            
             // Group records by depth 0 (main agent messages only for context reconstruction)
-            foreach (var record in records.Where(r => r.AgentDepth == 0))
+            var mainAgentRecords = records.Where(r => r.AgentDepth == 0).ToList();
+            
+            for (int i = 0; i < mainAgentRecords.Count; i++)
             {
+                var record = mainAgentRecords[i];
+                
                 switch (record.MessageType)
                 {
                     case "summary":
+                        // Flush any pending tool calls first
+                        FlushToolCalls(messages, pendingToolCalls, pendingToolResults);
+                        
                         // Convert summary to context messages (same format as SummarizeConversationAsync output)
                         if (!string.IsNullOrEmpty(record.ResponseContent))
                         {
@@ -335,27 +686,117 @@ namespace thuvu.Web.Services
                             messages.Add(new ChatMessage("assistant", "I understand. I have the context from the summarized conversation. I'll continue from where we left off."));
                         }
                         break;
+                        
                     case "user":
+                        // Flush any pending tool calls first
+                        FlushToolCalls(messages, pendingToolCalls, pendingToolResults);
+                        
                         if (!string.IsNullOrEmpty(record.RequestContent))
                             messages.Add(new ChatMessage("user", record.RequestContent));
                         break;
+                        
                     case "assistant":
+                        // Flush any pending tool calls first
+                        FlushToolCalls(messages, pendingToolCalls, pendingToolResults);
+                        
                         if (!string.IsNullOrEmpty(record.ResponseContent))
                             messages.Add(new ChatMessage("assistant", record.ResponseContent));
                         break;
+                        
                     case "tool_call":
-                        // Tool calls are typically paired with their results, handle as assistant message if it has content
-                        if (!string.IsNullOrEmpty(record.ResponseContent))
-                            messages.Add(new ChatMessage("assistant", record.ResponseContent));
-                        break;
-                    case "tool_result":
+                        // Collect tool calls to batch them - generate a unique ID for the call
+                        var toolCallId = $"call_{record.Id}";
+                        pendingToolCalls.Add((record.ToolName ?? "unknown", record.ToolArgsJson ?? "{}", toolCallId));
+                        
+                        // Also create a pending result record using the stored result
                         if (!string.IsNullOrEmpty(record.ToolResultJson))
-                            messages.Add(new ChatMessage("tool", record.ToolResultJson) { Name = record.ToolName });
+                        {
+                            var resultRecord = new MessageRecord
+                            {
+                                Id = record.Id,
+                                ToolName = record.ToolName,
+                                ToolResultJson = record.ToolResultJson
+                            };
+                            pendingToolResults.Add(resultRecord);
+                        }
+                        break;
+                        
+                    case "tool_result":
+                        // Legacy: standalone tool result (shouldn't happen with new storage, but handle it)
+                        if (!string.IsNullOrEmpty(record.ToolResultJson))
+                        {
+                            var toolId = $"call_{record.Id}";
+                            // Check if we have a pending call for this
+                            if (pendingToolCalls.Count == 0)
+                            {
+                                // Create a synthetic tool call for this result
+                                pendingToolCalls.Add((record.ToolName ?? "unknown", "{}", toolId));
+                            }
+                            var resultRec = new MessageRecord
+                            {
+                                Id = record.Id,
+                                ToolName = record.ToolName,
+                                ToolResultJson = record.ToolResultJson
+                            };
+                            pendingToolResults.Add(resultRec);
+                        }
                         break;
                 }
             }
             
+            // Flush any remaining tool calls at the end
+            FlushToolCalls(messages, pendingToolCalls, pendingToolResults);
+            
             return messages;
+        }
+        
+        /// <summary>
+        /// Flush pending tool calls and results into proper message format.
+        /// Creates an assistant message with ToolCalls, followed by tool result messages.
+        /// </summary>
+        private static void FlushToolCalls(
+            List<ChatMessage> messages, 
+            List<(string name, string args, string id)> pendingToolCalls,
+            List<MessageRecord> pendingToolResults)
+        {
+            if (pendingToolCalls.Count == 0)
+                return;
+            
+            // Create assistant message with tool calls
+            var assistantMsg = new ChatMessage
+            {
+                Role = "assistant",
+                Content = null, // Content is null when there are tool calls
+                ToolCalls = pendingToolCalls.Select(tc => new ToolCall
+                {
+                    Id = tc.id,
+                    Type = "function",
+                    Function = new FunctionCall
+                    {
+                        Name = tc.name,
+                        Arguments = tc.args
+                    }
+                }).ToList()
+            };
+            messages.Add(assistantMsg);
+            
+            // Create tool result messages for each call
+            foreach (var tc in pendingToolCalls)
+            {
+                var resultRecord = pendingToolResults.FirstOrDefault(r => $"call_{r.Id}" == tc.id);
+                var resultContent = resultRecord?.ToolResultJson ?? "{}";
+                
+                messages.Add(new ChatMessage
+                {
+                    Role = "tool",
+                    Content = resultContent,
+                    Name = tc.name,
+                    ToolCallId = tc.id
+                });
+            }
+            
+            pendingToolCalls.Clear();
+            pendingToolResults.Clear();
         }
 
         /// <summary>
@@ -651,6 +1092,32 @@ namespace thuvu.Web.Services
                     {
                         // Get the appropriate HttpClient for the current model
                         var httpClient = GetHttpClientForCurrentModel();
+                        
+                        // Set up delegation context for sub-agent tool (SendMessageAsync)
+                        DelegateToAgentToolImpl.SetContext(
+                            httpClient,
+                            sessionId,
+                            parentMessageId: null,  // Main agent has no parent
+                            currentDepth: 0,
+                            session.Messages);
+                        
+                        // Wire up sub-agent progress callbacks for streaming to UI
+                        DelegateToAgentToolImpl.OnSubAgentToken = (role, token) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_token", SubAgentRole = role, Data = token });
+                        };
+                        DelegateToAgentToolImpl.OnSubAgentToolCall = (role, toolName, args) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_tool_call", SubAgentRole = role, ToolName = toolName, Data = args });
+                        };
+                        DelegateToAgentToolImpl.OnSubAgentToolResult = (role, toolName, result) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_tool_result", SubAgentRole = role, ToolName = toolName, Data = TruncateResult(result) });
+                        };
+                        DelegateToAgentToolImpl.OnSubAgentStatus = (role, status) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_status", SubAgentRole = role, Data = status });
+                        };
                         
                         var result = await AgentLoop.CompleteWithToolsStreamingAsync(
                             httpClient,
@@ -966,6 +1433,32 @@ namespace thuvu.Web.Services
                     {
                         // Get the appropriate HttpClient for the current model
                         var httpClient = GetHttpClientForCurrentModel();
+                        
+                        // Set up delegation context for sub-agent tool (ProcessMessageCoreAsync)
+                        DelegateToAgentToolImpl.SetContext(
+                            httpClient,
+                            sessionId,
+                            parentMessageId: null,  // Main agent has no parent
+                            currentDepth: 0,
+                            session.Messages);
+                        
+                        // Wire up sub-agent progress callbacks for streaming to UI
+                        DelegateToAgentToolImpl.OnSubAgentToken = (role, token) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_token", SubAgentRole = role, Data = token });
+                        };
+                        DelegateToAgentToolImpl.OnSubAgentToolCall = (role, toolName, args) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_tool_call", SubAgentRole = role, ToolName = toolName, Data = args });
+                        };
+                        DelegateToAgentToolImpl.OnSubAgentToolResult = (role, toolName, result) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_tool_result", SubAgentRole = role, ToolName = toolName, Data = TruncateResult(result) });
+                        };
+                        DelegateToAgentToolImpl.OnSubAgentStatus = (role, status) =>
+                        {
+                            writer.TryWrite(new AgentStreamEvent { Type = "subagent_status", SubAgentRole = role, Data = status });
+                        };
                         
                         var result = await AgentLoop.CompleteWithToolsStreamingAsync(
                             httpClient,
@@ -2574,6 +3067,8 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
         public string Data { get; set; } = "";
         [System.Text.Json.Serialization.JsonPropertyName("toolName")]
         public string? ToolName { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("subAgentRole")]
+        public string? SubAgentRole { get; set; }
     }
 
     /// <summary>

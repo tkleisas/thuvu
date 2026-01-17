@@ -67,7 +67,7 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "write_file",
-                    Description = "Write an entire file. Returns new SHA256 checksum. Use expected_sha256 to prevent overwriting concurrent changes.",
+                    Description = "Write an entire file. Returns new SHA256 checksum. Use expected_sha256 to prevent overwriting concurrent changes. WARNING: For files larger than 6KB, use write_file_chunk instead to avoid output truncation issues.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
@@ -79,6 +79,28 @@ namespace thuvu.Tools
                         "backup":{"type":"boolean","default":false,"description":"Create a .bak backup before overwriting"}
                       },
                       "required":["path","content"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "write_file_chunk",
+                    Description = "Write a large file in chunks to avoid output truncation. IMPORTANT: Each chunk must be under 4KB (~100 lines of code). Send chunks in order (1, 2, 3...) - the file is written atomically when the final chunk is received. Example: 200-line file = 2 chunks of 100 lines each.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "path":{"type":"string","description":"Path to file (absolute or relative to work directory)"},
+                        "content":{"type":"string","description":"Chunk content - MUST be under 4KB (~100 lines). Split larger content into multiple chunks."},
+                        "chunk_number":{"type":"integer","minimum":1,"description":"Current chunk number (1-indexed)"},
+                        "total_chunks":{"type":"integer","minimum":1,"description":"Total number of chunks. Calculate as: ceil(total_lines / 100)"},
+                        "expected_sha256":{"type":"string","description":"SHA256 of existing file (only checked on first chunk)"}
+                      },
+                      "required":["path","content","chunk_number","total_chunks"]
                     }
                     """).RootElement
                 }
@@ -1081,14 +1103,23 @@ and single characters/numbers (a-z, 0-9).",
                 Function = new FunctionDef
                 {
                     Name = "delegate_to_agent",
-                    Description = @"Delegate a task to a specialist sub-agent. Available roles:
-- planner: Creates detailed implementation plans and task breakdowns
-- coder: Implements code changes based on specifications  
-- tester: Writes and runs tests, validates implementations
-- reviewer: Reviews code for quality, security, best practices
-- debugger: Investigates bugs, analyzes errors, proposes fixes
+                    Description = @"**IMPORTANT: Use this for complex tasks!** Delegate work to a specialist sub-agent for better results.
 
-The sub-agent will execute synchronously and return a structured result. Use when tasks benefit from specialized expertise or focused context.",
+Available specialist roles:
+- planner: Task analysis, implementation plans, architecture decisions
+- coder: Code implementation, refactoring, multi-file changes  
+- tester: Test writing, test execution, coverage analysis
+- reviewer: Code review, security audit, best practices check
+- debugger: Bug investigation, error analysis, fix proposals
+
+USE THIS WHEN:
+- Task involves 3+ files → delegate to coder
+- Request mentions 'test' → delegate to tester
+- Investigating bugs/errors → delegate to debugger
+- Code review needed → delegate to reviewer
+- Complex planning → delegate to planner
+
+The sub-agent runs synchronously and returns a detailed result with actions taken.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
@@ -1106,6 +1137,197 @@ The sub-agent will execute synchronously and return a structured result. Use whe
         };
 
             return tools;
+        }
+
+        /// <summary>
+        /// Get tools with categories, keywords, and deferred loading flags set.
+        /// Use this instead of GetBuildTools() for optimized tool loading.
+        /// </summary>
+        public static List<Tool> GetCategorizedTools()
+        {
+            var tools = GetBuildTools();
+            
+            // Category mappings
+            var categoryMap = new Dictionary<string, ToolCategory>(StringComparer.OrdinalIgnoreCase)
+            {
+                // Core - always loaded
+                ["search_files"] = ToolCategory.Core,
+                ["read_file"] = ToolCategory.Core,
+                ["write_file"] = ToolCategory.Core,
+                ["write_file_chunk"] = ToolCategory.Core,
+                ["apply_patch"] = ToolCategory.Core,
+                
+                // Git
+                ["git_status"] = ToolCategory.Git,
+                ["git_diff"] = ToolCategory.Git,
+                
+                // Dotnet
+                ["run_process"] = ToolCategory.Dotnet,
+                ["dotnet_restore"] = ToolCategory.Dotnet,
+                ["dotnet_build"] = ToolCategory.Dotnet,
+                ["dotnet_test"] = ToolCategory.Dotnet,
+                ["dotnet_run"] = ToolCategory.Dotnet,
+                ["dotnet_new"] = ToolCategory.Dotnet,
+                
+                // NuGet
+                ["nuget_search"] = ToolCategory.NuGet,
+                ["nuget_add"] = ToolCategory.NuGet,
+                
+                // RAG
+                ["rag_index"] = ToolCategory.Rag,
+                ["rag_search"] = ToolCategory.Rag,
+                ["rag_clear"] = ToolCategory.Rag,
+                ["rag_stats"] = ToolCategory.Rag,
+                
+                // Browser
+                ["browser_navigate"] = ToolCategory.Browser,
+                ["browser_click"] = ToolCategory.Browser,
+                ["browser_type"] = ToolCategory.Browser,
+                ["browser_get_elements"] = ToolCategory.Browser,
+                ["browser_screenshot"] = ToolCategory.Browser,
+                ["browser_script"] = ToolCategory.Browser,
+                ["browser_close"] = ToolCategory.Browser,
+                
+                // UI Automation
+                ["analyze_image"] = ToolCategory.UIAutomation,
+                ["ui_capture"] = ToolCategory.UIAutomation,
+                ["ui_list_windows"] = ToolCategory.UIAutomation,
+                ["ui_focus_window"] = ToolCategory.UIAutomation,
+                ["ui_click"] = ToolCategory.UIAutomation,
+                ["ui_type"] = ToolCategory.UIAutomation,
+                ["ui_mouse_move"] = ToolCategory.UIAutomation,
+                ["ui_get_element"] = ToolCategory.UIAutomation,
+                ["ui_wait"] = ToolCategory.UIAutomation,
+                
+                // Process
+                ["process_start"] = ToolCategory.Process,
+                ["process_read"] = ToolCategory.Process,
+                ["process_write"] = ToolCategory.Process,
+                ["process_status"] = ToolCategory.Process,
+                ["process_stop"] = ToolCategory.Process,
+                
+                // Code Index
+                ["code_index"] = ToolCategory.CodeIndex,
+                ["code_query"] = ToolCategory.CodeIndex,
+                ["context_store"] = ToolCategory.CodeIndex,
+                ["context_get"] = ToolCategory.CodeIndex,
+                ["index_stats"] = ToolCategory.CodeIndex,
+                ["index_clear"] = ToolCategory.CodeIndex,
+                
+                // Agents
+                ["agent_list"] = ToolCategory.Agents,
+                ["agent_submit"] = ToolCategory.Agents,
+                ["agent_status"] = ToolCategory.Agents,
+                ["agent_result"] = ToolCategory.Agents,
+                ["agent_cancel"] = ToolCategory.Agents,
+                ["delegate_to_agent"] = ToolCategory.Agents,
+                
+                // MCP
+                ["execute_code"] = ToolCategory.Mcp
+            };
+            
+            // Keywords for better search
+            var keywordMap = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["search_files"] = new[] { "find", "glob", "pattern", "files", "grep" },
+                ["read_file"] = new[] { "open", "get", "content", "view" },
+                ["write_file"] = new[] { "save", "create", "update", "modify" },
+                ["write_file_chunk"] = new[] { "save", "large", "chunk", "piece", "split" },
+                ["apply_patch"] = new[] { "diff", "patch", "change", "modify", "edit" },
+                ["git_status"] = new[] { "branch", "changes", "modified", "staged" },
+                ["git_diff"] = new[] { "changes", "difference", "compare" },
+                ["dotnet_build"] = new[] { "compile", "msbuild", "csharp" },
+                ["dotnet_test"] = new[] { "xunit", "nunit", "mstest", "testing" },
+                ["dotnet_run"] = new[] { "execute", "start", "launch" },
+                ["rag_index"] = new[] { "embed", "vector", "semantic" },
+                ["rag_search"] = new[] { "query", "semantic", "similar" },
+                ["browser_navigate"] = new[] { "web", "url", "http", "page" },
+                ["ui_capture"] = new[] { "screenshot", "screen", "capture", "image" },
+                ["ui_click"] = new[] { "mouse", "click", "button", "interact" },
+                ["ui_type"] = new[] { "keyboard", "input", "type", "text" },
+                ["process_start"] = new[] { "run", "execute", "launch", "background" },
+                ["code_index"] = new[] { "symbol", "class", "method", "parse" },
+                ["code_query"] = new[] { "find", "symbol", "class", "method" },
+                ["delegate_to_agent"] = new[] { "sub-agent", "specialist", "delegate", "helper" }
+            };
+            
+            // Deferred categories (not Core)
+            var deferredCategories = new HashSet<ToolCategory>
+            {
+                ToolCategory.Browser,
+                ToolCategory.UIAutomation,
+                ToolCategory.Process,
+                ToolCategory.CodeIndex,
+                ToolCategory.Agents,
+                ToolCategory.Mcp,
+                ToolCategory.Rag
+            };
+            
+            // Apply categories and keywords
+            foreach (var tool in tools)
+            {
+                var name = tool.Function.Name;
+                
+                if (categoryMap.TryGetValue(name, out var category))
+                {
+                    tool.Category = category;
+                    tool.DeferLoading = deferredCategories.Contains(category);
+                }
+                
+                if (keywordMap.TryGetValue(name, out var keywords))
+                {
+                    tool.SearchKeywords = keywords;
+                }
+            }
+            
+            return tools;
+        }
+        
+        /// <summary>
+        /// Get count of tools by category for diagnostics.
+        /// </summary>
+        public static Dictionary<ToolCategory, int> GetToolCountsByCategory()
+        {
+            var tools = GetCategorizedTools();
+            return tools
+                .GroupBy(t => t.Category)
+                .ToDictionary(g => g.Key, g => g.Count());
+        }
+        
+        /// <summary>
+        /// Get tools based on configuration. If UseDeferredToolLoading is enabled,
+        /// returns only core tools + tool_search/tool_load. Otherwise returns all tools.
+        /// </summary>
+        public static List<Tool> GetToolsForSession()
+        {
+            if (AgentConfig.Config.UseDeferredToolLoading)
+            {
+                // Initialize registry with categorized tools
+                var registry = ToolRegistry.Instance;
+                registry.ResetLoadedState();
+                registry.RegisterTools(GetCategorizedTools());
+                
+                // Return only initial tools (core + tool_search + tool_load)
+                var initialTools = registry.GetInitialTools();
+                Console.WriteLine($"[BuildTools] Deferred loading enabled: {initialTools.Count} initial tools loaded");
+                return initialTools;
+            }
+            else
+            {
+                // Return all tools (backward compatible)
+                return GetBuildTools();
+            }
+        }
+        
+        /// <summary>
+        /// Get a summary of tool counts for logging.
+        /// </summary>
+        public static string GetToolSummary()
+        {
+            var counts = GetToolCountsByCategory();
+            var total = counts.Values.Sum();
+            var categories = string.Join(", ", counts.Select(kvp => $"{kvp.Key}:{kvp.Value}"));
+            return $"Total: {total} tools. By category: {categories}";
         }
 
     }
