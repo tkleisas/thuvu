@@ -11,18 +11,23 @@ public partial class EditorView : UserControl
 {
     private TextMate.Installation? _textMateInstallation;
     private bool _suppressTextChanged;
+    private bool _initialized;
+    private bool _attachedToTree;
 
     public EditorView()
     {
         InitializeComponent();
-        Loaded += OnLoaded;
+        DataContextChanged += (_, _) => TryInitialize();
+        AttachedToVisualTree += (_, _) => { _attachedToTree = true; TryInitialize(); };
     }
 
-    private void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void TryInitialize()
     {
+        if (_initialized || !_attachedToTree) return;
         if (DataContext is not EditorViewModel vm) return;
         var editor = this.FindControl<TextEditor>("Editor");
         if (editor == null) return;
+        _initialized = true;
 
         // Setup TextMate syntax highlighting
         try
