@@ -23,6 +23,9 @@ public class ProjectConfig
     /// <summary>Files/directories to exclude from the file tree</summary>
     public List<string> ExcludePatterns { get; set; } = new() { "bin", "obj", "node_modules", ".git" };
 
+    /// <summary>Appearance settings for editor, terminal, and chat panels</summary>
+    public AppearanceSettings Appearance { get; set; } = new();
+
     /// <summary>Full path to the .thuvu file</summary>
     [JsonIgnore]
     public string FilePath { get; set; } = "";

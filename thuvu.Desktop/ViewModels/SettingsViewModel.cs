@@ -95,6 +95,27 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _mcpEnabled;
     [ObservableProperty] private bool _ragEnabled;
 
+    // Appearance — Editor
+    [ObservableProperty] private string _editorFontFamily = "Cascadia Code, Consolas, Courier New";
+    [ObservableProperty] private double _editorFontSize = 13;
+    [ObservableProperty] private string _editorForeground = "";
+    [ObservableProperty] private string _editorBackground = "";
+
+    // Appearance — Terminal
+    [ObservableProperty] private string _terminalFontFamily = "Cascadia Mono, Cascadia Code, Consolas, Courier New";
+    [ObservableProperty] private double _terminalFontSize = 14;
+    [ObservableProperty] private string _terminalForeground = "";
+    [ObservableProperty] private string _terminalBackground = "";
+
+    // Appearance — Chat
+    [ObservableProperty] private string _chatFontFamily = "";
+    [ObservableProperty] private double _chatFontSize = 14;
+    [ObservableProperty] private string _chatForeground = "";
+    [ObservableProperty] private string _chatBackground = "";
+
+    /// <summary>Project config reference for saving appearance settings</summary>
+    public Models.ProjectConfig? ProjectConfig { get; set; }
+
     public SettingsViewModel()
     {
         LoadFromConfig();
@@ -133,6 +154,21 @@ public partial class SettingsViewModel : ObservableObject
 
         if (Providers.Count > 0)
             SelectedProvider = Providers[0];
+
+        // Load appearance settings
+        var appearance = Models.AppearanceService.Instance.GetSettings();
+        EditorFontFamily = appearance.Editor.FontFamily;
+        EditorFontSize = appearance.Editor.FontSize;
+        EditorForeground = appearance.Editor.Foreground;
+        EditorBackground = appearance.Editor.Background;
+        TerminalFontFamily = appearance.Terminal.FontFamily;
+        TerminalFontSize = appearance.Terminal.FontSize;
+        TerminalForeground = appearance.Terminal.Foreground;
+        TerminalBackground = appearance.Terminal.Background;
+        ChatFontFamily = appearance.Chat.FontFamily;
+        ChatFontSize = appearance.Chat.FontSize;
+        ChatForeground = appearance.Chat.Foreground;
+        ChatBackground = appearance.Chat.Background;
     }
 
     [RelayCommand]
@@ -214,7 +250,43 @@ public partial class SettingsViewModel : ObservableObject
         McpConfig.Instance.Enabled = McpEnabled;
         RagConfig.Instance.Enabled = RagEnabled;
 
+        // Save appearance settings
+        var appearance = new Models.AppearanceSettings
+        {
+            Editor = new Models.PanelAppearance
+            {
+                FontFamily = EditorFontFamily,
+                FontSize = EditorFontSize,
+                Foreground = EditorForeground,
+                Background = EditorBackground,
+            },
+            Terminal = new Models.PanelAppearance
+            {
+                FontFamily = TerminalFontFamily,
+                FontSize = TerminalFontSize,
+                Foreground = TerminalForeground,
+                Background = TerminalBackground,
+            },
+            Chat = new Models.PanelAppearance
+            {
+                FontFamily = ChatFontFamily,
+                FontSize = ChatFontSize,
+                Foreground = ChatForeground,
+                Background = ChatBackground,
+            }
+        };
+        Models.AppearanceService.Instance.Apply(appearance);
+
+        if (ProjectConfig != null)
+        {
+            ProjectConfig.Appearance = appearance;
+            ProjectConfig.Save();
+        }
+
         AgentConfig.SaveConfig();
+        System.IO.File.AppendAllText(
+            System.IO.Path.Combine(AppContext.BaseDirectory, "save-debug.log"),
+            $"[{DateTime.Now}] Save called. Providers: {Providers.Count}, Registry models: {ModelRegistry.Instance.Models.Count}, Path: {AgentConfig.GetConfigPath()}\n");
         Saved = true;
     }
 

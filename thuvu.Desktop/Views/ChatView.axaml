@@ -7,6 +7,28 @@
              x:DataType="vm:ChatViewModel">
 
     <DockPanel>
+        <!-- Toolbar -->
+        <Border DockPanel.Dock="Top" Padding="6,4" BorderThickness="0,0,0,1"
+                BorderBrush="{DynamicResource SystemBaseMediumColor}">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Border IsVisible="{Binding IsProcessing}" Background="#40FF8800"
+                            CornerRadius="4" Padding="8,2">
+                        <TextBlock Text="⏳ Processing..." FontSize="11" VerticalAlignment="Center" />
+                    </Border>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Text="Model:" FontSize="12" VerticalAlignment="Center" Foreground="Gray" />
+                    <ComboBox ItemsSource="{ReflectionBinding AvailableModels}"
+                             SelectedItem="{ReflectionBinding SelectedModel}"
+                             IsEditable="True"
+                             MinWidth="200" MaxWidth="400" Padding="6,3"
+                             FontSize="12" VerticalAlignment="Center"
+                             PlaceholderText="Select model..." />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
         <!-- Input Area -->
         <Border DockPanel.Dock="Bottom" Padding="8" BorderThickness="0,1,0,0"
                 BorderBrush="{DynamicResource SystemBaseMediumColor}">

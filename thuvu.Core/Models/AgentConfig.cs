@@ -112,8 +112,6 @@ namespace thuvu.Models
                     var json = File.ReadAllText(path);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
-                    // If your config is stored under a named section in the JSON file (for example "AgentConfig"),
-                    // extract that section and pass its raw JSON to the deserializer. Otherwise fall back to deserializing the whole file.
                     using var doc = JsonDocument.Parse(json);
                     var root = doc.RootElement;
 
@@ -134,6 +132,14 @@ namespace thuvu.Models
                         Config = JsonSerializer.Deserialize<AgentConfig>(json, options) ?? new AgentConfig();
                         AgentLogger.LogDebug("Loaded AgentConfig from root in {Path}", path);
                     }
+
+                    // Load Models section if present
+                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("Models", out var modelsSection))
+                    {
+                        ModelRegistry.LoadFromJson(modelsSection);
+                        AgentLogger.LogDebug("Loaded Models section from {Path}", path);
+                    }
+
                     AgentLogger.LogDebug("Loaded Model: {Model}, Host: {Host}", Config.Model, Config.HostUrl);
                 }
                 else
@@ -158,45 +164,34 @@ namespace thuvu.Models
                 
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 
-                // Preserve the existing file structure if it exists
+                // Always save as nested structure with all sections
+                var rootDict = new Dictionary<string, object>
+                {
+                    ["AgentConfig"] = Config,
+                    ["Models"] = ModelRegistry.Instance
+                };
+
+                // If file exists with extra sections, preserve them
                 if (File.Exists(path))
                 {
-                    var existingJson = File.ReadAllText(path);
-                    using var doc = JsonDocument.Parse(existingJson);
-                    
-                    // Check if the file has a nested structure
-                    if (doc.RootElement.ValueKind == JsonValueKind.Object && 
-                        doc.RootElement.TryGetProperty("AgentConfig", out _))
+                    try
                     {
-                        // File has nested structure - update only the AgentConfig section
-                        var rootDict = new Dictionary<string, object>();
-                        
-                        // Copy all existing sections
+                        var existingJson = File.ReadAllText(path);
+                        using var doc = JsonDocument.Parse(existingJson);
                         foreach (var prop in doc.RootElement.EnumerateObject())
                         {
-                            if (prop.Name == "AgentConfig")
+                            if (prop.Name != "AgentConfig" && prop.Name != "Models" && !rootDict.ContainsKey(prop.Name))
                             {
-                                // Replace AgentConfig with our updated config
-                                rootDict[prop.Name] = Config;
-                            }
-                            else
-                            {
-                                // Preserve other sections as-is using JsonElement
                                 rootDict[prop.Name] = JsonSerializer.Deserialize<object>(prop.Value.GetRawText())!;
                             }
                         }
-                        
-                        var json = JsonSerializer.Serialize(rootDict, options);
-                        File.WriteAllText(path, json);
-                        AgentLogger.LogDebug("Saved AgentConfig to nested section in {Path}", path);
-                        return true;
                     }
+                    catch { }
                 }
-                
-                // No existing nested structure - save as flat config
-                var flatJson = JsonSerializer.Serialize(Config, options);
-                File.WriteAllText(path, flatJson);
-                AgentLogger.LogDebug("Saved AgentConfig as flat config to {Path}", path);
+
+                var json = JsonSerializer.Serialize(rootDict, options);
+                File.WriteAllText(path, json);
+                AgentLogger.LogDebug("Saved config (nested) to {Path}", path);
                 return true;
             }
             catch (Exception ex)

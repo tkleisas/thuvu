@@ -175,6 +175,86 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+
+            <!-- Appearance Tab -->
+            <TabItem Header="🎨 Appearance">
+                <ScrollViewer Padding="12">
+                    <StackPanel Spacing="16">
+                        <!-- Editor Appearance -->
+                        <TextBlock Text="Code Editor" FontSize="16" FontWeight="Bold" />
+                        <Grid ColumnDefinitions="*,12,Auto" RowDefinitions="Auto,8,Auto,8,Auto">
+                            <StackPanel Grid.Row="0" Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Font Family" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding EditorFontFamily}"
+                                         Watermark="Cascadia Code, Consolas, Courier New" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="2" Spacing="4" MinWidth="120">
+                                <TextBlock Text="Font Size" FontWeight="SemiBold" FontSize="12" />
+                                <NumericUpDown Value="{Binding EditorFontSize}" Minimum="8" Maximum="48"
+                                               Increment="1" FormatString="F0" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Foreground Color (hex, e.g. #D4D4D4)" FontSize="12" />
+                                <TextBox Text="{Binding EditorForeground}" Watermark="(theme default)" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="2" Spacing="4" MinWidth="120">
+                                <TextBlock Text="Background Color" FontSize="12" />
+                                <TextBox Text="{Binding EditorBackground}" Watermark="(theme default)" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Separator Margin="0,4" />
+
+                        <!-- Terminal Appearance -->
+                        <TextBlock Text="Terminal" FontSize="16" FontWeight="Bold" />
+                        <Grid ColumnDefinitions="*,12,Auto" RowDefinitions="Auto,8,Auto,8,Auto">
+                            <StackPanel Grid.Row="0" Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Font Family" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding TerminalFontFamily}"
+                                         Watermark="Cascadia Mono, Consolas" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="2" Spacing="4" MinWidth="120">
+                                <TextBlock Text="Font Size" FontWeight="SemiBold" FontSize="12" />
+                                <NumericUpDown Value="{Binding TerminalFontSize}" Minimum="8" Maximum="48"
+                                               Increment="1" FormatString="F0" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Foreground Color" FontSize="12" />
+                                <TextBox Text="{Binding TerminalForeground}" Watermark="(theme default)" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="2" Spacing="4" MinWidth="120">
+                                <TextBlock Text="Background Color" FontSize="12" />
+                                <TextBox Text="{Binding TerminalBackground}" Watermark="(theme default)" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Separator Margin="0,4" />
+
+                        <!-- Chat Appearance -->
+                        <TextBlock Text="Chat" FontSize="16" FontWeight="Bold" />
+                        <Grid ColumnDefinitions="*,12,Auto" RowDefinitions="Auto,8,Auto,8,Auto">
+                            <StackPanel Grid.Row="0" Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Font Family" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding ChatFontFamily}"
+                                         Watermark="(system default)" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="2" Spacing="4" MinWidth="120">
+                                <TextBlock Text="Font Size" FontWeight="SemiBold" FontSize="12" />
+                                <NumericUpDown Value="{Binding ChatFontSize}" Minimum="8" Maximum="48"
+                                               Increment="1" FormatString="F0" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Foreground Color" FontSize="12" />
+                                <TextBox Text="{Binding ChatForeground}" Watermark="(theme default)" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="2" Spacing="4" MinWidth="120">
+                                <TextBlock Text="Background Color" FontSize="12" />
+                                <TextBox Text="{Binding ChatBackground}" Watermark="(theme default)" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
         </TabControl>
     </DockPanel>
 </Window>

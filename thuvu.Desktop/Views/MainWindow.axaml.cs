@@ -32,7 +32,7 @@ public partial class MainWindow : Window
 
         vm.ShowSettingsDialog = async () =>
         {
-            var settings = new SettingsWindow();
+            var settings = new SettingsWindow(vm.Project);
             await settings.ShowDialog(this);
         };
     }
@@ -45,6 +45,10 @@ public partial class MainWindow : Window
         {
             switch (e.Key)
             {
+                case Key.T:
+                    vm.NewChatCommand.Execute(null);
+                    e.Handled = true;
+                    break;
                 case Key.N:
                     vm.NewChatCommand.Execute(null);
                     e.Handled = true;

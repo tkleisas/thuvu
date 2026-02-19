@@ -26,5 +26,8 @@
         <DataTemplate DataType="vm:DiffViewerViewModel">
             <views:DiffView />
         </DataTemplate>
+        <DataTemplate DataType="vm:AgentsPanelViewModel">
+            <views:AgentsPanelView />
+        </DataTemplate>
     </Application.DataTemplates>
 </Application>

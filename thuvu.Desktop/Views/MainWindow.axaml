@@ -17,7 +17,7 @@
         <!-- Menu Bar -->
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
-                <MenuItem Header="_New Chat" Command="{Binding NewChatCommand}" InputGesture="Ctrl+N" />
+                <MenuItem Header="_New Chat" Command="{Binding NewChatCommand}" InputGesture="Ctrl+T" />
                 <MenuItem Header="_Open File..." Command="{Binding OpenFileCommand}" InputGesture="Ctrl+O" />
                 <Separator />
                 <MenuItem Header="_Settings" Command="{Binding ShowSettingsCommand}" />
@@ -27,6 +27,8 @@
             <MenuItem Header="_View">
                 <MenuItem Header="_File Explorer" Command="{Binding ToggleFileTreeCommand}" />
                 <MenuItem Header="_Terminal" Command="{Binding ToggleTerminalCommand}" />
+                <MenuItem Header="_New Terminal" Command="{Binding NewTerminalCommand}" />
+                <Separator />
                 <MenuItem Header="_Reset Layout" Command="{Binding ResetLayoutCommand}" />
             </MenuItem>
             <MenuItem Header="_Agent">

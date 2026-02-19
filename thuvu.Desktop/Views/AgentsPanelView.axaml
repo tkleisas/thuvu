@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="thuvu.Desktop.Views.AgentsPanelView"
+             x:CompileBindings="False">
+
+    <ListBox x:Name="AgentsList"
+             ItemsSource="{Binding Agents}"
+             SelectedItem="{Binding SelectedAgent}"
+             DoubleTapped="OnAgentDoubleTapped"
+             Background="Transparent">
+        <ListBox.ItemTemplate>
+            <DataTemplate>
+                <Border Padding="6,4">
+                    <Border.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Show Chat" Click="OnShowChat" />
+                            <Separator />
+                            <MenuItem Header="Rename" Click="OnRename" />
+                            <Separator />
+                            <MenuItem Header="Stop" Click="OnStop" />
+                            <MenuItem Header="Terminate" Click="OnTerminate" />
+                        </ContextMenu>
+                    </Border.ContextMenu>
+                    <Panel>
+                        <!-- Normal display -->
+                        <DockPanel IsVisible="{Binding !IsRenaming}">
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding StatusIcon}"
+                                       VerticalAlignment="Center" Margin="6,0,0,0" />
+                            <StackPanel Orientation="Vertical" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Name}" FontSize="13" />
+                                <TextBlock Text="{Binding Status}" FontSize="10" Foreground="Gray" />
+                            </StackPanel>
+                        </DockPanel>
+
+                        <!-- Rename mode -->
+                        <DockPanel IsVisible="{Binding IsRenaming}">
+                            <Button DockPanel.Dock="Right" Content="✓" Padding="4,2" Margin="4,0,0,0"
+                                    Click="OnCommitRename" />
+                            <Button DockPanel.Dock="Right" Content="✗" Padding="4,2" Margin="4,0,0,0"
+                                    Click="OnCancelRename" />
+                            <TextBox Text="{Binding RenamingText}" FontSize="13"
+                                     Padding="4,2" VerticalAlignment="Center" />
+                        </DockPanel>
+                    </Panel>
+                </Border>
+            </DataTemplate>
+        </ListBox.ItemTemplate>
+    </ListBox>
+</UserControl>

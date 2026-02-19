@@ -27,6 +27,27 @@ public class DesktopAgentService
     public bool IsProcessing { get; private set; }
     public IReadOnlyList<ChatMessage> Messages => _messages.AsReadOnly();
 
+    /// <summary>Override model for this agent session. Null = use global default.</summary>
+    public string? ModelOverride { get; private set; }
+
+    /// <summary>The effective model ID this agent will use</summary>
+    public string EffectiveModel => ModelOverride ?? AgentConfig.Config.Model;
+
+    /// <summary>Set a specific model for this agent session</summary>
+    public void SetModel(string modelId)
+    {
+        if (IsProcessing) return;
+        ModelOverride = modelId;
+
+        // If model has a different host, reconfigure HttpClient
+        var endpoint = ModelRegistry.Instance.GetModel(modelId);
+        if (endpoint != null && !string.IsNullOrEmpty(endpoint.HostUrl))
+        {
+            _http.Dispose();
+            _http = CreateHttpClientForEndpoint(endpoint);
+        }
+    }
+
     public DesktopAgentService()
     {
         AgentConfig.LoadConfig();
@@ -57,6 +78,19 @@ public class DesktopAgentService
         return client;
     }
 
+    private static HttpClient CreateHttpClientForEndpoint(ModelEndpoint endpoint)
+    {
+        var client = new HttpClient();
+        client.BaseAddress = new Uri(endpoint.HostUrl.TrimEnd('/') + "/");
+        client.Timeout = TimeSpan.FromMinutes(endpoint.TimeoutMinutes > 0 ? endpoint.TimeoutMinutes : 60);
+        if (!string.IsNullOrEmpty(endpoint.AuthToken))
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue(
+                    string.IsNullOrEmpty(endpoint.AuthScheme) ? "Bearer" : endpoint.AuthScheme,
+                    endpoint.AuthToken);
+        return client;
+    }
+
     public async Task SendMessageAsync(string prompt)
     {
         if (IsProcessing) return;
@@ -68,11 +102,12 @@ public class DesktopAgentService
         try
         {
             string? result;
+            var model = EffectiveModel;
             if (AgentConfig.Config.Stream)
             {
                 result = await AgentLoop.CompleteWithToolsStreamingAsync(
                     _http,
-                    AgentConfig.Config.Model,
+                    model,
                     _messages,
                     _tools,
                     _currentCts.Token,
@@ -88,7 +123,7 @@ public class DesktopAgentService
             {
                 result = await AgentLoop.CompleteWithToolsAsync(
                     _http,
-                    AgentConfig.Config.Model,
+                    model,
                     _messages,
                     _tools,
                     _currentCts.Token,

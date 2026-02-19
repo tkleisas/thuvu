@@ -1,29 +1,12 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:thuvu.Desktop.ViewModels"
+             xmlns:terminal="using:Iciclecreek.Terminal"
              x:Class="thuvu.Desktop.Views.TerminalView"
              x:DataType="vm:TerminalViewModel">
 
-    <DockPanel>
-        <DockPanel DockPanel.Dock="Top" Margin="4">
-            <Button DockPanel.Dock="Right" Content="🗑" Command="{Binding ClearCommand}"
-                    ToolTip.Tip="Clear" Padding="4" IsVisible="False" />
-            <TextBlock Text="⚡ Terminal Output" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12" />
-        </DockPanel>
-
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding Lines}" Padding="4">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="vm:TerminalLine">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Text="{Binding Timestamp}" Foreground="Gray" FontSize="10"
-                                       FontFamily="Cascadia Code, Consolas, Courier New" VerticalAlignment="Center" />
-                            <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap"
-                                       FontFamily="Cascadia Code, Consolas, Courier New" FontSize="12" />
-                        </StackPanel>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
-    </DockPanel>
+    <terminal:TerminalControl x:Name="Terminal"
+                              FontFamily="Cascadia Mono, Cascadia Code, Consolas, Courier New"
+                              FontSize="14"
+                              BufferSize="5000" />
 </UserControl>

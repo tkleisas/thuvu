@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using System.Globalization;
+using thuvu.Desktop.Models;
 using thuvu.Desktop.ViewModels;
 
 namespace thuvu.Desktop.Views;
@@ -32,6 +33,33 @@ public partial class ChatView : UserControl
         // Use tunnel routing to intercept Enter before TextBox consumes it with AcceptsReturn
         var inputBox = this.FindControl<TextBox>("InputBox");
         inputBox?.AddHandler(KeyDownEvent, InputBox_KeyDown, RoutingStrategies.Tunnel);
+
+        AttachedToVisualTree += OnAttachedToVisualTree;
+    }
+
+    private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        ApplyAppearance();
+        AppearanceService.Instance.PropertyChanged += (_, _) =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(ApplyAppearance);
+    }
+
+    private void ApplyAppearance()
+    {
+        var svc = AppearanceService.Instance;
+        if (!string.IsNullOrWhiteSpace(svc.ChatFontFamily))
+            FontFamily = new FontFamily(svc.ChatFontFamily);
+        if (svc.ChatFontSize > 0)
+            FontSize = svc.ChatFontSize;
+        if (TryParseColor(svc.ChatForeground, out var fg))
+            Foreground = new SolidColorBrush(fg);
+    }
+
+    private static bool TryParseColor(string hex, out Color color)
+    {
+        color = default;
+        if (string.IsNullOrWhiteSpace(hex)) return false;
+        return Color.TryParse(hex, out color);
     }
 
     private void InputBox_KeyDown(object? sender, KeyEventArgs e)

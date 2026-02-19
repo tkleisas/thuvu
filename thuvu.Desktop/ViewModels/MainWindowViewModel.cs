@@ -24,8 +24,12 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string _windowTitle = "T.H.U.V.U.";
 
     private readonly DockFactory _factory;
-    private readonly DesktopAgentService _agentService;
+    private readonly AgentRegistry _registry;
     private ProjectConfig _project;
+    private AgentsPanelViewModel? _agentsPanel;
+
+    /// <summary>Current project config (used by settings dialog)</summary>
+    public ProjectConfig Project => _project;
 
     /// <summary>Set by MainWindow to show file picker dialog</summary>
     public Func<Task<string?>>? ShowOpenFileDialog { get; set; }
@@ -44,38 +48,54 @@ public partial class MainWindowViewModel : ObservableObject
     public MainWindowViewModel(ProjectConfig project)
     {
         _project = project;
+        _registry = AgentRegistry.Instance;
 
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();
         _factory.InitLayout(layout);
         DockLayout = layout;
 
-        _agentService = new DesktopAgentService();
-        ModelName = _agentService.GetModelName();
-        StatusText = $"{project.Name} — {_agentService.GetHostUrl()}";
+        // Create the first agent/chat pair and replace the placeholder from DockFactory
+        var (chatVm, firstAgent) = _registry.CreateAgent("Chat 1");
+        ModelName = firstAgent.GetModelName();
+        StatusText = $"{project.Name} — {firstAgent.GetHostUrl()}";
         WindowTitle = $"T.H.U.V.U. — {project.Name}";
 
-        // Wire agent service to chat
-        var chat = FindDockable<ChatViewModel>(layout);
-        chat?.SetAgentService(_agentService);
+        // Replace the placeholder chat in the document dock with the real one
+        var docDock = FindDocumentDock(layout);
+        if (docDock != null)
+        {
+            var placeholder = docDock.VisibleDockables?.OfType<ChatViewModel>().FirstOrDefault();
+            if (placeholder != null)
+                _factory.RemoveDockable(placeholder, false);
+            _factory.AddDockable(docDock, chatVm);
+            _factory.SetActiveDockable(chatVm);
+        }
 
-        // Wire agent service to terminal
-        _agentService.OnToolComplete += (name, args, result, elapsed) =>
+        // Status bar tracks whichever agent is active
+        _registry.OnAgentStateChanged += (id, processing) =>
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
-                var terminal = FindDockable<TerminalViewModel>(DockLayout!);
-                terminal?.AddLine($"🔧 {name} ({elapsed.TotalSeconds:F1}s)");
+                if (!processing)
+                    StatusText = $"{project.Name} — Ready";
+                _agentsPanel?.UpdateStatus(id, processing ? "Processing" : "Idle");
             });
         };
 
-        InitializeFileTree(layout);
+        // Wire usage from first agent (active chat will update this)
+        WireAgentToStatusBar(firstAgent);
 
-        _agentService.OnUsage += usage =>
-        {
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                TokenUsageText = $"Tokens: {usage.PromptTokens}↑ {usage.CompletionTokens}↓");
-        };
+        InitializeFileTree(layout);
+        InitializeAgentsPanel(layout);
+
+        // Register the first agent in the panel
+        _agentsPanel?.AddAgent(chatVm.Id!, "Chat 1");
+
+        // Set terminal working directory to project root
+        var terminal = FindDockable<TerminalViewModel>(layout);
+        if (terminal != null)
+            terminal.WorkingDirectory = _project.ResolvedWorkDirectory;
     }
 
     private void InitializeFileTree(IDock layout)
@@ -91,6 +111,66 @@ public partial class MainWindowViewModel : ObservableObject
         fileTree.ExcludePatterns = _project.ExcludePatterns;
         fileTree.RefreshCommand.Execute(null);
         fileTree.FileOpenRequested += path => OpenFileInEditor(path);
+    }
+
+    private void InitializeAgentsPanel(IDock layout)
+    {
+        _agentsPanel = FindDockable<AgentsPanelViewModel>(layout);
+        System.Diagnostics.Debug.WriteLine($"[AGENTS] InitializeAgentsPanel: found={_agentsPanel != null}");
+        if (_agentsPanel == null) return;
+
+        _agentsPanel.ShowAgentRequested += ShowOrRestoreAgent;
+    }
+
+    /// <summary>Show an agent's chat tab, re-adding it if it was closed</summary>
+    private void ShowOrRestoreAgent(string agentId)
+    {
+        if (DockLayout == null) return;
+        var docDock = FindDocumentDock(DockLayout);
+        if (docDock == null) return;
+
+        // Check if chat tab is already visible
+        var existing = docDock.VisibleDockables?.OfType<ChatViewModel>()
+            .FirstOrDefault(c => c.Id == agentId);
+        if (existing != null)
+        {
+            _factory.SetActiveDockable(existing);
+            _factory.SetFocusedDockable(docDock, existing);
+            return;
+        }
+
+        // Re-add the chat tab from registry
+        var entry = _registry.Agents.FirstOrDefault(kv => kv.Key == agentId);
+        if (entry.Value != null)
+        {
+            _factory.AddDockable(docDock, entry.Value.Chat);
+            _factory.SetActiveDockable(entry.Value.Chat);
+            _factory.SetFocusedDockable(docDock, entry.Value.Chat);
+            StatusText = $"Restored {entry.Value.Chat.Title}";
+        }
+    }
+
+    private void WireAgentToStatusBar(DesktopAgentService agent)
+    {
+        agent.OnToolComplete += (name, args, result, elapsed) =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                StatusText = $"🔧 {name} completed ({elapsed.TotalSeconds:F1}s)");
+        };
+        agent.OnUsage += usage =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                TokenUsageText = $"Tokens: {usage.PromptTokens}↑ {usage.CompletionTokens}↓");
+        };
+    }
+
+    /// <summary>Get the active chat's agent service</summary>
+    private DesktopAgentService? GetActiveAgent()
+    {
+        if (DockLayout == null) return null;
+        var docDock = FindDocumentDock(DockLayout);
+        var activeChat = docDock?.ActiveDockable as ChatViewModel;
+        return activeChat?.AgentService;
     }
 
     private T? FindDockable<T>(IDock dock) where T : class
@@ -157,10 +237,21 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void NewChat()
     {
-        _agentService.ClearMessages();
-        var chat = DockLayout != null ? FindDockable<ChatViewModel>(DockLayout) : null;
-        if (chat != null) chat.Messages.Clear();
-        StatusText = "New chat started";
+        if (DockLayout == null) return;
+        var docDock = FindDocumentDock(DockLayout);
+        if (docDock == null) return;
+
+        var (chatVm, agent) = _registry.CreateAgent();
+        WireAgentToStatusBar(agent);
+        _factory.AddDockable(docDock, chatVm);
+        _factory.SetActiveDockable(chatVm);
+        _factory.SetFocusedDockable(docDock, chatVm);
+
+        // Register in agents panel
+        var entry = _registry.Agents.FirstOrDefault(kv => kv.Value.Chat == chatVm);
+        _agentsPanel?.AddAgent(chatVm.Id!, entry.Value?.Name ?? chatVm.Title ?? "Chat");
+
+        StatusText = $"New chat: {chatVm.Title}";
     }
 
     [RelayCommand]
@@ -180,10 +271,14 @@ public partial class MainWindowViewModel : ObservableObject
         if (ShowSettingsDialog != null)
             await ShowSettingsDialog();
 
-        // Reload config in case the user saved changes
-        _agentService.ReloadConfig();
-        ModelName = _agentService.GetModelName();
-        StatusText = $"{_project.Name} — {_agentService.GetHostUrl()}";
+        // Reload config on all agents
+        _registry.ReloadAll();
+        var activeAgent = GetActiveAgent();
+        if (activeAgent != null)
+        {
+            ModelName = activeAgent.GetModelName();
+            StatusText = $"{_project.Name} — {activeAgent.GetHostUrl()}";
+        }
     }
 
     [RelayCommand]
@@ -223,10 +318,37 @@ public partial class MainWindowViewModel : ObservableObject
         _factory.InitLayout(layout);
         DockLayout = layout;
 
-        var chat = FindDockable<ChatViewModel>(layout);
-        chat?.SetAgentService(_agentService);
+        // Create a fresh chat in the new layout
+        var docDock = FindDocumentDock(layout);
+        if (docDock != null)
+        {
+            var placeholder = docDock.VisibleDockables?.OfType<ChatViewModel>().FirstOrDefault();
+            if (placeholder != null)
+                _factory.RemoveDockable(placeholder, false);
+
+            var (chatVm, agent) = _registry.CreateAgent();
+            WireAgentToStatusBar(agent);
+            _factory.AddDockable(docDock, chatVm);
+            _factory.SetActiveDockable(chatVm);
+        }
 
         InitializeFileTree(layout);
+        InitializeAgentsPanel(layout);
+
+        // Register the new chat in agents panel
+        if (docDock != null)
+        {
+            var chatVm2 = docDock.VisibleDockables?.OfType<ChatViewModel>().FirstOrDefault();
+            if (chatVm2 != null)
+            {
+                var entry = _registry.Agents.FirstOrDefault(kv => kv.Value.Chat == chatVm2);
+                _agentsPanel?.AddAgent(chatVm2.Id!, entry.Value?.Name ?? "Chat");
+            }
+        }
+
+        var terminal = FindDockable<TerminalViewModel>(layout);
+        if (terminal != null)
+            terminal.WorkingDirectory = _project.ResolvedWorkDirectory;
 
         StatusText = "Layout reset";
     }
@@ -234,14 +356,59 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void ClearChat()
     {
-        NewChat();
+        // Clear the active chat's messages and agent history
+        if (DockLayout == null) return;
+        var docDock = FindDocumentDock(DockLayout);
+        var activeChat = docDock?.ActiveDockable as ChatViewModel;
+        if (activeChat != null)
+        {
+            activeChat.AgentService?.ClearMessages();
+            activeChat.Messages.Clear();
+            StatusText = "Chat cleared";
+        }
     }
 
     [RelayCommand]
     private void CancelRequest()
     {
-        _agentService.CancelRequest();
+        GetActiveAgent()?.CancelRequest();
         StatusText = "Request cancelled";
+    }
+
+    private int _terminalCounter = 1;
+
+    [RelayCommand]
+    private void NewTerminal()
+    {
+        if (DockLayout == null) return;
+
+        // Find the terminal ToolDock
+        var terminalDock = FindToolDock(DockLayout, "TerminalDock");
+        if (terminalDock == null) return;
+
+        _terminalCounter++;
+        var terminal = TerminalViewModel.CreateUserTerminal(_terminalCounter);
+        terminal.WorkingDirectory = _project.ResolvedWorkDirectory;
+        _factory.AddDockable(terminalDock, terminal);
+        _factory.SetActiveDockable(terminal);
+        StatusText = $"New terminal created";
+    }
+
+    private IToolDock? FindToolDock(IDock dock, string id)
+    {
+        if (dock is IToolDock td && td.Id == id) return td;
+        if (dock.VisibleDockables != null)
+        {
+            foreach (var child in dock.VisibleDockables)
+            {
+                if (child is IDock childDock)
+                {
+                    var result = FindToolDock(childDock, id);
+                    if (result != null) return result;
+                }
+            }
+        }
+        return null;
     }
 
     [RelayCommand]

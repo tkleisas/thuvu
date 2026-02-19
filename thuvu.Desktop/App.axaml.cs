@@ -45,6 +45,9 @@ public partial class App : Application
             {
                 DataContext = new MainWindowViewModel(startupDialog.SelectedProject)
             };
+
+            // Initialize appearance from project settings
+            AppearanceService.Instance.Apply(startupDialog.SelectedProject.Appearance);
             desktop.MainWindow = mainWindow;
             mainWindow.Show();
             dummyWindow.Close();

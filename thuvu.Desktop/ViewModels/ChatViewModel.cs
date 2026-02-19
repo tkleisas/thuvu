@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 using System.Collections.ObjectModel;
 using Avalonia.Threading;
 using thuvu.Desktop.Services;
+using thuvu.Models;
 
 namespace thuvu.Desktop.ViewModels;
 
@@ -23,7 +24,18 @@ public partial class ChatMessageViewModel : ObservableObject
 }
 
 /// <summary>
-/// ViewModel for the Chat dockable panel
+/// Represents a model choice in the dropdown
+/// </summary>
+public class ModelChoice
+{
+    public string ModelId { get; set; } = "";
+    public string DisplayLabel { get; set; } = "";
+    public override string ToString() => DisplayLabel;
+}
+
+/// <summary>
+/// ViewModel for the Chat dockable panel.
+/// Each chat owns an independent agent session.
 /// </summary>
 public partial class ChatViewModel : DocumentViewModel
 {
@@ -35,19 +47,66 @@ public partial class ChatViewModel : DocumentViewModel
     private bool _canSend = true;
 
     private DesktopAgentService? _agentService;
-    
+
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
+    public ObservableCollection<ModelChoice> AvailableModels { get; } = new();
+
+    [ObservableProperty] private ModelChoice? _selectedModel;
+
+    /// <summary>The agent service powering this chat</summary>
+    public DesktopAgentService? AgentService => _agentService;
 
     public ChatViewModel()
     {
         Id = "Chat";
         Title = "💬 Chat";
-        CanClose = false;
+        CanClose = true;
+    }
+
+    private void LoadAvailableModels()
+    {
+        AvailableModels.Clear();
+        var models = ModelRegistry.Instance.Models.Where(m => m.Enabled).ToList();
+
+        // Fallback: if registry is empty, add the current model from AgentConfig
+        if (models.Count == 0 && !string.IsNullOrEmpty(AgentConfig.Config.Model))
+        {
+            AvailableModels.Add(new ModelChoice
+            {
+                ModelId = AgentConfig.Config.Model,
+                DisplayLabel = AgentConfig.Config.Model
+            });
+        }
+        else
+        {
+            foreach (var ep in models)
+            {
+                AvailableModels.Add(new ModelChoice
+                {
+                    ModelId = ep.ModelId,
+                    DisplayLabel = string.IsNullOrEmpty(ep.DisplayName) ? ep.ModelId : ep.DisplayName
+                });
+            }
+        }
+
+        // Select the effective model for this agent
+        var effectiveId = _agentService?.EffectiveModel ?? ModelRegistry.Instance.DefaultModelId;
+        SelectedModel = AvailableModels.FirstOrDefault(m => m.ModelId == effectiveId)
+                        ?? AvailableModels.FirstOrDefault();
+    }
+
+    partial void OnSelectedModelChanged(ModelChoice? value)
+    {
+        if (value != null && _agentService != null)
+        {
+            _agentService.SetModel(value.ModelId);
+        }
     }
 
     public void SetAgentService(DesktopAgentService service)
     {
         _agentService = service;
+        LoadAvailableModels();
         _agentService.OnToken += token =>
             Dispatcher.UIThread.Post(() => AppendToLastAssistant(token));
         _agentService.OnReasoningToken += token =>

@@ -18,6 +18,7 @@ public class DockFactory : Factory
         var chat = new ChatViewModel();
         var fileTree = new FileTreeViewModel();
         var terminal = new TerminalViewModel();
+        var agentsPanel = new AgentsPanelViewModel();
 
         var documentDock = new DocumentDock
         {
@@ -30,13 +31,13 @@ public class DockFactory : Factory
             CanCreateDocument = false
         };
 
-        var fileTreeTool = new ToolDock
+        var leftTool = new ToolDock
         {
-            Id = "FileTreeDock",
+            Id = "LeftToolDock",
             Title = "Explorer",
             Proportion = 0.20,
-            VisibleDockables = CreateList<IDockable>(fileTree),
-            ActiveDockable = fileTree,
+            VisibleDockables = CreateList<IDockable>(agentsPanel, fileTree),
+            ActiveDockable = agentsPanel,
             Alignment = Alignment.Left
         };
 
@@ -68,7 +69,7 @@ public class DockFactory : Factory
             Id = "MainLayout",
             Orientation = Orientation.Horizontal,
             VisibleDockables = CreateList<IDockable>(
-                fileTreeTool,
+                leftTool,
                 new ProportionalDockSplitter(),
                 centerWithTerminal
             )
@@ -92,6 +93,7 @@ public class DockFactory : Factory
             ["Chat"] = () => layout,
             ["FileTree"] = () => layout,
             ["Terminal"] = () => layout,
+            ["AgentsPanel"] = () => layout,
         };
 
         DockableLocator = new Dictionary<string, Func<IDockable?>>
