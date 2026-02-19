@@ -49,6 +49,7 @@ public partial class MainWindowViewModel : ObservableObject
     {
         _project = project;
         _registry = AgentRegistry.Instance;
+        _registry.WorkDirectory = _project.ResolvedWorkDirectory;
 
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();

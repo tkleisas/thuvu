@@ -27,6 +27,9 @@ public class DesktopAgentService
     public bool IsProcessing { get; private set; }
     public IReadOnlyList<ChatMessage> Messages => _messages.AsReadOnly();
 
+    /// <summary>Working directory for this agent's tools. When set, tools resolve paths relative to this.</summary>
+    public string? WorkDirectory { get; set; }
+
     /// <summary>Override model for this agent session. Null = use global default.</summary>
     public string? ModelOverride { get; private set; }
 
@@ -101,36 +104,14 @@ public class DesktopAgentService
 
         try
         {
-            string? result;
-            var model = EffectiveModel;
-            if (AgentConfig.Config.Stream)
+            if (!string.IsNullOrEmpty(WorkDirectory))
             {
-                result = await AgentLoop.CompleteWithToolsStreamingAsync(
-                    _http,
-                    model,
-                    _messages,
-                    _tools,
-                    _currentCts.Token,
-                    onToolResult: (name, json) => OnToolCall?.Invoke(name, json),
-                    onToolComplete: (name, args, res, elapsed) => OnToolComplete?.Invoke(name, args, res, elapsed),
-                    onToolCall: (name, args) => OnToolCall?.Invoke(name, args),
-                    onToken: token => OnToken?.Invoke(token),
-                    onUsage: usage => OnUsage?.Invoke(usage),
-                    onReasoningToken: token => OnReasoningToken?.Invoke(token)
-                );
+                var ctx = AgentContext.CreateContext("desktop", WorkDirectory);
+                await AgentContext.RunInContextAsync(ctx, () => ExecuteAgentLoopAsync());
             }
             else
             {
-                result = await AgentLoop.CompleteWithToolsAsync(
-                    _http,
-                    model,
-                    _messages,
-                    _tools,
-                    _currentCts.Token,
-                    onToolResult: (name, json) => OnToolCall?.Invoke(name, json),
-                    onToolComplete: (name, args, res, elapsed) => OnToolComplete?.Invoke(name, args, res, elapsed),
-                    onToolCall: (name, args) => OnToolCall?.Invoke(name, args)
-                );
+                await ExecuteAgentLoopAsync();
             }
 
             OnComplete?.Invoke();
@@ -148,6 +129,40 @@ public class DesktopAgentService
             IsProcessing = false;
             _currentCts?.Dispose();
             _currentCts = null;
+        }
+    }
+
+    private async Task ExecuteAgentLoopAsync()
+    {
+        var model = EffectiveModel;
+        if (AgentConfig.Config.Stream)
+        {
+            await AgentLoop.CompleteWithToolsStreamingAsync(
+                _http,
+                model,
+                _messages,
+                _tools,
+                _currentCts!.Token,
+                onToolResult: (name, json) => OnToolCall?.Invoke(name, json),
+                onToolComplete: (name, args, res, elapsed) => OnToolComplete?.Invoke(name, args, res, elapsed),
+                onToolCall: (name, args) => OnToolCall?.Invoke(name, args),
+                onToken: token => OnToken?.Invoke(token),
+                onUsage: usage => OnUsage?.Invoke(usage),
+                onReasoningToken: token => OnReasoningToken?.Invoke(token)
+            );
+        }
+        else
+        {
+            await AgentLoop.CompleteWithToolsAsync(
+                _http,
+                model,
+                _messages,
+                _tools,
+                _currentCts!.Token,
+                onToolResult: (name, json) => OnToolCall?.Invoke(name, json),
+                onToolComplete: (name, args, res, elapsed) => OnToolComplete?.Invoke(name, args, res, elapsed),
+                onToolCall: (name, args) => OnToolCall?.Invoke(name, args)
+            );
         }
     }
 

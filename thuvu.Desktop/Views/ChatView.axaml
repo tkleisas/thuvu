@@ -45,11 +45,11 @@
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <DockPanel Margin="4,2">
-                                        <TextBlock DockPanel.Dock="Left" Text="{Binding Icon}" FontSize="14"
+                                        <TextBlock DockPanel.Dock="Left" Text="{ReflectionBinding Icon}" FontSize="14"
                                                    VerticalAlignment="Center" Margin="0,0,8,0" />
                                         <StackPanel>
-                                            <TextBlock Text="{Binding Command}" FontWeight="SemiBold" FontSize="12" />
-                                            <TextBlock Text="{Binding Description}" FontSize="10" Foreground="Gray" />
+                                            <TextBlock Text="{ReflectionBinding Command}" FontWeight="SemiBold" FontSize="12" />
+                                            <TextBlock Text="{ReflectionBinding Description}" FontSize="10" Foreground="Gray" />
                                         </StackPanel>
                                     </DockPanel>
                                 </DataTemplate>

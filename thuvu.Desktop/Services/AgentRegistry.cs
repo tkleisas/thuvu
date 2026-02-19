@@ -20,6 +20,9 @@ public class AgentRegistry
     /// <summary>Fired when any agent's processing state changes</summary>
     public event Action<string, bool>? OnAgentStateChanged;
 
+    /// <summary>Working directory for agents created by this registry</summary>
+    public string? WorkDirectory { get; set; }
+
     /// <summary>Create a new agent+chat pair with a unique ID</summary>
     public (ChatViewModel chat, DesktopAgentService agent) CreateAgent(string? name = null)
     {
@@ -27,7 +30,7 @@ public class AgentRegistry
         var id = $"Chat_{_counter}";
         name ??= $"Chat {_counter}";
 
-        var agent = new DesktopAgentService();
+        var agent = new DesktopAgentService { WorkDirectory = WorkDirectory };
         var chat = new ChatViewModel
         {
             Id = id,
