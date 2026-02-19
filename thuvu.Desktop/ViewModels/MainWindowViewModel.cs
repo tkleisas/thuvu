@@ -159,6 +159,11 @@ public partial class MainWindowViewModel : ObservableObject
     {
         if (ShowSettingsDialog != null)
             await ShowSettingsDialog();
+
+        // Reload config in case the user saved changes
+        _agentService.ReloadConfig();
+        ModelName = _agentService.GetModelName();
+        StatusText = $"Connected to {_agentService.GetHostUrl()}";
     }
 
     [RelayCommand]

@@ -10,7 +10,7 @@ namespace thuvu.Desktop.Services;
 /// </summary>
 public class DesktopAgentService
 {
-    private readonly HttpClient _http;
+    private HttpClient _http;
     private readonly List<Tool> _tools;
     private List<ChatMessage> _messages;
     private CancellationTokenSource? _currentCts;
@@ -22,20 +22,39 @@ public class DesktopAgentService
     public event Action<Usage>? OnUsage;
     public event Action<string>? OnError;
     public event Action? OnComplete;
+    public event Action? OnConfigReloaded;
 
     public bool IsProcessing { get; private set; }
     public IReadOnlyList<ChatMessage> Messages => _messages.AsReadOnly();
 
     public DesktopAgentService()
     {
-        _http = new HttpClient();
         AgentConfig.LoadConfig();
-        AgentConfig.ApplyConfig(_http);
+        _http = CreateHttpClient();
         _tools = BuildTools.GetToolsForSession();
         _messages = new List<ChatMessage>
         {
             new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt())
         };
+    }
+
+    /// <summary>
+    /// Reload configuration and recreate the HttpClient.
+    /// Call after settings are saved.
+    /// </summary>
+    public void ReloadConfig()
+    {
+        if (IsProcessing) return;
+        _http.Dispose();
+        _http = CreateHttpClient();
+        OnConfigReloaded?.Invoke();
+    }
+
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient();
+        AgentConfig.ApplyConfig(client);
+        return client;
     }
 
     public async Task SendMessageAsync(string prompt)
@@ -110,6 +129,6 @@ public class DesktopAgentService
         };
     }
 
-    public string GetModelName()=> AgentConfig.Config.Model;
+    public string GetModelName() => AgentConfig.Config.Model;
     public string GetHostUrl() => AgentConfig.Config.HostUrl;
 }
