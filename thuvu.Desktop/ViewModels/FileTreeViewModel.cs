@@ -14,7 +14,17 @@ public partial class FileTreeNodeViewModel : ObservableObject
     [ObservableProperty] private bool _isDirectory;
     [ObservableProperty] private bool _isExpanded;
 
+    internal FileTreeViewModel? Owner { get; set; }
+
     public ObservableCollection<FileTreeNodeViewModel> Children { get; } = new();
+
+    partial void OnIsExpandedChanged(bool value)
+    {
+        if (value && IsDirectory && Children.Count == 1 && Children[0].Name == "Loading...")
+        {
+            Owner?.ExpandNode(this);
+        }
+    }
 }
 
 /// <summary>
@@ -42,11 +52,13 @@ public partial class FileTreeViewModel : ToolViewModel
         LoadDirectory(RootPath, RootNodes);
     }
 
+    public event Action<string>? FileOpenRequested;
+
     [RelayCommand]
     private void OpenFile(FileTreeNodeViewModel node)
     {
         if (node.IsDirectory) return;
-        // TODO: Signal to MainWindowViewModel to open file in editor
+        FileOpenRequested?.Invoke(node.FullPath);
     }
 
     private void LoadDirectory(string path, ObservableCollection<FileTreeNodeViewModel> target)
@@ -62,7 +74,8 @@ public partial class FileTreeViewModel : ToolViewModel
                 {
                     Name = dirName,
                     FullPath = dir,
-                    IsDirectory = true
+                    IsDirectory = true,
+                    Owner = this
                 };
                 // Lazy load: add placeholder
                 dirNode.Children.Add(new FileTreeNodeViewModel { Name = "Loading..." });

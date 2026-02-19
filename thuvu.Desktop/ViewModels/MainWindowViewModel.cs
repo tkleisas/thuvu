@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Styling;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Dock.Model.Controls;
 using Dock.Model.Core;
 using Dock.Model.Mvvm.Controls;
 using thuvu.Desktop.Services;
@@ -23,6 +24,12 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly DockFactory _factory;
     private readonly DesktopAgentService _agentService;
 
+    /// <summary>Set by MainWindow to show file picker dialog</summary>
+    public Func<Task<string?>>? ShowOpenFileDialog { get; set; }
+
+    /// <summary>Set by MainWindow to show settings dialog</summary>
+    public Func<Task>? ShowSettingsDialog { get; set; }
+
     public MainWindowViewModel()
     {
         _factory = new DockFactory();
@@ -41,16 +48,21 @@ public partial class MainWindowViewModel : ObservableObject
         // Wire agent service to terminal
         _agentService.OnToolComplete += (name, args, result, elapsed) =>
         {
-            var terminal = FindDockable<TerminalViewModel>(layout);
-            terminal?.AddLine($"🔧 {name} ({elapsed.TotalSeconds:F1}s)");
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                var terminal = FindDockable<TerminalViewModel>(DockLayout!);
+                terminal?.AddLine($"🔧 {name} ({elapsed.TotalSeconds:F1}s)");
+            });
         };
 
-        // Initialize file tree with work directory
+        // Initialize file tree with project root
         var fileTree = FindDockable<FileTreeViewModel>(layout);
         if (fileTree != null)
         {
-            fileTree.RootPath = AgentConfig.GetWorkDirectory();
+            var rootPath = Directory.GetCurrentDirectory();
+            fileTree.RootPath = rootPath;
             fileTree.RefreshCommand.Execute(null);
+            fileTree.FileOpenRequested += path => OpenFileInEditor(path);
         }
 
         _agentService.OnUsage += usage =>
@@ -78,6 +90,50 @@ public partial class MainWindowViewModel : ObservableObject
         return null;
     }
 
+    private IDocumentDock? FindDocumentDock(IDock dock)
+    {
+        if (dock is IDocumentDock dd) return dd;
+        if (dock.VisibleDockables != null)
+        {
+            foreach (var child in dock.VisibleDockables)
+            {
+                if (child is IDock childDock)
+                {
+                    var result = FindDocumentDock(childDock);
+                    if (result != null) return result;
+                }
+            }
+        }
+        return null;
+    }
+
+    public void OpenFileInEditor(string filePath)
+    {
+        if (DockLayout == null) return;
+        var docDock = FindDocumentDock(DockLayout);
+        if (docDock == null) return;
+
+        // Check if file is already open
+        if (docDock.VisibleDockables != null)
+        {
+            var existing = docDock.VisibleDockables.OfType<EditorViewModel>()
+                .FirstOrDefault(e => e.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                _factory.SetActiveDockable(existing);
+                _factory.SetFocusedDockable(docDock, existing);
+                return;
+            }
+        }
+
+        var editor = new EditorViewModel(filePath);
+        _ = editor.LoadFileCommand.ExecuteAsync(null);
+        _factory.AddDockable(docDock, editor);
+        _factory.SetActiveDockable(editor);
+        _factory.SetFocusedDockable(docDock, editor);
+        StatusText = $"Opened {Path.GetFileName(filePath)}";
+    }
+
     [RelayCommand]
     private void NewChat()
     {
@@ -90,14 +146,19 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task OpenFile()
     {
-        // TODO: Integrate with Avalonia file dialog to open files in editor
-        await Task.CompletedTask;
+        if (ShowOpenFileDialog != null)
+        {
+            var path = await ShowOpenFileDialog();
+            if (!string.IsNullOrEmpty(path))
+                OpenFileInEditor(path);
+        }
     }
 
     [RelayCommand]
-    private void ShowSettings()
+    private async Task ShowSettings()
     {
-        StatusText = "Settings (open via menu)";
+        if (ShowSettingsDialog != null)
+            await ShowSettingsDialog();
     }
 
     [RelayCommand]
@@ -109,13 +170,25 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void ToggleFileTree()
     {
-        // TODO: Toggle file tree visibility in dock
+        if (DockLayout == null) return;
+        var fileTree = FindDockable<FileTreeViewModel>(DockLayout);
+        if (fileTree != null)
+        {
+            _factory.SetActiveDockable(fileTree);
+            StatusText = "File Explorer focused";
+        }
     }
 
     [RelayCommand]
     private void ToggleTerminal()
     {
-        // TODO: Toggle terminal visibility in dock
+        if (DockLayout == null) return;
+        var terminal = FindDockable<TerminalViewModel>(DockLayout);
+        if (terminal != null)
+        {
+            _factory.SetActiveDockable(terminal);
+            StatusText = "Terminal focused";
+        }
     }
 
     [RelayCommand]
@@ -131,8 +204,9 @@ public partial class MainWindowViewModel : ObservableObject
         var fileTree = FindDockable<FileTreeViewModel>(layout);
         if (fileTree != null)
         {
-            fileTree.RootPath = AgentConfig.GetWorkDirectory();
+            fileTree.RootPath = Directory.GetCurrentDirectory();
             fileTree.RefreshCommand.Execute(null);
+            fileTree.FileOpenRequested += path => OpenFileInEditor(path);
         }
 
         StatusText = "Layout reset";
@@ -167,6 +241,6 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void ShowAbout()
     {
-        StatusText = "T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage";
+        StatusText = "T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage v1.0";
     }
 }

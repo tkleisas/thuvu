@@ -12,16 +12,17 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Bottom">
                     <Button Content="Send" Command="{Binding SendMessageCommand}"
-                            IsEnabled="{Binding CanSend}"
                             Classes="accent" Padding="16,8" />
                     <Button Content="Cancel" Command="{Binding CancelRequestCommand}"
                             IsVisible="{Binding IsProcessing}" Padding="16,8" />
                 </StackPanel>
-                <TextBox Text="{Binding InputText}"
-                         Watermark="Type a message or /command..."
+                <TextBox Name="InputBox"
+                         Text="{Binding InputText}"
+                         Watermark="Type a message or /command... (Enter to send, Shift+Enter for newline)"
                          AcceptsReturn="True"
                          MinHeight="60" MaxHeight="150"
                          TextWrapping="Wrap"
+                         KeyDown="InputBox_KeyDown"
                          Margin="0,0,8,0" />
             </DockPanel>
         </Border>

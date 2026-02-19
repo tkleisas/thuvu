@@ -29,7 +29,10 @@ public partial class ChatViewModel : DocumentViewModel
 {
     [ObservableProperty] private string _inputText = string.Empty;
     [ObservableProperty] private bool _isProcessing;
-    [ObservableProperty] private bool _canSend = true;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SendMessageCommand))]
+    private bool _canSend = true;
 
     private DesktopAgentService? _agentService;
     
