@@ -442,42 +442,60 @@ public partial class ChatViewModel : DocumentViewModel
         }
 
         AddSystemMessage("🔍 Analyzing task and creating decomposition plan...");
+        IsProcessing = true;
+        CanSend = false;
 
         try
         {
-            // Get codebase context
-            string? codebaseContext = null;
             var workDir = GetWorkDir();
-            try
-            {
-                var files = Directory.GetFiles(workDir, "*.cs", SearchOption.AllDirectories)
-                    .Take(20).Select(f => Path.GetRelativePath(workDir, f)).ToList();
-                codebaseContext = files.Any()
-                    ? $"Existing project files: {string.Join(", ", files.Take(10))}"
-                    : "Work directory is empty - new project.";
-            }
-            catch { }
-
-            var http = new HttpClient();
-            AgentConfig.ApplyConfig(http);
-            var decomposer = new TaskDecomposer(http);
-            var plan = await decomposer.DecomposeAsync(taskDescription, codebaseContext, CancellationToken.None);
-
             var jsonPath = GetPlanPath();
-            var mdPath = Path.ChangeExtension(jsonPath, ".md");
-            plan.SaveToFile(jsonPath);
-            plan.SaveToMarkdown(mdPath);
 
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine(FormatPlanSummary(plan));
-            sb.AppendLine();
-            sb.AppendLine($"📁 Plan saved to: `{jsonPath}`");
-            sb.AppendLine($"Use `/orchestrate` to execute this plan.");
-            AddSystemMessage(sb.ToString());
+            var (summary, error) = await Task.Run(async () =>
+            {
+                try
+                {
+                    string? codebaseContext = null;
+                    try
+                    {
+                        var files = Directory.GetFiles(workDir, "*.cs", SearchOption.AllDirectories)
+                            .Take(20).Select(f => Path.GetRelativePath(workDir, f)).ToList();
+                        codebaseContext = files.Any()
+                            ? $"Existing project files: {string.Join(", ", files.Take(10))}"
+                            : "Work directory is empty - new project.";
+                    }
+                    catch { }
+
+                    var http = new HttpClient();
+                    AgentConfig.ApplyConfig(http);
+                    var decomposer = new TaskDecomposer(http);
+                    var plan = await decomposer.DecomposeAsync(taskDescription, codebaseContext, CancellationToken.None);
+
+                    var mdPath = Path.ChangeExtension(jsonPath, ".md");
+                    plan.SaveToFile(jsonPath);
+                    plan.SaveToMarkdown(mdPath);
+
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine(FormatPlanSummary(plan));
+                    sb.AppendLine();
+                    sb.AppendLine($"📁 Plan saved to: `{jsonPath}`");
+                    sb.AppendLine($"Use `/orchestrate` to execute this plan.");
+                    return (sb.ToString(), (string?)null);
+                }
+                catch (Exception ex)
+                {
+                    return ((string?)null, ex.Message);
+                }
+            });
+
+            if (error != null)
+                AddSystemMessage($"⚠️ Failed to decompose task: {error}");
+            else
+                AddSystemMessage(summary!);
         }
-        catch (Exception ex)
+        finally
         {
-            AddSystemMessage($"⚠️ Failed to decompose task: {ex.Message}");
+            IsProcessing = false;
+            CanSend = true;
         }
     }
 
@@ -569,43 +587,50 @@ public partial class ChatViewModel : DocumentViewModel
         AddSystemMessage($"🚀 {(isResume ? "Resuming" : "Starting")} orchestration with {config.MaxAgents} agent(s)...\n" +
             $"Plan: {plan.Summary}\nRemaining: {pending} tasks\nWork dir: `{workDir}`");
 
-        var http = new HttpClient();
-        AgentConfig.ApplyConfig(http);
-        using var orchestrator = new TaskOrchestrator(http, config, workDir);
-
-        orchestrator.OnAgentStarted += (agentId, taskId) =>
-            Dispatcher.UIThread.Post(() =>
-                AddSystemMessage($"[{agentId}] Starting task {taskId}..."));
-
-        orchestrator.OnTaskCompleted += (agentId, result) =>
-        {
-            var task = plan.SubTasks.FirstOrDefault(t => t.Id == result.TaskId);
-            if (task != null)
-            {
-                task.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
-                task.AssignedAgentId = agentId;
-                try { plan.SaveToFile(planPath); } catch { }
-            }
-            Dispatcher.UIThread.Post(() =>
-            {
-                var icon = result.Success ? "✅" : "❌";
-                AddSystemMessage($"{icon} [{agentId}] Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)");
-            });
-        };
-
-        orchestrator.OnPhaseCompleted += phase =>
-            Dispatcher.UIThread.Post(() =>
-                AddSystemMessage($"── {phase} completed ──"));
+        IsProcessing = true;
+        CanSend = false;
 
         try
         {
-            var result = await orchestrator.ExecutePlanAsync(plan, CancellationToken.None);
-            plan.SaveToFile(planPath);
-            plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
+            await Task.Run(async () =>
+            {
+                var http = new HttpClient();
+                AgentConfig.ApplyConfig(http);
+                using var orchestrator = new TaskOrchestrator(http, config, workDir);
 
-            AddSystemMessage(result.Success
-                ? $"✅ Orchestration completed in {result.Duration.TotalMinutes:F1} minutes."
-                : $"⚠️ Orchestration failed: {result.Error}");
+                orchestrator.OnAgentStarted += (agentId, taskId) =>
+                    Dispatcher.UIThread.Post(() =>
+                        AddSystemMessage($"[{agentId}] Starting task {taskId}..."));
+
+                orchestrator.OnTaskCompleted += (agentId, result) =>
+                {
+                    var task = plan.SubTasks.FirstOrDefault(t => t.Id == result.TaskId);
+                    if (task != null)
+                    {
+                        task.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
+                        task.AssignedAgentId = agentId;
+                        try { plan.SaveToFile(planPath); } catch { }
+                    }
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        var icon = result.Success ? "✅" : "❌";
+                        AddSystemMessage($"{icon} [{agentId}] Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)");
+                    });
+                };
+
+                orchestrator.OnPhaseCompleted += phase =>
+                    Dispatcher.UIThread.Post(() =>
+                        AddSystemMessage($"── {phase} completed ──"));
+
+                var result = await orchestrator.ExecutePlanAsync(plan, CancellationToken.None);
+                plan.SaveToFile(planPath);
+                plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
+
+                Dispatcher.UIThread.Post(() =>
+                    AddSystemMessage(result.Success
+                        ? $"✅ Orchestration completed in {result.Duration.TotalMinutes:F1} minutes."
+                        : $"⚠️ Orchestration failed: {result.Error}"));
+            });
         }
         catch (OperationCanceledException)
         {
@@ -615,6 +640,11 @@ public partial class ChatViewModel : DocumentViewModel
         catch (Exception ex)
         {
             AddSystemMessage($"⚠️ Orchestration failed: {ex.Message}");
+        }
+        finally
+        {
+            IsProcessing = false;
+            CanSend = true;
         }
     }
 
