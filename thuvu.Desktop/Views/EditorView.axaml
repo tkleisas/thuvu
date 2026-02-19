@@ -1,0 +1,24 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:thuvu.Desktop.ViewModels"
+             xmlns:AvaloniaEdit="using:AvaloniaEdit"
+             x:Class="thuvu.Desktop.Views.EditorView"
+             x:DataType="vm:EditorViewModel">
+
+    <DockPanel>
+        <!-- Toolbar -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="4" Margin="4">
+            <Button Content="💾" Command="{Binding SaveFileCommand}" ToolTip.Tip="Save" Padding="4" />
+            <TextBlock Text="{Binding FilePath}" VerticalAlignment="Center" Foreground="Gray" FontSize="11"
+                       Margin="8,0,0,0" />
+        </StackPanel>
+
+        <!-- Editor -->
+        <AvaloniaEdit:TextEditor Name="Editor"
+                                  ShowLineNumbers="True"
+                                  FontFamily="Cascadia Code, Consolas, Courier New"
+                                  FontSize="13"
+                                  WordWrap="False"
+                                  Background="Transparent" />
+    </DockPanel>
+</UserControl>

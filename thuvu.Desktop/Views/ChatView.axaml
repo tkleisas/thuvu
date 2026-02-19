@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:thuvu.Desktop.ViewModels"
+             xmlns:views="clr-namespace:thuvu.Desktop.Views"
+             x:Class="thuvu.Desktop.Views.ChatView"
+             x:DataType="vm:ChatViewModel">
+
+    <DockPanel>
+        <!-- Input Area -->
+        <Border DockPanel.Dock="Bottom" Padding="8" BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource SystemBaseMediumColor}">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Bottom">
+                    <Button Content="Send" Command="{Binding SendMessageCommand}"
+                            IsEnabled="{Binding CanSend}"
+                            Classes="accent" Padding="16,8" />
+                    <Button Content="Cancel" Command="{Binding CancelRequestCommand}"
+                            IsVisible="{Binding IsProcessing}" Padding="16,8" />
+                </StackPanel>
+                <TextBox Text="{Binding InputText}"
+                         Watermark="Type a message or /command..."
+                         AcceptsReturn="True"
+                         MinHeight="60" MaxHeight="150"
+                         TextWrapping="Wrap"
+                         Margin="0,0,8,0" />
+            </DockPanel>
+        </Border>
+
+        <!-- Messages Area -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Messages}" Padding="8">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:ChatMessageViewModel">
+                        <Border Margin="0,4" Padding="12,8" CornerRadius="8"
+                                Background="{Binding Role, Converter={x:Static views:ChatView.RoleBrushConverter}}">
+                            <StackPanel Spacing="4">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Left"
+                                               Text="{Binding Role}" FontWeight="Bold" FontSize="11"
+                                               Foreground="{DynamicResource SystemBaseHighColor}" />
+                                    <TextBlock DockPanel.Dock="Right"
+                                               Text="{Binding Timestamp}" FontSize="10"
+                                               Foreground="Gray" HorizontalAlignment="Right" />
+                                    <Panel />
+                                </DockPanel>
+                                <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap" />
+                                <!-- Tool info -->
+                                <Border IsVisible="{Binding ToolName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                        Background="#1A000000" CornerRadius="4" Padding="8" Margin="0,4,0,0">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{Binding ToolName, StringFormat='🔧 {0}'}" FontWeight="SemiBold" FontSize="11" />
+                                        <TextBlock Text="{Binding ToolResult}" FontSize="11" Foreground="Gray"
+                                                   MaxLines="5" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

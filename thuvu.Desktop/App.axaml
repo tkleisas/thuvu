@@ -1,0 +1,28 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:thuvu.Desktop.ViewModels"
+             xmlns:views="using:thuvu.Desktop.Views"
+             x:Class="thuvu.Desktop.App"
+             RequestedThemeVariant="Dark">
+    <Application.Styles>
+        <FluentTheme />
+    </Application.Styles>
+
+    <Application.DataTemplates>
+        <DataTemplate DataType="vm:ChatViewModel">
+            <views:ChatView />
+        </DataTemplate>
+        <DataTemplate DataType="vm:FileTreeViewModel">
+            <views:FileTreeView />
+        </DataTemplate>
+        <DataTemplate DataType="vm:EditorViewModel">
+            <views:EditorView />
+        </DataTemplate>
+        <DataTemplate DataType="vm:TerminalViewModel">
+            <views:TerminalView />
+        </DataTemplate>
+        <DataTemplate DataType="vm:DiffViewerViewModel">
+            <views:DiffView />
+        </DataTemplate>
+    </Application.DataTemplates>
+</Application>

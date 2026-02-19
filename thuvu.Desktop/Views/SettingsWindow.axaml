@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="thuvu.Desktop.Views.SettingsWindow"
+        Title="Settings — T.H.U.V.U."
+        Width="600" Height="500"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True">
+
+    <TabControl Margin="12">
+        <!-- Providers Tab -->
+        <TabItem Header="🔌 Providers">
+            <ScrollViewer Padding="12">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="LLM Providers" FontSize="16" FontWeight="Bold" />
+                    
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Host URL" FontWeight="SemiBold" />
+                        <TextBox Name="HostUrlBox" Watermark="http://127.0.0.1:1234" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Model ID" FontWeight="SemiBold" />
+                        <TextBox Name="ModelIdBox" Watermark="qwen/qwen3-coder-30b" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Max Context Length" FontWeight="SemiBold" />
+                        <NumericUpDown Name="ContextLengthBox" Minimum="1024" Maximum="1000000"
+                                       Increment="1024" Value="32768" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+
+        <!-- Agent Tab -->
+        <TabItem Header="🤖 Agent">
+            <ScrollViewer Padding="12">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Agent Configuration" FontSize="16" FontWeight="Bold" />
+
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Max Iterations" FontWeight="SemiBold" />
+                        <NumericUpDown Name="MaxIterationsBox" Minimum="1" Maximum="200"
+                                       Increment="1" Value="50" />
+                    </StackPanel>
+
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Process Timeout (seconds)" FontWeight="SemiBold" />
+                        <NumericUpDown Name="TimeoutBox" Minimum="10" Maximum="36000"
+                                       Increment="10" Value="1800" />
+                    </StackPanel>
+
+                    <CheckBox Name="StreamingCheckBox" Content="Enable Streaming" IsChecked="True" />
+                    <CheckBox Name="AutoApproveCheckBox" Content="Auto-Approve Tool Calls" IsChecked="False" />
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+
+        <!-- Features Tab -->
+        <TabItem Header="✨ Features">
+            <ScrollViewer Padding="12">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Feature Toggles" FontSize="16" FontWeight="Bold" />
+                    <CheckBox Name="McpCheckBox" Content="MCP Code Execution (Deno Sandbox)" />
+                    <CheckBox Name="RagCheckBox" Content="RAG Vector Search (PostgreSQL/pgvector)" />
+                    <CheckBox Name="BrowserCheckBox" Content="Browser Tools" IsChecked="True" IsEnabled="False" />
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+    </TabControl>
+</Window>

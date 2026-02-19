@@ -10,6 +10,14 @@
     <DockerfileContext>.</DockerfileContext>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="thuvu.Core\**" />
+    <Content Remove="thuvu.Core\**" />
+    <None Remove="thuvu.Core\**" />
+    <Compile Remove="thuvu.Desktop\**" />
+    <Content Remove="thuvu.Desktop\**" />
+    <None Remove="thuvu.Desktop\**" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />

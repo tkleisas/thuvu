@@ -88,6 +88,7 @@ namespace thuvu
             bool useTui = false;
             bool useWeb = false;
             bool useApi = false;
+            bool useDesktop = false;
             bool testUiAutomation = false;
             bool testProcessMgmt = false;
             bool testSqlite = false;
@@ -100,6 +101,7 @@ namespace thuvu
                 if (arg == "--tui") useTui = true;
                 else if (arg == "--web") useWeb = true;
                 else if (arg == "--api") useApi = true;
+                else if (arg == "--desktop") useDesktop = true;
                 else if (arg == "--test-ui") testUiAutomation = true;
                 else if (arg == "--test-process") testProcessMgmt = true;
                 else if (arg == "--test-sqlite") testSqlite = true;
@@ -340,10 +342,21 @@ namespace thuvu
                 return;
             }
 
+            if (useDesktop)
+            {
+                // Launch Avalonia Desktop UI
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("Launching T.H.U.V.U. Desktop...");
+                Console.ResetColor();
+                Console.WriteLine("Note: The desktop project must be run directly via thuvu.Desktop executable.");
+                Console.WriteLine("Run: dotnet run --project thuvu.Desktop");
+                return;
+            }
+
             // Original console interface - styled banner
             ConsoleHelpers.PrintHeader($"T.H.U.V.U. v{Helpers.GetCurrentGitTag()}", ConsoleColor.Cyan);
             Console.WriteLine();
-            ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("Type /exit to quit, /help for commands, --tui for Terminal UI, --web for Web UI"));
+            ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () => Console.WriteLine("Type /exit to quit, /help for commands, --tui for Terminal UI, --web for Web UI, --desktop for Desktop UI"));
             Console.WriteLine();
             ConsoleHelpers.PrintKeyValue("Config", AgentConfig.GetConfigPath(), ConsoleColor.DarkGray, ConsoleColor.Gray);
             ConsoleHelpers.PrintKeyValue("Model", AgentConfig.Config.Model, ConsoleColor.DarkGray, ConsoleColor.Green);

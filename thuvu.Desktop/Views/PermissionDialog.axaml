@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="thuvu.Desktop.Views.PermissionDialog"
+        Title="Permission Required"
+        Width="450" Height="280"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        SystemDecorations="BorderOnly">
+
+    <Border Padding="24">
+        <StackPanel Spacing="16">
+            <TextBlock Text="⚠️ Permission Required" FontSize="18" FontWeight="Bold" />
+            
+            <StackPanel Spacing="4">
+                <TextBlock Text="Tool:" FontWeight="SemiBold" />
+                <TextBlock Name="ToolNameText" FontFamily="Cascadia Code, Consolas" Foreground="Orange" />
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="Arguments:" FontWeight="SemiBold" />
+                <TextBox Name="ArgsText" IsReadOnly="True" MaxHeight="60" FontSize="11"
+                         FontFamily="Cascadia Code, Consolas" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <TextBlock Text="Allow this tool to execute?" Foreground="Gray" />
+
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Content="Always (A)" Click="OnAlways" Classes="accent" Padding="12,6" />
+                <Button Content="Session (S)" Click="OnSession" Padding="12,6" />
+                <Button Content="Once (O)" Click="OnOnce" Padding="12,6" />
+                <Button Content="Deny (N)" Click="OnDeny" Padding="12,6" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

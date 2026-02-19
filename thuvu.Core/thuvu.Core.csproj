@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>thuvu</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.49.0" />
+    <PackageReference Include="Npgsql" Version="8.0.5" />
+    <PackageReference Include="Pgvector" Version="0.3.0" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <DQ>"</DQ>
+  </PropertyGroup>
+
+  <Target Name="ComputeGitVersion" BeforeTargets="GenerateAssemblyInfo">
+    <Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="LastTagRaw" />
+    </Exec>
+    <Exec Command="git rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitShaShortRaw" />
+    </Exec>
+    <PropertyGroup>
+      <GitTag>$([System.String]::Copy('$(GitTagRaw)').Trim())</GitTag>
+      <GitShaShort>$([System.String]::Copy('$(GitShaShortRaw)').Trim())</GitShaShort>
+      <GitTagSafe Condition="'$(GitTag)' == ''">unknown</GitTagSafe>
+      <GitTagSafe Condition="'$(GitTag)' != ''">$(GitTag)</GitTagSafe>
+      <GitShaShort Condition="'$(GitShaShort)' == ''">0000000</GitShaShort>
+      <InformationalVersion>$(GitTagSafe)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="GenerateGitInfo" BeforeTargets="CoreCompile" DependsOnTargets="ComputeGitVersion">
+    <ItemGroup>
+      <_GitInfoLines Include="// &lt;auto-generated/&gt;" />
+      <_GitInfoLines Include="namespace $(RootNamespace) {" Condition="'$(RootNamespace)' != ''" />
+      <_GitInfoLines Include="internal static class ThisBuild {" />
+      <_GitInfoLines Include="    public const string GitTag = $(DQ)$(GitTagSafe)$(DQ)%3B" />
+      <_GitInfoLines Include="    public const string GitSha = $(DQ)$(GitShaShort)$(DQ)%3B" />
+      <_GitInfoLines Include="}" />
+      <_GitInfoLines Include="}" Condition="'$(RootNamespace)' != ''" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)BuildInfo.g.cs" Lines="@(_GitInfoLines)" Overwrite="true" Encoding="UTF-8" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
+    </ItemGroup>
+  </Target>
+
+</Project>

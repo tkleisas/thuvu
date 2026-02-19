@@ -1,0 +1,27 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:thuvu.Desktop.ViewModels"
+             xmlns:views="clr-namespace:thuvu.Desktop.Views"
+             x:Class="thuvu.Desktop.Views.FileTreeView"
+             x:DataType="vm:FileTreeViewModel">
+
+    <DockPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="4">
+            <Button DockPanel.Dock="Right" Content="🔄" Command="{Binding RefreshCommand}"
+                    ToolTip.Tip="Refresh" Padding="4" />
+            <TextBlock Text="📁 Workspace" VerticalAlignment="Center" FontWeight="SemiBold" FontSize="12" />
+        </DockPanel>
+
+        <TreeView ItemsSource="{Binding RootNodes}" Padding="4">
+            <TreeView.ItemTemplate>
+                <TreeDataTemplate ItemsSource="{Binding Children}">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBlock Text="{Binding IsDirectory, Converter={x:Static views:FileTreeView.FolderIconConverter}}"
+                                   FontSize="12" />
+                        <TextBlock Text="{Binding Name}" FontSize="12" />
+                    </StackPanel>
+                </TreeDataTemplate>
+            </TreeView.ItemTemplate>
+        </TreeView>
+    </DockPanel>
+</UserControl>

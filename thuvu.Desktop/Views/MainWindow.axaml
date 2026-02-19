@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:thuvu.Desktop.ViewModels"
+        xmlns:dock="using:Dock.Avalonia.Controls"
+        xmlns:views="using:thuvu.Desktop.Views"
+        x:Class="thuvu.Desktop.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="T.H.U.V.U. — AI Coding Agent"
+        Width="1400" Height="900"
+        WindowStartupLocation="CenterScreen">
+
+    <Design.DataContext>
+        <vm:MainWindowViewModel />
+    </Design.DataContext>
+
+    <DockPanel>
+        <!-- Menu Bar -->
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New Chat" Command="{Binding NewChatCommand}" InputGesture="Ctrl+N" />
+                <MenuItem Header="_Open File..." Command="{Binding OpenFileCommand}" InputGesture="Ctrl+O" />
+                <Separator />
+                <MenuItem Header="_Settings" Command="{Binding ShowSettingsCommand}" />
+                <Separator />
+                <MenuItem Header="E_xit" Command="{Binding ExitCommand}" InputGesture="Alt+F4" />
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="_File Explorer" Command="{Binding ToggleFileTreeCommand}" />
+                <MenuItem Header="_Terminal" Command="{Binding ToggleTerminalCommand}" />
+                <MenuItem Header="_Reset Layout" Command="{Binding ResetLayoutCommand}" />
+            </MenuItem>
+            <MenuItem Header="_Agent">
+                <MenuItem Header="_Clear Chat" Command="{Binding ClearChatCommand}" />
+                <MenuItem Header="_Cancel Request" Command="{Binding CancelRequestCommand}" />
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="Toggle _Theme" Command="{Binding ToggleThemeCommand}" />
+                <Separator />
+                <MenuItem Header="_About" Command="{Binding ShowAboutCommand}" />
+            </MenuItem>
+        </Menu>
+
+        <!-- Status Bar -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource SystemChromeMediumColor}" Padding="8,4">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="{Binding StatusText}" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="{Binding ModelName}" FontSize="12" VerticalAlignment="Center" Foreground="Gray" />
+                    <TextBlock Text="{Binding TokenUsageText}" FontSize="12" VerticalAlignment="Center" Foreground="Gray" />
+                </StackPanel>
+                <Panel />
+            </DockPanel>
+        </Border>
+
+        <!-- Main Dock Area -->
+        <dock:DockControl Layout="{Binding DockLayout}" />
+    </DockPanel>
+</Window>
