@@ -62,7 +62,8 @@ namespace thuvu.Tools
                 WorkingDirectory = string.IsNullOrWhiteSpace(cwd) ? workDir : cwd,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                UseShellExecute = false
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
             foreach (var aStr in args) psi.ArgumentList.Add(aStr);
 

@@ -905,7 +905,7 @@ namespace thuvu.Tools
                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.session_id) as message_count
                 FROM sessions s
                 WHERE s.agent_id = @agent_id
-                ORDER BY s.last_activity_at DESC
+                ORDER BY s.created_at ASC
             ";
             cmd.Parameters.AddWithValue("@agent_id", agentId);
 
