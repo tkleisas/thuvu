@@ -2,6 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:thuvu.Desktop.ViewModels"
              xmlns:AvaloniaEdit="using:AvaloniaEdit"
+             xmlns:i="using:Avalonia.Xaml.Interactivity"
+             xmlns:behaviors="using:thuvu.Desktop.Behaviors"
              x:Class="thuvu.Desktop.Views.EditorView"
              x:DataType="vm:EditorViewModel">
 
@@ -12,6 +14,10 @@
                                   FontFamily="Cascadia Code, Consolas, Courier New"
                                   FontSize="13"
                                   WordWrap="False"
-                                  Background="Transparent" />
+                                  Background="Transparent">
+            <i:Interaction.Behaviors>
+                <behaviors:DocumentTextBindingBehavior Text="{Binding Content, Mode=TwoWay}" />
+            </i:Interaction.Behaviors>
+        </AvaloniaEdit:TextEditor>
     </DockPanel>
 </UserControl>

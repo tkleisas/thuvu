@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Threading;
 using AvaloniaEdit;
 using AvaloniaEdit.TextMate;
 using TextMateSharp.Grammars;
@@ -10,28 +9,23 @@ namespace thuvu.Desktop.Views;
 public partial class EditorView : UserControl
 {
     private TextMate.Installation? _textMateInstallation;
-    private bool _suppressTextChanged;
-    private bool _initialized;
-    private bool _attachedToTree;
 
     public EditorView()
     {
         InitializeComponent();
-        DataContextChanged += (_, _) => TryInitialize();
-        AttachedToVisualTree += (_, _) => { _attachedToTree = true; TryInitialize(); };
+        DataContextChanged += OnDataContextChanged;
     }
 
-    private void TryInitialize()
+    private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (_initialized || !_attachedToTree) return;
         if (DataContext is not EditorViewModel vm) return;
         var editor = this.FindControl<TextEditor>("Editor");
         if (editor == null) return;
-        _initialized = true;
 
         // Setup TextMate syntax highlighting
         try
         {
+            if (_textMateInstallation != null) return; // already initialized
             var registryOptions = new RegistryOptions(ThemeName.DarkPlus);
             _textMateInstallation = editor.InstallTextMate(registryOptions);
 
@@ -40,36 +34,6 @@ public partial class EditorView : UserControl
                 _textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId(lang));
         }
         catch { }
-
-        // Set content — loaded synchronously in ViewModel constructor
-        _suppressTextChanged = true;
-        editor.Text = vm.Content ?? "";
-        _suppressTextChanged = false;
-
-        // Sync ViewModel → Editor (e.g. reload file)
-        vm.PropertyChanged += (s, args) =>
-        {
-            if (args.PropertyName == nameof(EditorViewModel.Content) && !_suppressTextChanged)
-            {
-                Dispatcher.UIThread.Post(() =>
-                {
-                    _suppressTextChanged = true;
-                    editor.Text = vm.Content ?? "";
-                    _suppressTextChanged = false;
-                });
-            }
-        };
-
-        // Sync Editor → ViewModel (user typing)
-        editor.TextChanged += (s, args) =>
-        {
-            if (!_suppressTextChanged)
-            {
-                _suppressTextChanged = true;
-                vm.Content = editor.Text;
-                _suppressTextChanged = false;
-            }
-        };
     }
 
     private static string? DetectLanguage(string path, RegistryOptions registry)
