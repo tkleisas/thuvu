@@ -17,6 +17,10 @@ namespace thuvu
     public class StreamResult
     {
         public string Content { get; init; } = "";
+        /// <summary>
+        /// Reasoning/thinking content from thinking models (e.g., GLM 4.7, DeepSeek-R1)
+        /// </summary>
+        public string? ReasoningContent { get; init; }
         public List<ToolCall>? ToolCalls { get; init; }
         public string? FinishReason { get; init; }
         public Usage? Usage { get; init; } // Optional, if stream_options.include_usage is set
@@ -26,13 +30,15 @@ namespace thuvu
         /// Streams a single assistant turn. If the model emits tool calls,
         /// they are accumulated and returned in ToolCalls; Content may be empty in that case.
         /// If it emits plain text, tokens are sent to onToken as they arrive.
+        /// For thinking models, reasoning_content is sent to onReasoningToken.
         /// </summary>
         public static async Task<StreamResult> StreamChatOnceAsync(
             HttpClient http,
             ChatRequest req,
             CancellationToken ct,
             Action<string>? onToken = null,
-            Action<Usage>? onUsage = null)
+            Action<Usage>? onUsage = null,
+            Action<string>? onReasoningToken = null)
         {
             // Check if current model supports vision - if not, serialize multimodal messages as text-only
             var modelConfig = Models.ModelRegistry.Instance?.GetModel(req.Model);
@@ -98,7 +104,7 @@ namespace thuvu
             LogStream($"HttpClient HasAuth={http.DefaultRequestHeaders.Authorization != null}");
             
             using var jsonContent = new StringContent(JsonSerializer.Serialize(streamingReq, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }), Encoding.UTF8, "application/json");
-            using var resp = await http.PostAsync("v1/chat/completions", jsonContent, ct);
+            using var resp = await http.PostAsync(AgentConfig.GetChatCompletionsPath(streamingReq.model), jsonContent, ct);
             
             LogStream($"HTTP response received, status={resp.StatusCode}");
             LogStream($"Response ContentType={resp.Content.Headers.ContentType}");
@@ -132,6 +138,7 @@ namespace thuvu
             LogStream("Stream reader created");
 
             var sbContent = new StringBuilder();
+            var sbReasoning = new StringBuilder(); // For thinking model reasoning_content
             var finishReason = (string?)null;
 
             // Collect tool_calls deltas by index, merging arguments chunks
@@ -191,7 +198,7 @@ namespace thuvu
                 if (line.StartsWith("data: ") is false) continue;
 
                 var payload = line.AsSpan(6).Trim().ToString();
-                LogStream($"Payload: {(payload.Length > 100 ? payload.Substring(0, 100) + "..." : payload)}");
+                LogStream($"Payload: {payload}");
                 
                 if (payload == "[DONE]")
                 {
@@ -209,7 +216,11 @@ namespace thuvu
                 {
                     // Optional usage info
                     usage = JsonSerializer.Deserialize<Usage>(usageEl.GetRawText());
-                    if(usage!=null) onUsage?.Invoke(usage);
+                    if(usage!=null) 
+                    {
+                        LogStream($"Got usage: prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
+                        onUsage?.Invoke(usage);
+                    }
                 }
                 // finish_reason might show up on the last delta
                 if (choice.TryGetProperty("finish_reason", out var fr) && fr.ValueKind == JsonValueKind.String)
@@ -222,6 +233,17 @@ namespace thuvu
 
                 // delta
                 if (!choice.TryGetProperty("delta", out var delta)) continue;
+
+                // Reasoning content tokens (for thinking models like GLM 4.7, DeepSeek-R1)
+                if (delta.TryGetProperty("reasoning_content", out var reasoningEl) && reasoningEl.ValueKind == JsonValueKind.String)
+                {
+                    var reasoningToken = reasoningEl.GetString();
+                    if (!string.IsNullOrEmpty(reasoningToken))
+                    {
+                        onReasoningToken?.Invoke(reasoningToken);
+                        sbReasoning.Append(reasoningToken);
+                    }
+                }
 
                 // Content tokens
                 if (delta.TryGetProperty("content", out var contentEl) && contentEl.ValueKind == JsonValueKind.String)
@@ -298,6 +320,7 @@ namespace thuvu
             return new StreamResult
             {
                 Content = sbContent.ToString(),
+                ReasoningContent = sbReasoning.Length > 0 ? sbReasoning.ToString() : null,
                 ToolCalls = toolCalls,
                 FinishReason = finishReason,
                 Usage = usage

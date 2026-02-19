@@ -24,6 +24,13 @@ namespace thuvu.Models
         public string AuthToken { get; set; } = string.Empty;
 
         /// <summary>
+        /// Relative path for the chat completions endpoint appended to HostUrl.
+        /// Defaults to "v1/chat/completions" (OpenAI-compatible).
+        /// Override for providers with different paths, e.g. "api/paas/v4/chat/completions".
+        /// </summary>
+        public string ChatCompletionsPath { get; set; } = "v1/chat/completions";
+
+        /// <summary>
         /// Working directory for agent operations. All file operations happen relative to this.
         /// Defaults to "./work" subdirectory of the application directory.
         /// </summary>
@@ -199,10 +206,27 @@ namespace thuvu.Models
             }
         }
 
+        /// <summary>
+        /// Gets the chat completions path for the current model, falling back to the global default.
+        /// Model-specific path takes priority over the global ChatCompletionsPath.
+        /// </summary>
+        public static string GetChatCompletionsPath(string? modelId = null)
+        {
+            if (!string.IsNullOrEmpty(modelId))
+            {
+                var modelConfig = ModelRegistry.Instance?.GetModel(modelId);
+                if (modelConfig != null && !string.IsNullOrEmpty(modelConfig.ChatCompletionsPath))
+                    return modelConfig.ChatCompletionsPath.TrimStart('/');
+            }
+            return Config.ChatCompletionsPath.TrimStart('/');
+        }
+
         public static void ApplyConfig(HttpClient http)
         {
             // Update HttpClient and runtime flags from config
-            http.BaseAddress = new Uri(Config.HostUrl);
+            // Ensure trailing slash for correct relative path resolution
+            var baseUrl = Config.HostUrl.TrimEnd('/') + "/";
+            http.BaseAddress = new Uri(baseUrl);
             http.Timeout = TimeSpan.FromMinutes(Config.HttpRequestTimeout);
 
             // Apply authentication header if a token is configured.

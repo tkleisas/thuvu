@@ -262,7 +262,8 @@ Permission prompts appear for write operations.
                     foreach (var m in ModelRegistry.Instance.Models)
                     {
                         var isDefault = m.ModelId == ModelRegistry.Instance.DefaultModelId ? " *" : "";
-                        _appendText($"  {(m.Enabled ? "[+]" : "[-]")} {m.DisplayName ?? m.ModelId}{isDefault}", false);
+                        var contextInfo = m.MaxContextLength > 0 ? $" (ctx: {m.MaxContextLength:N0})" : "";
+                        _appendText($"  {(m.Enabled ? "[+]" : "[-]")} {m.DisplayName ?? m.ModelId}{isDefault}{contextInfo}", false);
                     }
                     break;
 

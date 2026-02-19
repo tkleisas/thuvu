@@ -182,7 +182,10 @@ namespace thuvu.Tools
             
             // Build the endpoint URL properly - ensure base ends with / for correct path joining
             var baseUrl = model.HostUrl.TrimEnd('/') + "/";
-            var endpoint = new Uri(new Uri(baseUrl), "v1/chat/completions").ToString();
+            var chatPath = !string.IsNullOrEmpty(model.ChatCompletionsPath) 
+                ? model.ChatCompletionsPath.TrimStart('/') 
+                : AgentConfig.Config.ChatCompletionsPath.TrimStart('/');
+            var endpoint = new Uri(new Uri(baseUrl), chatPath).ToString();
             
             // Build message list
             var messages = new List<object>();
@@ -245,8 +248,8 @@ namespace thuvu.Tools
             var json = JsonSerializer.Serialize(request);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             
-            // Use relative path (no leading /) so it appends to BaseAddress path
-            var response = await client.PostAsync("v1/chat/completions", content, ct);
+            // Use configurable path (no leading /) so it appends to BaseAddress path
+            var response = await client.PostAsync(chatPath, content, ct);
             var responseJson = await response.Content.ReadAsStringAsync(ct);
             
             if (!response.IsSuccessStatusCode)

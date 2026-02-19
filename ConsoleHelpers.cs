@@ -344,6 +344,44 @@ namespace thuvu
             Console.Write(token);
         }
 
+        // Track if we're currently in reasoning mode for proper formatting
+        private static bool _inReasoningMode = false;
+        
+        /// <summary>
+        /// Print reasoning/thinking tokens from thinking models (dimmed, collapsible)
+        /// </summary>
+        public static void PrintReasoningToken(string token)
+        {
+            if (!_inReasoningMode)
+            {
+                _inReasoningMode = true;
+                // Start reasoning section with header
+                WithColor(ConsoleColor.DarkMagenta, () => Console.Write("\n💭 [Thinking] "));
+                WithColor(ConsoleColor.DarkGray, () => Console.Write(""));
+            }
+            
+            // Print reasoning in dimmed color
+            WithColor(ConsoleColor.DarkGray, () => Console.Write(token));
+        }
+        
+        /// <summary>
+        /// End reasoning section and transition to content output
+        /// </summary>
+        public static void EndReasoningSection()
+        {
+            if (_inReasoningMode)
+            {
+                _inReasoningMode = false;
+                WithColor(ConsoleColor.DarkMagenta, () => Console.WriteLine("\n💭 [/Thinking]"));
+                Console.WriteLine(); // Extra line before content
+            }
+        }
+        
+        /// <summary>
+        /// Check if currently in reasoning output mode
+        /// </summary>
+        public static bool IsInReasoningMode => _inReasoningMode;
+
 
         /// <summary>
         /// Print a unified diff with syntax highlighting

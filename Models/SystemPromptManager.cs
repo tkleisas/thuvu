@@ -70,6 +70,35 @@ namespace thuvu.Models
         }
         
         /// <summary>
+        /// Get a label describing the source of the current system prompt
+        /// </summary>
+        public string GetCurrentSystemPromptLabel(bool mcpEnabled = false)
+        {
+            var modelId = AgentConfig.Config.Model;
+            var model = ModelRegistry.Instance.GetModel(modelId);
+            
+            if (model != null)
+            {
+                if (!string.IsNullOrWhiteSpace(model.SystemPrompt))
+                {
+                    if (model.SystemPrompt.StartsWith("@"))
+                        return $"File: {model.SystemPrompt.Substring(1).Trim()}";
+                    return "Custom (inline)";
+                }
+                
+                if (!string.IsNullOrWhiteSpace(model.SystemPromptTemplate))
+                    return $"Template: {model.SystemPromptTemplate}";
+            }
+            
+            // Check if default.md template exists
+            var defaultTemplate = GetTemplate("default");
+            if (!string.IsNullOrEmpty(defaultTemplate))
+                return "Template: default";
+            
+            return mcpEnabled ? "Default (MCP)" : "Default (Standard)";
+        }
+        
+        /// <summary>
         /// Resolve a prompt value - could be inline text or file reference
         /// </summary>
         private string ResolvePrompt(string promptValue)
@@ -228,7 +257,14 @@ namespace thuvu.Models
                 return ApplyVariables(ThinkingTemplate, model, mcpEnabled);
             }
             
-            // Use existing MCP system prompts
+            // Try loading default.md template from prompts directory
+            var defaultTemplate = GetTemplate("default");
+            if (!string.IsNullOrEmpty(defaultTemplate))
+            {
+                return ApplyVariables(defaultTemplate, model, mcpEnabled);
+            }
+            
+            // Fall back to hardcoded MCP system prompts
             return McpSystemPrompts.GetSystemPrompt(mcpEnabled);
         }
         

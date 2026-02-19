@@ -709,7 +709,7 @@ Respond ONLY with valid JSON matching this schema:
             SessionLogger.Instance.LogInfo($"Sending decomposition request to {_model}");
             
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            using var response = await _http.PostAsync("/v1/chat/completions", content, ct);
+            using var response = await _http.PostAsync(AgentConfig.GetChatCompletionsPath(_model), content, ct);
             response.EnsureSuccessStatusCode();
             
             var responseJson = await response.Content.ReadAsStringAsync(ct);

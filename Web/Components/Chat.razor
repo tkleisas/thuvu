@@ -79,6 +79,10 @@
                 <span class="config-label">RAG:</span>
                 <span class="config-value @(_ragEnabled ? "enabled" : "disabled")">@(_ragEnabled ? "Enabled" : "Disabled")</span>
             </div>
+            <div class="config-item">
+                <span class="config-label">Prompt:</span>
+                <span class="config-value" title="@_systemPromptLabel">@_systemPromptLabel</span>
+            </div>
         </div>
         
         <div class="sidebar-section">
@@ -216,6 +220,13 @@
                         }
                         else if (msg.Role == "assistant" || msg.Role == "system")
                         {
+                            @if (!string.IsNullOrEmpty(msg.Reasoning))
+                            {
+                                <details class="reasoning-section">
+                                    <summary>💭 Thinking</summary>
+                                    <pre class="reasoning-text">@msg.Reasoning</pre>
+                                </details>
+                            }
                             <MarkdownRenderer Content="@msg.Content" />
                         }
                         else
@@ -251,6 +262,19 @@
                                     </div>
                                 }
                             </div>
+                        }
+                        @if (_isStreamingReasoning && !string.IsNullOrEmpty(_streamingReasoning))
+                        {
+                            <div class="reasoning-content streaming">
+                                <pre class="message-text">@_streamingReasoning<span class="cursor">▊</span></pre>
+                            </div>
+                        }
+                        else if (!_isStreamingReasoning && !string.IsNullOrEmpty(_streamingReasoning))
+                        {
+                            <details class="reasoning-section" open>
+                                <summary>💭 Thinking</summary>
+                                <pre class="reasoning-text">@_streamingReasoning</pre>
+                            </details>
                         }
                         <pre class="message-text">@_streamingContent<span class="cursor">▊</span></pre>
                     </div>
@@ -384,6 +408,7 @@
     private string _model = "";
     private string _hostUrl = "";
     private string _workDir = "";
+    private string _systemPromptLabel = "";
     private bool _mcpEnabled;
     private bool _ragEnabled;
     private bool _connected;
@@ -393,6 +418,8 @@
     private string _inputText = "";
     private bool _isProcessing;
     private string _streamingContent = "";
+    private string _streamingReasoning = "";
+    private bool _isStreamingReasoning = false;
     private string _currentStatus = "";
     private string _currentToolName = "";
     private string _currentToolArgs = "";
@@ -526,6 +553,7 @@
                 _model = result.Config.Model ?? "";
                 _hostUrl = result.Config.HostUrl ?? "";
                 _workDir = result.Config.WorkDirectory ?? "";
+                _systemPromptLabel = result.Config.SystemPromptLabel ?? "Default";
                 _mcpEnabled = result.Config.McpEnabled;
                 _ragEnabled = result.Config.RagEnabled;
             }
@@ -534,6 +562,13 @@
             await LoadSessionHistoryAsync();
             
             await InvokeAsync(StateHasChanged);
+            
+            // Scroll to bottom after loading session history
+            if (_messages.Count > 0)
+            {
+                await Task.Delay(50); // Allow DOM to render
+                await ScrollToBottom();
+            }
         }
         catch (Exception ex)
         {
@@ -655,7 +690,21 @@
                 switch (evt.Type)
                 {
                     case "token":
+                        // If we were streaming reasoning, end that section (content is separate)
+                        if (_isStreamingReasoning)
+                        {
+                            _isStreamingReasoning = false;
+                        }
                         _streamingContent += evt.Data;
+                        break;
+                    case "reasoning":
+                        // Thinking/reasoning content from thinking models
+                        if (!_isStreamingReasoning)
+                        {
+                            _isStreamingReasoning = true;
+                            _streamingReasoning = "";
+                        }
+                        _streamingReasoning += evt.Data;
                         break;
                     case "status":
                         _currentStatus = evt.Data;
@@ -752,6 +801,17 @@
                             {
                                 Role = "assistant",
                                 Content = _streamingContent,
+                                Reasoning = !string.IsNullOrEmpty(_streamingReasoning) ? _streamingReasoning : null,
+                                Timestamp = DateTime.Now
+                            });
+                        }
+                        else if (!string.IsNullOrEmpty(_streamingReasoning))
+                        {
+                            // Thinking model produced reasoning but no content — use reasoning as fallback
+                            _messages.Add(new ChatMessageDisplay
+                            {
+                                Role = "assistant",
+                                Content = _streamingReasoning,
                                 Timestamp = DateTime.Now
                             });
                         }
@@ -803,6 +863,8 @@
         {
             _isProcessing = false;
             _streamingContent = "";
+            _streamingReasoning = "";
+            _isStreamingReasoning = false;
             _currentStatus = "";
             _currentToolName = "";
             StateHasChanged();
@@ -1275,6 +1337,7 @@
         // Reload configuration display
         _model = thuvu.Models.AgentConfig.Config.Model;
         _hostUrl = thuvu.Models.AgentConfig.Config.HostUrl;
+        _systemPromptLabel = thuvu.Models.SystemPromptManager.Instance.GetCurrentSystemPromptLabel(thuvu.Models.McpConfig.Instance.McpModeActive);
         _mcpEnabled = thuvu.Models.McpConfig.Instance.Enabled;
         _ragEnabled = thuvu.Models.RagConfig.Instance.Enabled;
         StateHasChanged();
@@ -1738,6 +1801,7 @@
     {
         public string Role { get; set; } = "";
         public string Content { get; set; } = "";
+        public string? Reasoning { get; set; }
         public string? ToolName { get; set; }
         public string? ToolArgs { get; set; }
         public DateTime Timestamp { get; set; }
@@ -1770,6 +1834,7 @@
         public string? WorkDirectory { get; set; }
         public bool McpEnabled { get; set; }
         public bool RagEnabled { get; set; }
+        public string? SystemPromptLabel { get; set; }
     }
 
     private class AgentStreamEvent

@@ -216,6 +216,14 @@ namespace thuvu
                         detected.HasValue ? "detected" : "defaulted", _currentContextLength);
                 }
                 TokenTracker.Instance.MaxContextLength = _currentContextLength;
+                
+                // Store detected context length back to model config
+                var modelEndpoint = ModelRegistry.Instance.GetModel(AgentConfig.Config.Model);
+                if (modelEndpoint != null && modelEndpoint.MaxContextLength == 0 && _currentContextLength > 0)
+                {
+                    modelEndpoint.MaxContextLength = _currentContextLength;
+                    AgentLogger.LogInfo("Stored detected context length {Length} to model config", _currentContextLength);
+                }
             }
             catch (Exception ex)
             {
@@ -408,12 +416,24 @@ namespace thuvu
                                     receivedFirstToken = true;
                                     thinkingCts.Cancel();
                                     ConsoleHelpers.ClearThinkingIndicator();
+                                    // End reasoning section if we were in it before starting content
+                                    ConsoleHelpers.EndReasoningSection();
                                     ConsoleHelpers.PrintStreamingHeader(AgentConfig.Config.Model);
                                 }
                                 ConsoleHelpers.PrintStreamingToken(token);
                             },
                             onToolResult: ConsoleHelpers.AutoPrettyPrinterCallback,
-                            onUsage: u => { ConsoleHelpers.PrintStreamingFooter(); ConsoleHelpers.PrintTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens); }
+                            onUsage: u => { ConsoleHelpers.PrintStreamingFooter(); ConsoleHelpers.PrintTokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens); },
+                            onReasoningToken: token =>
+                            {
+                                if (!receivedFirstToken)
+                                {
+                                    receivedFirstToken = true;
+                                    thinkingCts.Cancel();
+                                    ConsoleHelpers.ClearThinkingIndicator();
+                                }
+                                ConsoleHelpers.PrintReasoningToken(token);
+                            }
                         );
                         if (!receivedFirstToken)
                         {
@@ -478,7 +498,7 @@ namespace thuvu
                         Console.WriteLine(final);
                         Console.WriteLine();
                     }
-                    messages.Add(new ChatMessage("assistant", final));
+                    messages.Add(ChatMessage.CreateAssistant(final));
 
                     // If MCP mode is active, check for TypeScript code blocks and execute them
                     if (McpConfig.Instance.McpModeActive)
@@ -961,24 +981,81 @@ namespace thuvu
                     ModelRegistry.Instance.PrintModels();
                     break;
 
+                case "info":
+                    {
+                        string modelId;
+                        if (args.Count >= 3)
+                        {
+                            modelId = args[2];
+                        }
+                        else
+                        {
+                            modelId = AgentConfig.Config.Model;
+                        }
+                        
+                        var model = ModelRegistry.Instance.GetModel(modelId);
+                        if (model == null)
+                        {
+                            ConsoleHelpers.PrintError($"Model '{modelId}' not found");
+                            return;
+                        }
+                        
+                        ConsoleHelpers.PrintDivider($"Model Info: {model.DisplayName ?? model.ModelId}", ConsoleColor.Cyan);
+                        ConsoleHelpers.PrintKeyValue("Model ID", model.ModelId);
+                        ConsoleHelpers.PrintKeyValue("Host URL", model.HostUrl);
+                        ConsoleHelpers.PrintKeyValue("Type", model.IsLocal ? "Local" : "Remote");
+                        ConsoleHelpers.PrintKeyValue("Streaming", model.Stream ? "Enabled" : "Disabled");
+                        ConsoleHelpers.PrintKeyValue("Tool Support", model.SupportsTools ? "Yes" : "No");
+                        ConsoleHelpers.PrintKeyValue("Vision Support", model.SupportsVision ? "Yes" : "No");
+                        ConsoleHelpers.PrintKeyValue("Thinking Model", model.IsThinkingModel ? "Yes" : "No");
+                        
+                        if (model.MaxContextLength > 0)
+                        {
+                            ConsoleHelpers.PrintKeyValue("Context Length", $"{model.MaxContextLength:N0} tokens");
+                            
+                            // Also show current usage if this is the active model
+                            if (model.ModelId == AgentConfig.Config.Model)
+                            {
+                                var tracker = TokenTracker.Instance;
+                                ConsoleHelpers.PrintKeyValue("Context Usage", $"{tracker.TotalTokens:N0} / {tracker.MaxContextLength:N0} ({tracker.UsagePercent:P1})");
+                            }
+                        }
+                        else
+                        {
+                            ConsoleHelpers.PrintKeyValue("Context Length", "Unknown (will be detected on first use)");
+                        }
+                        
+                        if (model.MaxOutputTokens > 0)
+                            ConsoleHelpers.PrintKeyValue("Max Output", $"{model.MaxOutputTokens:N0} tokens");
+                        
+                        ConsoleHelpers.PrintKeyValue("Temperature", model.Temperature.ToString("F1"));
+                        ConsoleHelpers.PrintKeyValue("Purposes", string.Join(", ", model.Purposes));
+                        ConsoleHelpers.PrintKeyValue("Priority", model.Priority.ToString());
+                        ConsoleHelpers.PrintKeyValue("Enabled", model.Enabled ? "Yes" : "No");
+                        Console.WriteLine();
+                    }
+                    break;
+
                 case "use":
-                    if (args.Count < 3)
                     {
-                        ConsoleHelpers.PrintError("Usage: /models use <model-id>");
-                        return;
+                        if (args.Count < 3)
+                        {
+                            ConsoleHelpers.PrintError("Usage: /models use <model-id>");
+                            return;
+                        }
+                        var modelId = args[2];
+                        var model = ModelRegistry.Instance.GetModel(modelId);
+                        if (model == null)
+                        {
+                            ConsoleHelpers.PrintError($"Model '{modelId}' not found");
+                            return;
+                        }
+                        ModelRegistry.Instance.DefaultModelId = model.ModelId;
+                        AgentConfig.Config.Model = model.ModelId;
+                        AgentConfig.Config.HostUrl = model.HostUrl;
+                        AgentConfig.Config.Stream = model.Stream;
+                        ConsoleHelpers.PrintSuccess($"Now using: {model.DisplayName ?? model.ModelId}");
                     }
-                    var modelId = args[2];
-                    var model = ModelRegistry.Instance.GetModel(modelId);
-                    if (model == null)
-                    {
-                        ConsoleHelpers.PrintError($"Model '{modelId}' not found");
-                        return;
-                    }
-                    ModelRegistry.Instance.DefaultModelId = model.ModelId;
-                    AgentConfig.Config.Model = model.ModelId;
-                    AgentConfig.Config.HostUrl = model.HostUrl;
-                    AgentConfig.Config.Stream = model.Stream;
-                    ConsoleHelpers.PrintSuccess($"Now using: {model.DisplayName ?? model.ModelId}");
                     break;
 
                 case "add":
@@ -1015,6 +1092,7 @@ namespace thuvu
                     ConsoleHelpers.PrintHeader("Models Commands", ConsoleColor.Cyan);
                     Console.WriteLine();
                     ConsoleHelpers.PrintKeyValue("/models list", "List all configured models", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/models info [id]", "Show detailed info about current or specified model", ConsoleColor.Green);
                     ConsoleHelpers.PrintKeyValue("/models use <id>", "Switch to a specific model", ConsoleColor.Green);
                     ConsoleHelpers.PrintKeyValue("/models thinking [id]", "Get/set thinking model", ConsoleColor.Green);
                     ConsoleHelpers.PrintKeyValue("/models coding [id]", "Get/set coding model", ConsoleColor.Green);

@@ -32,6 +32,9 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="prompts\default.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="prompts\deepseek.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -797,7 +797,7 @@ namespace thuvu
                     {
                         if (!AgentConfig.Config.Stream)
                             AppendActionText($"ASSISTANT> {final}");
-                        _messages.Add(new ChatMessage("assistant", final));
+                        _messages.Add(ChatMessage.CreateAssistant(final));
                     }
                 }
                 catch (OperationCanceledException)

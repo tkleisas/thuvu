@@ -98,6 +98,12 @@ namespace thuvu.Models
         
         /// <summary>Custom header name for auth (default: Authorization)</summary>
         public string AuthHeaderName { get; set; } = "Authorization";
+
+        /// <summary>
+        /// Relative path for the chat completions endpoint. If empty, inherits from AgentConfig.
+        /// Override for providers with different paths, e.g. "api/paas/v4/chat/completions".
+        /// </summary>
+        public string ChatCompletionsPath { get; set; } = "";
         
         /// <summary>Maximum context length (0 = auto-detect)</summary>
         public int MaxContextLength { get; set; } = 0;
@@ -410,8 +416,12 @@ namespace thuvu.Models
                 ConsoleHelpers.WithColor(model.Enabled ? ConsoleColor.Green : ConsoleColor.DarkGray, 
                     () => Console.Write($" {status} "));
                 Console.WriteLine($"{model.DisplayName ?? model.ModelId} ({local}{thinking})");
+                
+                var contextInfo = model.MaxContextLength > 0 
+                    ? $" | Context: {model.MaxContextLength:N0}" 
+                    : "";
                 ConsoleHelpers.WithColor(ConsoleColor.DarkGray, 
-                    () => Console.WriteLine($"    {model.HostUrl} | Purposes: {string.Join(", ", model.Purposes)}"));
+                    () => Console.WriteLine($"    {model.HostUrl} | Purposes: {string.Join(", ", model.Purposes)}{contextInfo}"));
             }
             Console.WriteLine();
             ConsoleHelpers.PrintKeyValue("Default", DefaultModelId);

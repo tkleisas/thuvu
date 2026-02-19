@@ -83,6 +83,7 @@ namespace thuvu.Tui
             
             try
             {
+                var inReasoning = false;
                 var final = await AgentLoop.CompleteWithToolsStreamingAsync(
                     _http, AgentConfig.Config.Model, messages, _tools, ct,
                     onToken: token => 
@@ -91,6 +92,12 @@ namespace thuvu.Tui
                         {
                             receivedTokens = true;
                             _thinkingAnimationCts?.Cancel();
+                            // End reasoning section if we were in it
+                            if (inReasoning)
+                            {
+                                _appendToActionView("\n[/Thinking]\n\n");
+                                inReasoning = false;
+                            }
                             _appendToActionView("ASSISTANT> ");
                         }
                         
@@ -122,7 +129,21 @@ namespace thuvu.Tui
                     {
                         AppendToolText(name, result, elapsed);
                     },
-                    onToolProgress: _updateToolProgress
+                    onToolProgress: _updateToolProgress,
+                    onReasoningToken: token =>
+                    {
+                        if (!receivedTokens)
+                        {
+                            receivedTokens = true;
+                            _thinkingAnimationCts?.Cancel();
+                        }
+                        if (!inReasoning)
+                        {
+                            inReasoning = true;
+                            _appendToActionView("💭 [Thinking] ");
+                        }
+                        _appendToActionView(token);
+                    }
                 );
                 
                 // Flush remaining buffer

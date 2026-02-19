@@ -35,8 +35,22 @@
 
         var html = markdown;
 
+        // Extract reasoning-content divs before HTML encoding (they're already safe HTML)
+        var reasoningBlocks = new List<string>();
+        html = Regex.Replace(html, @"<div class=""reasoning-content"">([\s\S]*?)</div>", match =>
+        {
+            reasoningBlocks.Add(match.Value);
+            return $"%%REASONING_BLOCK_{reasoningBlocks.Count - 1}%%";
+        });
+
         // Escape HTML first
         html = System.Web.HttpUtility.HtmlEncode(html);
+
+        // Restore reasoning blocks
+        for (int i = 0; i < reasoningBlocks.Count; i++)
+        {
+            html = html.Replace($"%%REASONING_BLOCK_{i}%%", reasoningBlocks[i]);
+        }
 
         // Code blocks (```)
         html = Regex.Replace(html, @"```(\w*)\n([\s\S]*?)```", match =>

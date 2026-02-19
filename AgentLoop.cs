@@ -29,7 +29,7 @@ namespace thuvu
 
         // Loop detection settings
         public const int DefaultMaxIterations = 50; // Fallback default
-        private const int MaxConsecutiveFailures = 3;
+        private const int MaxConsecutiveFailures = 10;
         
         /// <summary>
         /// Gets the configured max iterations from AgentConfig, falling back to default.
@@ -70,6 +70,16 @@ namespace thuvu
                     LogAgent($"Loop limit reached ({maxIter} iterations). Stopping.");
                     return $"[Agent stopped: Maximum iteration limit ({maxIter}) reached. The task may be too complex or the model is stuck in a loop.]";
                 }
+                
+                // DeepSeek-reasoner: clear reasoning_content from older turns when a new user turn starts.
+                // During tool call loops (last msg is tool), keep current turn's reasoning_content intact.
+                var lastMsg = messages.Count > 0 ? messages[^1] : null;
+                if (lastMsg?.Role == "user")
+                {
+                    foreach (var m in messages)
+                        m.ReasoningContent = null;
+                }
+                
                 var req = new ChatRequest
                 {
                     Model = model,
@@ -92,8 +102,8 @@ namespace thuvu
                 var retryResult = await RetryHandler.ExecuteWithRetryAsync(
                     async (token) =>
                     {
-                        // Use relative path (no leading /) so it appends to BaseAddress path correctly
-                        using var resp = await http.PostAsJsonAsync("v1/chat/completions", req, JsonOpts, token);
+                        // Use configurable path (no leading /) so it appends to BaseAddress path correctly
+                        using var resp = await http.PostAsJsonAsync(AgentConfig.GetChatCompletionsPath(model), req, JsonOpts, token);
                         resp.EnsureSuccessStatusCode();
                         return await resp.Content.ReadFromJsonAsync<ChatResponse>(JsonOpts, token)
                                ?? throw new InvalidOperationException("Empty response.");
@@ -114,6 +124,17 @@ namespace thuvu
                     // Update the effective token tracker (per-agent in orchestrated mode, global otherwise)
                     var tracker = Models.AgentContext.GetEffectiveTokenTracker();
                     tracker.UpdateFromUsage(u);
+                    
+                    // If API returned context length info, update the model config
+                    if (u.MaxContextLength.HasValue && u.MaxContextLength.Value > 0)
+                    {
+                        var modelEndpoint = ModelRegistry.Instance.GetModel(model);
+                        if (modelEndpoint != null && modelEndpoint.MaxContextLength != u.MaxContextLength.Value)
+                        {
+                            modelEndpoint.MaxContextLength = u.MaxContextLength.Value;
+                            LogAgent($"Updated {model} max context length to {u.MaxContextLength.Value:N0} from API response");
+                        }
+                    }
                     
                     // Check context size and auto-summarize if needed
                     if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
@@ -175,7 +196,8 @@ namespace thuvu
                         messages.Add(new ChatMessage
                         {
                             Role = "assistant",
-                            Content = msg.Content
+                            Content = msg.Content,
+                            ReasoningContent = msg.ReasoningContent
                         });
                         
                         // Add a prompt to continue
@@ -247,6 +269,13 @@ namespace thuvu
                     continue;
                 }
 
+                // For thinking models: if content is empty but reasoning was produced, use reasoning as fallback
+                if (string.IsNullOrEmpty(msg.Content) && !string.IsNullOrEmpty(msg.ReasoningContent))
+                {
+                    LogAgent("Content empty but reasoning available — using reasoning as fallback content");
+                    return msg.ReasoningContent;
+                }
+                
                 return msg.Content;
             }
         }
@@ -254,6 +283,7 @@ namespace thuvu
         /// <summary>
         /// Like CompleteWithToolsAsync, but streams tokens for final answers.
         /// Prints tokens as they arrive via onToken (e.g., Console.Write).
+        /// For thinking models, reasoning tokens are sent to onReasoningToken.
         /// </summary>
         public static async Task<string?> CompleteWithToolsStreamingAsync(
             HttpClient http,
@@ -267,7 +297,8 @@ namespace thuvu
             Action<string, string, string, TimeSpan>? onToolComplete = null,  // name, argsJson, result, elapsed
             ToolProgressCallback? onToolProgress = null,
             Action<string, string>? onToolCall = null,
-            int? maxIterations = null)
+            int? maxIterations = null,
+            Action<string>? onReasoningToken = null)
         {
             // Set current messages in context for tools that need it (e.g., vision analysis)
             AgentContext.SetCurrentMessages(messages);
@@ -290,6 +321,15 @@ namespace thuvu
                     return msg;
                 }
                 
+                // DeepSeek-reasoner: clear reasoning_content from older turns when a new user turn starts.
+                // During tool call loops (last msg is tool), keep current turn's reasoning_content intact.
+                var lastMsg = messages.Count > 0 ? messages[^1] : null;
+                if (lastMsg?.Role == "user")
+                {
+                    foreach (var m in messages)
+                        m.ReasoningContent = null;
+                }
+                
                 var req = new ChatRequest
                 {
                     Model = model,
@@ -309,8 +349,19 @@ namespace thuvu
                 }
 
                 LogAgent($"Calling StreamChatOnceAsync... (iteration {iteration})");
-                var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken, onUsage);
-                LogAgent($"StreamChatOnceAsync returned, ToolCalls={result.ToolCalls?.Count ?? 0}, Content length={result.Content?.Length ?? 0}");
+                var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken, onUsage, onReasoningToken);
+                LogAgent($"StreamChatOnceAsync returned, ToolCalls={result.ToolCalls?.Count ?? 0}, Content length={result.Content?.Length ?? 0}, Reasoning length={result.ReasoningContent?.Length ?? 0}");
+
+                // If API returned context length info, update the model config
+                if (result.Usage?.MaxContextLength.HasValue == true && result.Usage.MaxContextLength.Value > 0)
+                {
+                    var modelEndpoint = ModelRegistry.Instance.GetModel(model);
+                    if (modelEndpoint != null && modelEndpoint.MaxContextLength != result.Usage.MaxContextLength.Value)
+                    {
+                        modelEndpoint.MaxContextLength = result.Usage.MaxContextLength.Value;
+                        LogAgent($"Updated {model} max context length to {result.Usage.MaxContextLength.Value:N0} from API response");
+                    }
+                }
 
                 // Check context size and auto-summarize if needed
                 var tracker = Models.AgentContext.GetEffectiveTokenTracker();
@@ -389,7 +440,8 @@ namespace thuvu
                         messages.Add(new ChatMessage
                         {
                             Role = "assistant",
-                            Content = result.Content
+                            Content = result.Content,
+                            ReasoningContent = result.ReasoningContent
                         });
                         
                         // Add a prompt to continue
@@ -438,6 +490,7 @@ namespace thuvu
                     {
                         Role = "assistant",
                         Content = result.Content, // Preserve any content along with tool calls
+                        ReasoningContent = result.ReasoningContent, // Required by DeepSeek-reasoner during tool call loops
                         ToolCalls = result.ToolCalls
                     });
 
@@ -503,7 +556,16 @@ namespace thuvu
                     continue;
                 }
 
-                LogAgent($"Returning final content, length={result.Content?.Length ?? 0}");
+                LogAgent($"Returning final content, length={result.Content?.Length ?? 0}, reasoning={result.ReasoningContent?.Length ?? 0}");
+                
+                // For thinking models: if content is empty but reasoning was produced,
+                // use reasoning as fallback (model exhausted output budget on thinking)
+                if (string.IsNullOrEmpty(result.Content) && !string.IsNullOrEmpty(result.ReasoningContent))
+                {
+                    LogAgent("Content empty but reasoning available — using reasoning as fallback content");
+                    return result.ReasoningContent;
+                }
+                
                 return result.Content;
             }
         }
@@ -584,7 +646,7 @@ namespace thuvu
                     Temperature = 0.3
                 };
 
-                using var resp = await http.PostAsJsonAsync("/v1/chat/completions", summaryRequest, JsonOpts, ct);
+                using var resp = await http.PostAsJsonAsync(AgentConfig.GetChatCompletionsPath(model), summaryRequest, JsonOpts, ct);
                 resp.EnsureSuccessStatusCode();
                 var body = await resp.Content.ReadFromJsonAsync<ChatResponse>(JsonOpts, ct);
                 
@@ -607,7 +669,7 @@ namespace thuvu
                 
                 // Add summary as context
                 messages.Add(new ChatMessage("user", $"[CONVERSATION SUMMARY - Context from previous messages]\n{summary}\n\n[END SUMMARY - Continue from here]"));
-                messages.Add(new ChatMessage("assistant", "I understand. I have the context from the summarized conversation. I'll continue from where we left off."));
+                messages.Add(ChatMessage.CreateAssistant("I understand. I have the context from the summarized conversation. I'll continue from where we left off."));
 
                 LogAgent($"Conversation summarized. New message count: {messages.Count}");
                 onStatus?.Invoke($"Conversation summarized. Reduced from many messages to {messages.Count}.");
@@ -670,7 +732,7 @@ namespace thuvu
             
             // Add truncation notice
             messages.Add(new ChatMessage("user", "[Note: Earlier conversation was truncated due to context limits. Continue with the current task.]"));
-            messages.Add(new ChatMessage("assistant", "Understood. I'll continue working on the current task."));
+            messages.Add(ChatMessage.CreateAssistant("Understood. I'll continue working on the current task."));
             
             messages.AddRange(recentMessages);
 
@@ -867,25 +929,130 @@ namespace thuvu
         /// </summary>
         public static async Task<int?> GetContextLengthAsync(HttpClient http, string modelId, CancellationToken ct)
         {
+            // Try LM Studio proprietary API first
             try
             {
                 using var resp = await http.GetAsync($"/api/v0/models/{Uri.EscapeDataString(modelId)}", ct);
-                if (!resp.IsSuccessStatusCode) return null;
+                if (resp.IsSuccessStatusCode)
+                {
+                    using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                    var root = doc.RootElement;
 
-                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-                var root = doc.RootElement;
+                    if (root.TryGetProperty("max_context_length", out var m) && m.ValueKind == JsonValueKind.Number)
+                        return m.GetInt32();
 
-                if (root.TryGetProperty("max_context_length", out var m) && m.ValueKind == JsonValueKind.Number)
-                    return m.GetInt32();
-
-                // Fallback if the API shape changes
-                if (root.TryGetProperty("model_info", out var mi) &&
-                    mi.ValueKind == JsonValueKind.Object &&
-                    mi.TryGetProperty("context_length", out var cl) &&
-                    cl.ValueKind == JsonValueKind.Number)
-                    return cl.GetInt32();
+                    if (root.TryGetProperty("model_info", out var mi) &&
+                        mi.ValueKind == JsonValueKind.Object &&
+                        mi.TryGetProperty("context_length", out var cl) &&
+                        cl.ValueKind == JsonValueKind.Number)
+                        return cl.GetInt32();
+                }
             }
             catch { }
+
+            // Try standard OpenAI-compatible /v1/models endpoint
+            try
+            {
+                using var resp = await http.GetAsync("/v1/models", ct);
+                if (resp.IsSuccessStatusCode)
+                {
+                    using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+                    if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var model in data.EnumerateArray())
+                        {
+                            var id = model.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                            if (id == null || !id.Equals(modelId, StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            // Common context length field names across providers
+                            foreach (var fieldName in new[] { "context_length", "max_context_length", "context_window", "max_model_len" })
+                            {
+                                if (model.TryGetProperty(fieldName, out var val) && val.ValueKind == JsonValueKind.Number)
+                                {
+                                    var length = val.GetInt32();
+                                    if (length > 0) return length;
+                                }
+                            }
+
+                            // Nested under "meta" or "model_info"
+                            foreach (var nested in new[] { "meta", "model_info" })
+                            {
+                                if (model.TryGetProperty(nested, out var nestedObj) && nestedObj.ValueKind == JsonValueKind.Object)
+                                {
+                                    foreach (var fieldName in new[] { "context_length", "max_context_length", "context_window", "max_model_len" })
+                                    {
+                                        if (nestedObj.TryGetProperty(fieldName, out var val) && val.ValueKind == JsonValueKind.Number)
+                                        {
+                                            var length = val.GetInt32();
+                                            if (length > 0) return length;
+                                        }
+                                    }
+                                }
+                            }
+
+                            break;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // Fall back to known model context lengths for providers that don't expose this via API
+            var knownLength = GetKnownContextLength(modelId);
+            if (knownLength.HasValue)
+            {
+                LogAgent($"Using known context length {knownLength.Value:N0} for {modelId}");
+                return knownLength;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Known context lengths for popular models whose APIs don't report context size.
+        /// </summary>
+        private static int? GetKnownContextLength(string modelId)
+        {
+            var id = modelId.ToLowerInvariant();
+
+            // DeepSeek models (128K context)
+            if (id.Contains("deepseek"))
+                return 131072; // 128K
+
+            // OpenAI models
+            if (id.StartsWith("gpt-4o")) return 128000;
+            if (id.StartsWith("gpt-4-turbo")) return 128000;
+            if (id.StartsWith("gpt-4-1")) return 1047576; // 1M
+            if (id.StartsWith("gpt-4")) return 8192;
+            if (id.StartsWith("gpt-3.5-turbo")) return 16385;
+            if (id.StartsWith("o1")) return 200000;
+            if (id.StartsWith("o3")) return 200000;
+            if (id.StartsWith("o4")) return 200000;
+
+            // Anthropic models
+            if (id.Contains("claude-3") || id.Contains("claude-sonnet") || id.Contains("claude-opus") || id.Contains("claude-haiku"))
+                return 200000;
+
+            // Google Gemini
+            if (id.Contains("gemini-2")) return 1048576;
+            if (id.Contains("gemini-1.5")) return 1048576;
+            if (id.Contains("gemini")) return 32768;
+
+            // Qwen models
+            if (id.Contains("qwen3")) return 131072;
+            if (id.Contains("qwen2.5") && id.Contains("coder")) return 131072;
+            if (id.Contains("qwen2.5")) return 131072;
+            if (id.Contains("qwen")) return 32768;
+
+            // Llama models
+            if (id.Contains("llama-3.3") || id.Contains("llama-3.1")) return 131072;
+            if (id.Contains("llama-3")) return 8192;
+            if (id.Contains("llama")) return 4096;
+
+            // Mistral models
+            if (id.Contains("mistral-large")) return 131072;
+            if (id.Contains("mistral")) return 32768;
 
             return null;
         }

@@ -55,6 +55,8 @@ namespace thuvu.Models
                 msg.ToolCallId = toolCallIdEl.GetString();
             if (root.TryGetProperty("tool_calls", out var toolCallsEl))
                 msg.ToolCalls = JsonSerializer.Deserialize<List<ToolCall>>(toolCallsEl.GetRawText(), options);
+            if (root.TryGetProperty("reasoning_content", out var reasoningEl))
+                msg.ReasoningContent = reasoningEl.GetString();
             
             return msg;
         }
@@ -109,6 +111,8 @@ namespace thuvu.Models
                 writer.WritePropertyName("tool_calls");
                 JsonSerializer.Serialize(writer, value.ToolCalls, options);
             }
+            if (value.ReasoningContent != null)
+                writer.WriteString("reasoning_content", value.ReasoningContent);
             
             writer.WriteEndObject();
         }
@@ -177,6 +181,40 @@ namespace thuvu.Models
         [JsonPropertyName("name")] public string? Name { get; set; } // for tool result messages
         [JsonPropertyName("tool_call_id")] public string? ToolCallId { get; set; } // for tool result messages
         [JsonPropertyName("tool_calls")] public List<ToolCall>? ToolCalls { get; set; } // when assistant requests tools
+        
+        /// <summary>
+        /// Reasoning/thinking content for thinking models (e.g., DeepSeek-reasoner).
+        /// Must be sent back in assistant messages during tool call loops.
+        /// Should be cleared from older turns when a new user turn begins.
+        /// </summary>
+        [JsonPropertyName("reasoning_content")] public string? ReasoningContent { get; set; }
+        
+        /// <summary>
+        /// Creates a synthetic assistant message that is compatible with thinking models.
+        /// For models like DeepSeek-reasoner, includes an empty reasoning_content field.
+        /// </summary>
+        public static ChatMessage CreateAssistant(string content)
+        {
+            var msg = new ChatMessage("assistant", content);
+            // Check if current model requires reasoning_content on assistant messages
+            if (IsThinkingModelActive())
+                msg.ReasoningContent = "";
+            return msg;
+        }
+        
+        /// <summary>
+        /// Checks if the current active model is a thinking/reasoner model that requires reasoning_content.
+        /// </summary>
+        public static bool IsThinkingModelActive()
+        {
+            var modelId = AgentConfig.Config.Model;
+            if (string.IsNullOrEmpty(modelId)) return false;
+            var id = modelId.ToLowerInvariant();
+            // DeepSeek-reasoner and any model explicitly configured as thinking
+            if (id.Contains("reasoner")) return true;
+            var endpoint = ModelRegistry.Instance?.GetModel(modelId);
+            return endpoint?.IsThinkingModel == true;
+        }
     }
     
     /// <summary>

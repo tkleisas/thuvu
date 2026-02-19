@@ -466,7 +466,7 @@ namespace thuvu.Web.Services
                 
                 result.Insert(insertIndex, new ChatMessage("user", 
                     $"[NOTE: {truncatedCount} older messages were truncated to fit context limit.]"));
-                result.Insert(insertIndex + 1, new ChatMessage("assistant", 
+                result.Insert(insertIndex + 1, ChatMessage.CreateAssistant(
                     "Understood. I'll continue with the available context. Let me know if you need me to re-examine any files."));
             }
             
@@ -595,7 +595,7 @@ namespace thuvu.Web.Services
                     {
                         // Missing some results - convert to regular assistant message without tools
                         Console.WriteLine($"[WebAgentService] Removing incomplete tool calls from assistant message");
-                        var cleanMsg = new ChatMessage("assistant", "[Previous tool calls were truncated]");
+                        var cleanMsg = ChatMessage.CreateAssistant("[Previous tool calls were truncated]");
                         finalResult.Add(cleanMsg);
                         continue;
                     }
@@ -683,7 +683,7 @@ namespace thuvu.Web.Services
                         if (!string.IsNullOrEmpty(record.ResponseContent))
                         {
                             messages.Add(new ChatMessage("user", $"[CONVERSATION SUMMARY - Context from previous messages]\n{record.ResponseContent}\n\n[END SUMMARY - Continue from here]"));
-                            messages.Add(new ChatMessage("assistant", "I understand. I have the context from the summarized conversation. I'll continue from where we left off."));
+                            messages.Add(ChatMessage.CreateAssistant("I understand. I have the context from the summarized conversation. I'll continue from where we left off."));
                         }
                         break;
                         
@@ -700,7 +700,7 @@ namespace thuvu.Web.Services
                         FlushToolCalls(messages, pendingToolCalls, pendingToolResults);
                         
                         if (!string.IsNullOrEmpty(record.ResponseContent))
-                            messages.Add(new ChatMessage("assistant", record.ResponseContent));
+                            messages.Add(ChatMessage.CreateAssistant(record.ResponseContent));
                         break;
                         
                     case "tool_call":
@@ -766,7 +766,8 @@ namespace thuvu.Web.Services
             var assistantMsg = new ChatMessage
             {
                 Role = "assistant",
-                Content = null, // Content is null when there are tool calls
+                Content = null,
+                ReasoningContent = ChatMessage.IsThinkingModelActive() ? "" : null,
                 ToolCalls = pendingToolCalls.Select(tc => new ToolCall
                 {
                     Id = tc.id,
@@ -1154,6 +1155,7 @@ namespace thuvu.Web.Services
                                 // Update TokenTracker first, then send context usage info
                                 var tokenTracker = TokenTracker.Instance;
                                 tokenTracker.UpdateFromUsage(usage);
+                                UpdateModelContextFromUsage(usage);
                                 
                                 writer.TryWrite(new AgentStreamEvent 
                                 { 
@@ -1236,12 +1238,16 @@ namespace thuvu.Web.Services
                                     ToolName = name,
                                     Data = argsJson
                                 });
+                            },
+                            onReasoningToken: token =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent { Type = "reasoning", Data = token });
                             }
                         );
 
                         if (result != null)
                         {
-                            session.Messages.Add(new ChatMessage("assistant", result));
+                            session.Messages.Add(ChatMessage.CreateAssistant(result));
                         }
 
                         // Check if auto-summarization is needed
@@ -1495,6 +1501,7 @@ namespace thuvu.Web.Services
                                 // Update TokenTracker first, then send context usage info
                                 var tokenTracker = TokenTracker.Instance;
                                 tokenTracker.UpdateFromUsage(usage);
+                                UpdateModelContextFromUsage(usage);
                                 
                                 writer.TryWrite(new AgentStreamEvent 
                                 { 
@@ -1577,12 +1584,16 @@ namespace thuvu.Web.Services
                                     ToolName = name,
                                     Data = argsJson
                                 });
+                            },
+                            onReasoningToken: token =>
+                            {
+                                writer.TryWrite(new AgentStreamEvent { Type = "reasoning", Data = token });
                             }
                         );
 
                         if (result != null)
                         {
-                            session.Messages.Add(new ChatMessage("assistant", result));
+                            session.Messages.Add(ChatMessage.CreateAssistant(result));
                         }
 
                         // Record assistant response to database with token usage
@@ -1763,7 +1774,7 @@ namespace thuvu.Web.Services
                     if (visionResult.Success)
                     {
                         // Add the assistant response to conversation
-                        session.Messages.Add(new ChatMessage("assistant", visionResult.Description));
+                        session.Messages.Add(ChatMessage.CreateAssistant(visionResult.Description));
                         
                         // Update last activity
                         session.LastActivityAt = DateTime.Now;
@@ -2608,9 +2619,20 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
             foreach (var m in models.Where(m => m.Enabled))
             {
                 var current = m.ModelId == AgentConfig.Config.Model ? " ← current" : "";
+                var contextInfo = m.MaxContextLength > 0 ? $", Context: {m.MaxContextLength:N0}" : "";
                 lines.Add($"- **{m.DisplayName}** (`{m.ModelId}`){current}");
-                lines.Add($"  Host: {m.HostUrl}, Local: {m.IsLocal}");
+                lines.Add($"  Host: {m.HostUrl}, Local: {m.IsLocal}{contextInfo}");
             }
+            
+            // Add current model context usage if available
+            var currentModel = ModelRegistry.Instance.GetModel(AgentConfig.Config.Model);
+            if (currentModel != null && currentModel.MaxContextLength > 0)
+            {
+                var tracker = TokenTracker.Instance;
+                lines.Add($"\n**Current Model Context Usage:**");
+                lines.Add($"- {tracker.TotalTokens:N0} / {tracker.MaxContextLength:N0} tokens ({tracker.UsagePercent:P1})");
+            }
+            
             return string.Join("\n", lines);
         }
 
@@ -2747,15 +2769,32 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
         /// </summary>
         public object GetConfig()
         {
+            var mcpEnabled = McpConfig.Instance.Enabled;
             return new
             {
                 model = AgentConfig.Config.Model,
                 hostUrl = AgentConfig.Config.HostUrl,
                 workDirectory = AgentConfig.GetWorkDirectory(),
                 streaming = AgentConfig.Config.Stream,
-                mcpEnabled = McpConfig.Instance.Enabled,
-                ragEnabled = RagConfig.Instance.Enabled
+                mcpEnabled = mcpEnabled,
+                ragEnabled = RagConfig.Instance.Enabled,
+                systemPromptLabel = SystemPromptManager.Instance.GetCurrentSystemPromptLabel(McpConfig.Instance.McpModeActive)
             };
+        }
+
+        /// <summary>
+        /// Update model context length from usage info if provided by API
+        /// </summary>
+        private static void UpdateModelContextFromUsage(Usage usage)
+        {
+            if (usage?.MaxContextLength.HasValue == true && usage.MaxContextLength.Value > 0)
+            {
+                var modelEndpoint = ModelRegistry.Instance.GetModel(AgentConfig.Config.Model);
+                if (modelEndpoint != null && modelEndpoint.MaxContextLength != usage.MaxContextLength.Value)
+                {
+                    modelEndpoint.MaxContextLength = usage.MaxContextLength.Value;
+                }
+            }
         }
 
         /// <summary>
@@ -2850,14 +2889,14 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
         public List<Hubs.FileTreeItem> GetDirectoryContents(string relativePath)
         {
             var results = new List<Hubs.FileTreeItem>();
-            var workDir = AgentConfig.GetWorkDirectory();
+            var rootDir = Path.GetFullPath(Directory.GetCurrentDirectory());
             
             try
             {
-                var fullPath = Path.GetFullPath(Path.Combine(workDir, relativePath));
+                var fullPath = Path.GetFullPath(Path.Combine(rootDir, relativePath));
                 
-                // Security: ensure path is within work directory
-                if (!fullPath.StartsWith(workDir, StringComparison.OrdinalIgnoreCase))
+                // Security: ensure path is within root directory
+                if (!fullPath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
                 {
                     return results;
                 }
@@ -2882,7 +2921,7 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
                     results.Add(new Hubs.FileTreeItem
                     {
                         Name = dirInfo.Name,
-                        Path = Path.GetRelativePath(workDir, dir),
+                        Path = Path.GetRelativePath(rootDir, dir),
                         IsDirectory = true,
                         IsLoaded = false
                     });
@@ -2899,7 +2938,7 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
                     results.Add(new Hubs.FileTreeItem
                     {
                         Name = fileInfo.Name,
-                        Path = Path.GetRelativePath(workDir, file),
+                        Path = Path.GetRelativePath(rootDir, file),
                         IsDirectory = false
                     });
                 }
@@ -2920,14 +2959,14 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
         /// </summary>
         public Hubs.FileContentResult ReadFile(string relativePath)
         {
-            var workDir = AgentConfig.GetWorkDirectory();
+            var rootDir = Path.GetFullPath(Directory.GetCurrentDirectory());
             
             try
             {
-                var fullPath = Path.GetFullPath(Path.Combine(workDir, relativePath));
+                var fullPath = Path.GetFullPath(Path.Combine(rootDir, relativePath));
                 
-                // Security: ensure path is within work directory
-                if (!fullPath.StartsWith(workDir, StringComparison.OrdinalIgnoreCase))
+                // Security: ensure path is within root directory
+                if (!fullPath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase))
                 {
                     return new Hubs.FileContentResult { Success = false, Error = "Access denied" };
                 }

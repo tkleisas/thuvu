@@ -431,6 +431,97 @@ html, body {
     51%, 100% { opacity: 0; }
 }
 
+/* Reasoning/Thinking Content */
+.reasoning-content {
+    background-color: rgba(139, 92, 246, 0.1);
+    border-left: 3px solid var(--accent-purple, #a78bfa);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: 0 0.5rem 0.5rem 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    position: relative;
+}
+
+.reasoning-content::before {
+    content: "💭 Thinking";
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent-purple, #a78bfa);
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.reasoning-content.streaming {
+    border-color: var(--accent-cyan);
+    animation: reasoning-pulse 2s infinite;
+}
+
+.reasoning-content.streaming::before {
+    content: "💭 Thinking...";
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes reasoning-pulse {
+    0%, 100% { 
+        background-color: rgba(139, 92, 246, 0.1);
+        box-shadow: 0 0 5px rgba(139, 92, 246, 0.2);
+    }
+    50% { 
+        background-color: rgba(139, 92, 246, 0.15);
+        box-shadow: 0 0 10px rgba(139, 92, 246, 0.3);
+    }
+}
+
+.reasoning-content pre,
+.reasoning-content code {
+    font-size: 0.8rem;
+    background-color: rgba(0, 0, 0, 0.2);
+}
+
+.reasoning-content .message-text {
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+/* Collapsible reasoning section for completed messages */
+.reasoning-section {
+    background-color: rgba(139, 92, 246, 0.08);
+    border-left: 3px solid var(--accent-purple, #a78bfa);
+    border-radius: 0 0.5rem 0.5rem 0;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.reasoning-section summary {
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent-purple, #a78bfa);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    user-select: none;
+}
+
+.reasoning-section summary:hover {
+    color: var(--accent-cyan);
+}
+
+.reasoning-section .reasoning-text {
+    padding: 0.5rem 0.75rem 0.75rem;
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 0.8rem;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    background-color: rgba(0, 0, 0, 0.15);
+    max-height: 300px;
+    overflow-y: auto;
+}
+
 /* Tool Result */
 .tool-result {
     font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;

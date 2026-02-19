@@ -73,6 +73,7 @@ namespace thuvu.Tools
                 {
                     // Try to provide helpful diagnostics
                     var diagnostics = new List<string>();
+                    string? actualContent = null;
                     
                     if (targetFile != null)
                     {
@@ -86,13 +87,29 @@ namespace thuvu.Tools
                             var fileLines = File.ReadAllLines(fullPath);
                             diagnostics.Add($"File has {fileLines.Length} lines");
                             
-                            // Try to find the context that didn't match
-                            var lines = patch.Split('\n');
-                            foreach (var line in lines)
+                            // Extract hunk line numbers and show actual content around them
+                            var patchLines = patch.Split('\n');
+                            foreach (var line in patchLines)
                             {
                                 if (line.StartsWith("@@"))
                                 {
                                     diagnostics.Add($"Hunk header: {line}");
+                                    
+                                    // Parse the start line from hunk header: @@ -N,M +N,M @@
+                                    var match = System.Text.RegularExpressions.Regex.Match(line, @"@@ -(\d+)");
+                                    if (match.Success && int.TryParse(match.Groups[1].Value, out int startLine))
+                                    {
+                                        // Show actual content around the failing hunk (5 lines before, 15 lines of context)
+                                        int from = Math.Max(0, startLine - 6);
+                                        int to = Math.Min(fileLines.Length - 1, startLine + 14);
+                                        var sb = new StringBuilder();
+                                        sb.AppendLine($"Actual content at lines {from + 1}-{to + 1}:");
+                                        for (int i = from; i <= to; i++)
+                                        {
+                                            sb.AppendLine($"{i + 1,4}| {fileLines[i]}");
+                                        }
+                                        diagnostics.Add(sb.ToString().TrimEnd());
+                                    }
                                 }
                             }
                         }
@@ -103,7 +120,7 @@ namespace thuvu.Tools
                         applied = false, 
                         rejects = string.IsNullOrEmpty(rejects) ? null : rejects,
                         diagnostics = diagnostics.Count > 0 ? diagnostics : null,
-                        suggestion = "The patch context doesn't match the file. Read the file first with read_file(path, line_numbers=true) to see actual line numbers and content."
+                        suggestion = "The patch context doesn't match the file. The actual file content around the failing hunk(s) is shown in diagnostics above. Use this to create a corrected patch."
                     });
                 }
             }

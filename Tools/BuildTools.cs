@@ -111,7 +111,7 @@ namespace thuvu.Tools
                 Function = new FunctionDef
                 {
                     Name = "apply_patch",
-                    Description = "Apply a unified diff patch to the working tree.",
+                    Description = "Apply a unified diff patch. IMPORTANT: You MUST read_file first before creating a patch — never guess file content. If the patch fails, re-read the file and try again.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
