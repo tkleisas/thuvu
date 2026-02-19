@@ -160,20 +160,21 @@ public class DesktopAgentService
 
         try
         {
+            string? response;
             if (!string.IsNullOrEmpty(WorkDirectory))
             {
                 var ctx = AgentContext.CreateContext("desktop", WorkDirectory);
-                await AgentContext.RunInContextAsync(ctx, () => ExecuteAgentLoopAsync());
+                response = await AgentContext.RunInContextAsync(ctx, () => ExecuteAgentLoopAsync());
             }
             else
             {
-                await ExecuteAgentLoopAsync();
+                response = await ExecuteAgentLoopAsync();
             }
 
-            // Record assistant response (last assistant message in the list)
-            var lastAssistant = _messages.LastOrDefault(m => m.Role == "assistant");
-            if (lastAssistant != null)
-                RecordMessageAsync(SessionId, "assistant", responseContent: lastAssistant.Content);
+            // Record assistant response using the returned content
+            // (AgentLoop returns the final text but doesn't add it to _messages)
+            if (!string.IsNullOrEmpty(response))
+                RecordMessageAsync(SessionId, "assistant", responseContent: response);
 
             OnComplete?.Invoke();
         }
@@ -193,13 +194,14 @@ public class DesktopAgentService
         }
     }
 
-    private async Task ExecuteAgentLoopAsync()
+    private async Task<string?> ExecuteAgentLoopAsync()
     {
         var model = EffectiveModel;
         var sid = SessionId;
+        string? response;
         if (AgentConfig.Config.Stream)
         {
-            await AgentLoop.CompleteWithToolsStreamingAsync(
+            response = await AgentLoop.CompleteWithToolsStreamingAsync(
                 _http,
                 model,
                 _messages,
@@ -224,7 +226,7 @@ public class DesktopAgentService
         }
         else
         {
-            await AgentLoop.CompleteWithToolsAsync(
+            response = await AgentLoop.CompleteWithToolsAsync(
                 _http,
                 model,
                 _messages,
@@ -240,6 +242,7 @@ public class DesktopAgentService
                 onToolCall: (name, args) => OnToolCall?.Invoke(name, args)
             );
         }
+        return response;
     }
 
     private Usage? _lastUsage;
