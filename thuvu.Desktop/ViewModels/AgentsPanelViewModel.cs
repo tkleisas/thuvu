@@ -40,6 +40,9 @@ public partial class AgentsPanelViewModel : ToolViewModel
     /// <summary>Raised when user wants to show/focus an agent's chat tab</summary>
     public event Action<string>? ShowAgentRequested;
 
+    /// <summary>Raised when user terminates an agent (chat tab should be closed)</summary>
+    public event Action<string>? TerminateAgentRequested;
+
     public AgentsPanelViewModel()
     {
         Id = "AgentsPanel";
@@ -135,7 +138,11 @@ public partial class AgentsPanelViewModel : ToolViewModel
         var id = SelectedAgent.AgentId;
         var agent = AgentRegistry.Instance.GetAgent(id);
         agent?.CancelRequest();
-        agent?.ClearMessages();
-        SelectedAgent.Status = "Terminated";
+
+        // Remove from panel and registry, close chat tab
+        Agents.Remove(SelectedAgent);
+        SelectedAgent = null;
+        AgentRegistry.Instance.RemoveAgent(id);
+        TerminateAgentRequested?.Invoke(id);
     }
 }

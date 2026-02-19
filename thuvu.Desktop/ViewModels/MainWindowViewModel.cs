@@ -184,6 +184,7 @@ public partial class MainWindowViewModel : ObservableObject
         if (_agentsPanel == null) return;
 
         _agentsPanel.ShowAgentRequested += ShowOrRestoreAgent;
+        _agentsPanel.TerminateAgentRequested += TerminateAgentChat;
     }
 
     /// <summary>Show an agent's chat tab, re-adding it if it was closed</summary>
@@ -212,6 +213,21 @@ public partial class MainWindowViewModel : ObservableObject
             _factory.SetFocusedDockable(docDock, entry.Value.Chat);
             StatusText = $"Restored {entry.Value.Chat.Title}";
         }
+    }
+
+    /// <summary>Close the chat tab for a terminated agent</summary>
+    private void TerminateAgentChat(string agentId)
+    {
+        if (DockLayout == null) return;
+        var docDock = FindDocumentDock(DockLayout);
+        if (docDock == null) return;
+
+        var chatTab = docDock.VisibleDockables?.OfType<ChatViewModel>()
+            .FirstOrDefault(c => c.Id == agentId);
+        if (chatTab != null)
+            _factory.CloseDockable(chatTab);
+
+        StatusText = $"Agent {agentId} terminated";
     }
 
     private void WireAgentToStatusBar(DesktopAgentService agent)
