@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using System.Globalization;
 using thuvu.Desktop.ViewModels;
@@ -18,9 +19,19 @@ public partial class ChatView : UserControl
             _ => new SolidColorBrush(Color.FromArgb(15, 255, 165, 0))
         });
 
+    public static readonly FuncValueConverter<string?, bool> IsAssistantConverter =
+        new(role => role == "assistant");
+
+    public static readonly FuncValueConverter<string?, bool> IsNotAssistantConverter =
+        new(role => role != "assistant");
+
     public ChatView()
     {
         InitializeComponent();
+
+        // Use tunnel routing to intercept Enter before TextBox consumes it with AcceptsReturn
+        var inputBox = this.FindControl<TextBox>("InputBox");
+        inputBox?.AddHandler(KeyDownEvent, InputBox_KeyDown, RoutingStrategies.Tunnel);
     }
 
     private void InputBox_KeyDown(object? sender, KeyEventArgs e)

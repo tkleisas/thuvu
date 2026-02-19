@@ -9,6 +9,7 @@ namespace thuvu.Desktop.Views;
 public partial class EditorView : UserControl
 {
     private TextMate.Installation? _textMateInstallation;
+    private bool _suppressTextChanged;
 
     public EditorView()
     {
@@ -35,10 +36,29 @@ public partial class EditorView : UserControl
             }
             catch { /* TextMate grammars may not be available */ }
 
-            editor.Text = vm.Content;
+            // Set initial content if already loaded
+            if (!string.IsNullOrEmpty(vm.Content))
+                editor.Text = vm.Content;
+
+            // Watch for ViewModel Content changes (async file load completes after DataContext set)
+            vm.PropertyChanged += (s, args) =>
+            {
+                if (args.PropertyName == nameof(EditorViewModel.Content) && !_suppressTextChanged)
+                {
+                    _suppressTextChanged = true;
+                    editor.Text = vm.Content;
+                    _suppressTextChanged = false;
+                }
+            };
+
             editor.TextChanged += (s, args) =>
             {
-                vm.Content = editor.Text;
+                if (!_suppressTextChanged)
+                {
+                    _suppressTextChanged = true;
+                    vm.Content = editor.Text;
+                    _suppressTextChanged = false;
+                }
             };
         }
     }

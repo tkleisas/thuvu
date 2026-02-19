@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:thuvu.Desktop.ViewModels"
              xmlns:views="clr-namespace:thuvu.Desktop.Views"
+             xmlns:md="clr-namespace:Markdown.Avalonia;assembly=Markdown.Avalonia"
              x:Class="thuvu.Desktop.Views.ChatView"
              x:DataType="vm:ChatViewModel">
 
@@ -22,7 +23,6 @@
                          AcceptsReturn="True"
                          MinHeight="60" MaxHeight="150"
                          TextWrapping="Wrap"
-                         KeyDown="InputBox_KeyDown"
                          Margin="0,0,8,0" />
             </DockPanel>
         </Border>
@@ -44,7 +44,15 @@
                                                Foreground="Gray" HorizontalAlignment="Right" />
                                     <Panel />
                                 </DockPanel>
-                                <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap" />
+
+                                <!-- Markdown for assistant messages -->
+                                <md:MarkdownScrollViewer Markdown="{Binding Content}"
+                                    IsVisible="{Binding Role, Converter={x:Static views:ChatView.IsAssistantConverter}}" />
+
+                                <!-- Plain text for user/tool messages -->
+                                <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                    IsVisible="{Binding Role, Converter={x:Static views:ChatView.IsNotAssistantConverter}}" />
+
                                 <!-- Tool info -->
                                 <Border IsVisible="{Binding ToolName, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                                         Background="#1A000000" CornerRadius="4" Padding="8" Margin="0,4,0,0">
