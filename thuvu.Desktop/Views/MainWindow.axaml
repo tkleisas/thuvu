@@ -5,7 +5,7 @@
         xmlns:views="using:thuvu.Desktop.Views"
         x:Class="thuvu.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
-        Title="T.H.U.V.U. — AI Coding Agent"
+        Title="{Binding WindowTitle}"
         Width="1400" Height="900"
         WindowStartupLocation="CenterScreen">
 

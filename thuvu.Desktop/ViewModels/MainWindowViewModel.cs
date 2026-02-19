@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string _modelName = "No model configured";
     [ObservableProperty] private string _tokenUsageText = "";
     [ObservableProperty] private bool _isDarkTheme = true;
+    [ObservableProperty] private string _windowTitle = "T.H.U.V.U.";
 
     private readonly DockFactory _factory;
     private readonly DesktopAgentService _agentService;
@@ -52,6 +53,7 @@ public partial class MainWindowViewModel : ObservableObject
         _agentService = new DesktopAgentService();
         ModelName = _agentService.GetModelName();
         StatusText = $"{project.Name} — {_agentService.GetHostUrl()}";
+        WindowTitle = $"T.H.U.V.U. — {project.Name}";
 
         // Wire agent service to chat
         var chat = FindDockable<ChatViewModel>(layout);

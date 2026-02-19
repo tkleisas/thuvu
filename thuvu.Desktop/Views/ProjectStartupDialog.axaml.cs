@@ -24,6 +24,8 @@ public partial class ProjectStartupDialog : Window
         LoadRecentProjects();
     }
 
+    private string? _pendingDirectory;
+
     private async void NewProject_Click(object? sender, RoutedEventArgs e)
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
@@ -39,16 +41,43 @@ public partial class ProjectStartupDialog : Window
 
         if (File.Exists(thuvuFile))
         {
-            // Already has a .thuvu file — load it
+            // Already has a .thuvu file — load it directly
             SelectedProject = ProjectConfig.Load(thuvuFile);
-        }
-        else
-        {
-            SelectedProject = ProjectConfig.CreateNew(dir);
+            AddToRecent(SelectedProject);
+            Close();
+            return;
         }
 
+        // Show name input panel
+        _pendingDirectory = dir;
+        var nameBox = this.FindControl<Avalonia.Controls.TextBox>("ProjectNameBox")!;
+        nameBox.Text = Path.GetFileName(dir);
+        this.FindControl<StackPanel>("ActionButtons")!.IsVisible = false;
+        this.FindControl<StackPanel>("NewProjectPanel")!.IsVisible = true;
+        nameBox.Focus();
+        nameBox.SelectAll();
+    }
+
+    private void CreateProject_Click(object? sender, RoutedEventArgs e)
+    {
+        var nameBox = this.FindControl<Avalonia.Controls.TextBox>("ProjectNameBox")!;
+        var name = nameBox.Text?.Trim();
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(_pendingDirectory))
+        {
+            StatusText = "Project name is required";
+            return;
+        }
+
+        SelectedProject = ProjectConfig.CreateNew(_pendingDirectory, name);
         AddToRecent(SelectedProject);
         Close();
+    }
+
+    private void CancelCreate_Click(object? sender, RoutedEventArgs e)
+    {
+        _pendingDirectory = null;
+        this.FindControl<StackPanel>("NewProjectPanel")!.IsVisible = false;
+        this.FindControl<StackPanel>("ActionButtons")!.IsVisible = true;
     }
 
     private async void OpenProject_Click(object? sender, RoutedEventArgs e)

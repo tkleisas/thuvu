@@ -15,10 +15,10 @@ public partial class EditorView : UserControl
     public EditorView()
     {
         InitializeComponent();
-        DataContextChanged += OnDataContextChanged;
+        Loaded += OnLoaded;
     }
 
-    private void OnDataContextChanged(object? sender, EventArgs e)
+    private void OnLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is not EditorViewModel vm) return;
         var editor = this.FindControl<TextEditor>("Editor");
