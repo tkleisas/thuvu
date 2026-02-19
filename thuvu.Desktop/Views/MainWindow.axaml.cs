@@ -12,6 +12,13 @@ public partial class MainWindow : Window
         InitializeComponent();
         KeyDown += OnKeyDown;
         DataContextChanged += OnDataContextChanged;
+        Closing += OnWindowClosing;
+    }
+
+    private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm)
+            vm.SaveAllSessions();
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)

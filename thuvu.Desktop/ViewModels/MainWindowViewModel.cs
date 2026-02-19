@@ -51,27 +51,72 @@ public partial class MainWindowViewModel : ObservableObject
         _registry = AgentRegistry.Instance;
         _registry.WorkDirectory = _project.ResolvedWorkDirectory;
 
+        // Set up session persistence
+        var sessionStore = new SessionStore(_project.ProjectDirectory);
+        _registry.SessionStore = sessionStore;
+
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();
         _factory.InitLayout(layout);
         DockLayout = layout;
 
-        // Create the first agent/chat pair and replace the placeholder from DockFactory
-        var (chatVm, firstAgent) = _registry.CreateAgent("Chat 1");
-        ModelName = firstAgent.GetModelName();
-        StatusText = $"{project.Name} — {firstAgent.GetHostUrl()}";
-        WindowTitle = $"T.H.U.V.U. — {project.Name}";
-
-        // Replace the placeholder chat in the document dock with the real one
+        // Remove the placeholder chat from DockFactory
         var docDock = FindDocumentDock(layout);
         if (docDock != null)
         {
             var placeholder = docDock.VisibleDockables?.OfType<ChatViewModel>().FirstOrDefault();
             if (placeholder != null)
                 _factory.RemoveDockable(placeholder, false);
-            _factory.AddDockable(docDock, chatVm);
-            _factory.SetActiveDockable(chatVm);
         }
+
+        // Try to restore saved sessions
+        var savedIndex = sessionStore.LoadIndex();
+        bool restored = false;
+        DesktopAgentService? firstAgent = null;
+        ChatViewModel? activeChat = null;
+
+        if (savedIndex != null && savedIndex.Sessions.Count > 0)
+        {
+            foreach (var summary in savedIndex.Sessions)
+            {
+                var data = sessionStore.LoadSession(summary.Id);
+                if (data == null || data.UiMessages.Count == 0) continue;
+
+                var (chatVm, agent) = _registry.RestoreAgent(data);
+                WireAgentToStatusBar(agent);
+                if (docDock != null) _factory.AddDockable(docDock, chatVm);
+
+                firstAgent ??= agent;
+                if (summary.Id == savedIndex.ActiveSessionId)
+                    activeChat = chatVm;
+
+                restored = true;
+            }
+        }
+
+        // If nothing was restored, create a fresh first chat
+        if (!restored)
+        {
+            var (chatVm, agent) = _registry.CreateAgent("Chat 1");
+            firstAgent = agent;
+            activeChat = chatVm;
+            if (docDock != null) _factory.AddDockable(docDock, chatVm);
+        }
+
+        // Activate the correct tab
+        if (docDock != null && activeChat != null)
+        {
+            _factory.SetActiveDockable(activeChat);
+        }
+        else if (docDock != null)
+        {
+            var first = docDock.VisibleDockables?.OfType<ChatViewModel>().FirstOrDefault();
+            if (first != null) _factory.SetActiveDockable(first);
+        }
+
+        ModelName = firstAgent?.GetModelName() ?? "No model configured";
+        StatusText = $"{project.Name} — {firstAgent?.GetHostUrl() ?? "Ready"}";
+        WindowTitle = $"T.H.U.V.U. — {project.Name}";
 
         // Status bar tracks whichever agent is active
         _registry.OnAgentStateChanged += (id, processing) =>
@@ -84,14 +129,15 @@ public partial class MainWindowViewModel : ObservableObject
             });
         };
 
-        // Wire usage from first agent (active chat will update this)
-        WireAgentToStatusBar(firstAgent);
+        if (firstAgent != null)
+            WireAgentToStatusBar(firstAgent);
 
         InitializeFileTree(layout);
         InitializeAgentsPanel(layout);
 
-        // Register the first agent in the panel
-        _agentsPanel?.AddAgent(chatVm.Id!, "Chat 1");
+        // Register all agents in the panel
+        foreach (var entry in _registry.Agents.Values)
+            _agentsPanel?.AddAgent(entry.Id, entry.Name);
 
         // Set terminal working directory to project root
         var terminal = FindDockable<TerminalViewModel>(layout);
@@ -285,7 +331,15 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void Exit()
     {
+        SaveAllSessions();
         Environment.Exit(0);
+    }
+
+    /// <summary>Save all agent sessions and the session index to disk</summary>
+    public void SaveAllSessions()
+    {
+        var activeId = (DockLayout != null ? FindDocumentDock(DockLayout)?.ActiveDockable as ChatViewModel : null)?.Id;
+        _registry.SaveAllSessions(activeId);
     }
 
     [RelayCommand]

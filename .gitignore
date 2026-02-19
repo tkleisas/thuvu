@@ -365,3 +365,6 @@ FodyWeavers.xsd
 
 # THUVU debug stream logs
 .stream/
+
+# THUVU session state (conversation history)
+.thuvu-sessions/

@@ -48,6 +48,13 @@ public partial class ChatViewModel : DocumentViewModel
     private bool _canSend = true;
 
     private DesktopAgentService? _agentService;
+    private SessionStore? _sessionStore;
+
+    /// <summary>Display name for this session (used in session index)</summary>
+    public string SessionName { get; set; } = "Chat";
+
+    /// <summary>When this session was first created</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
     public ObservableCollection<ModelChoice> AvailableModels { get; } = new();
@@ -117,9 +124,65 @@ public partial class ChatViewModel : DocumentViewModel
         _agentService.OnToolComplete += (name, args, result, elapsed) =>
             Dispatcher.UIThread.Post(() => UpdateToolResult(name, result, elapsed));
         _agentService.OnComplete += () =>
-            Dispatcher.UIThread.Post(() => FinalizeResponse());
+            Dispatcher.UIThread.Post(() => { FinalizeResponse(); SaveSession(); });
         _agentService.OnError += error =>
-            Dispatcher.UIThread.Post(() => HandleError(error));
+            Dispatcher.UIThread.Post(() => { HandleError(error); SaveSession(); });
+    }
+
+    /// <summary>Set the session store for auto-saving</summary>
+    public void SetSessionStore(SessionStore store) => _sessionStore = store;
+
+    /// <summary>Build a SessionData snapshot of current state</summary>
+    public SessionData CreateSessionData()
+    {
+        var uiMessages = Messages.Select(m => new UiMessage
+        {
+            Role = m.Role,
+            Content = m.Content,
+            Timestamp = m.Timestamp,
+            ToolName = m.ToolName,
+            ToolArgs = m.ToolArgs,
+            ToolResult = m.ToolResult,
+            ThinkingContent = m.ThinkingContent
+        }).ToList();
+
+        return new SessionData
+        {
+            Id = Id!,
+            Name = SessionName,
+            ModelId = _agentService?.ModelOverride,
+            Messages = _agentService?.Messages.ToList() ?? new(),
+            UiMessages = uiMessages
+        };
+    }
+
+    /// <summary>Save current session to disk (no-op if no store configured)</summary>
+    public void SaveSession()
+    {
+        if (_sessionStore == null || string.IsNullOrEmpty(Id)) return;
+        try { _sessionStore.SaveSession(CreateSessionData()); }
+        catch { /* don't crash the UI on save failure */ }
+    }
+
+    /// <summary>Restore UI messages from saved session data</summary>
+    public void RestoreFromSession(SessionData data)
+    {
+        Messages.Clear();
+        foreach (var ui in data.UiMessages)
+        {
+            Messages.Add(new ChatMessageViewModel
+            {
+                Role = ui.Role,
+                Content = ui.Content,
+                Timestamp = ui.Timestamp,
+                ToolName = ui.ToolName,
+                ToolArgs = ui.ToolArgs,
+                ToolResult = ui.ToolResult,
+                ThinkingContent = ui.ThinkingContent
+            });
+        }
+        SessionName = data.Name;
+        CreatedAt = DateTime.UtcNow; // preserve original if stored in index
     }
 
     [RelayCommand(CanExecute = nameof(CanSend))]
@@ -208,6 +271,7 @@ public partial class ChatViewModel : DocumentViewModel
             _agentService!.ClearMessages();
             Messages.Clear();
             AddSystemMessage("Conversation cleared.");
+            SaveSession();
             return true;
         }
 

@@ -229,6 +229,13 @@ public class DesktopAgentService
         };
     }
 
+    /// <summary>Replace the message history with a previously saved one (for session restore)</summary>
+    public void RestoreMessages(List<ChatMessage> messages)
+    {
+        if (IsProcessing) return;
+        _messages = messages;
+    }
+
     public string GetModelName() => AgentConfig.Config.Model;
     public string GetHostUrl() => AgentConfig.Config.HostUrl;
 
