@@ -60,6 +60,45 @@ public class DesktopAgentService
         {
             new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt())
         };
+
+        // Wire up permission prompts for Desktop (Console.ReadKey not available in GUI apps)
+        if (PermissionManager.AsyncPermissionPrompt == null)
+        {
+            if (AgentConfig.Config.AutoApproveTuiTools)
+            {
+                PermissionManager.AsyncPermissionPrompt = (toolName, argsJson) =>
+                    Task.FromResult('S'); // Auto-approve for session
+            }
+            else
+            {
+                PermissionManager.AsyncPermissionPrompt = async (toolName, argsJson) =>
+                {
+                    var tcs = new TaskCompletionSource<char>();
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(async () =>
+                    {
+                        var dialog = new thuvu.Desktop.Views.PermissionDialog(toolName, argsJson);
+                        // Find the top-level window to use as owner
+                        var topLevel = Avalonia.Application.Current?.ApplicationLifetime is
+                            Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                            ? desktop.MainWindow : null;
+                        if (topLevel != null)
+                            await dialog.ShowDialog(topLevel);
+                        else
+                            dialog.Show();
+
+                        var result = dialog.Result switch
+                        {
+                            "always" => 'A',
+                            "session" => 'S',
+                            "once" => 'O',
+                            _ => 'N'
+                        };
+                        tcs.SetResult(result);
+                    });
+                    return await tcs.Task;
+                };
+            }
+        }
     }
 
     /// <summary>
