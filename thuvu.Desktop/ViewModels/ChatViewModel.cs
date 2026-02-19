@@ -55,6 +55,7 @@ public partial class ChatViewModel : DocumentViewModel
     [NotifyCanExecuteChangedFor(nameof(SendMessageCommand))]
     private bool _canSend = true;
 
+    private CancellationTokenSource? _orchestrationCts;
     private DesktopAgentService? _agentService;
     /// <summary>Display name for this session (used in session index)</summary>
     public string SessionName { get; set; } = "Chat";
@@ -187,6 +188,7 @@ public partial class ChatViewModel : DocumentViewModel
     private void CancelRequest()
     {
         _agentService?.CancelRequest();
+        _orchestrationCts?.Cancel();
         FinalizeResponse();
     }
 
@@ -589,6 +591,8 @@ public partial class ChatViewModel : DocumentViewModel
 
         IsProcessing = true;
         CanSend = false;
+        _orchestrationCts = new CancellationTokenSource();
+        var ct = _orchestrationCts.Token;
 
         try
         {
@@ -596,55 +600,82 @@ public partial class ChatViewModel : DocumentViewModel
             {
                 var http = new HttpClient();
                 AgentConfig.ApplyConfig(http);
-                using var orchestrator = new TaskOrchestrator(http, config, workDir);
+                var orchestrator = new TaskOrchestrator(http, config, workDir);
 
-                orchestrator.OnAgentStarted += (agentId, taskId) =>
-                    Dispatcher.UIThread.Post(() =>
-                        AddSystemMessage($"[{agentId}] Starting task {taskId}..."));
-
-                orchestrator.OnTaskCompleted += (agentId, result) =>
+                try
                 {
-                    var task = plan.SubTasks.FirstOrDefault(t => t.Id == result.TaskId);
-                    if (task != null)
+                    orchestrator.OnAgentStarted += (agentId, taskId) =>
+                        Dispatcher.UIThread.Post(() =>
+                            AddSystemMessage($"[{agentId}] Starting task {taskId}..."));
+
+                    orchestrator.OnTaskCompleted += (agentId, result) =>
                     {
-                        task.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
-                        task.AssignedAgentId = agentId;
-                        try { plan.SaveToFile(planPath); } catch { }
-                    }
+                        var task = plan.SubTasks.FirstOrDefault(t => t.Id == result.TaskId);
+                        if (task != null)
+                        {
+                            task.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
+                            task.AssignedAgentId = agentId;
+                            try { plan.SaveToFile(planPath); } catch { }
+                        }
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            var icon = result.Success ? "✅" : "❌";
+                            AddSystemMessage($"{icon} [{agentId}] Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)");
+                        });
+                    };
+
+                    orchestrator.OnPhaseCompleted += phase =>
+                        Dispatcher.UIThread.Post(() =>
+                            AddSystemMessage($"── {phase} completed ──"));
+
+                    orchestrator.OnAgentOutput += (agentId, token) =>
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            // Show agent streaming output as system messages (throttled)
+                            var last = Messages.LastOrDefault();
+                            if (last?.Role == "system" && last.Content?.StartsWith($"[{agentId}] ") == true
+                                && !last.Content.Contains("Starting task") && !last.Content.Contains("completed"))
+                            {
+                                last.Content += token;
+                            }
+                        });
+
+                    var result = await orchestrator.ExecutePlanAsync(plan, ct).ConfigureAwait(false);
+                    plan.SaveToFile(planPath);
+                    plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
+
                     Dispatcher.UIThread.Post(() =>
-                    {
-                        var icon = result.Success ? "✅" : "❌";
-                        AddSystemMessage($"{icon} [{agentId}] Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)");
-                    });
-                };
-
-                orchestrator.OnPhaseCompleted += phase =>
-                    Dispatcher.UIThread.Post(() =>
-                        AddSystemMessage($"── {phase} completed ──"));
-
-                var result = await orchestrator.ExecutePlanAsync(plan, CancellationToken.None);
-                plan.SaveToFile(planPath);
-                plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
-
-                Dispatcher.UIThread.Post(() =>
-                    AddSystemMessage(result.Success
-                        ? $"✅ Orchestration completed in {result.Duration.TotalMinutes:F1} minutes."
-                        : $"⚠️ Orchestration failed: {result.Error}"));
-            });
+                        AddSystemMessage(result.Success
+                            ? $"✅ Orchestration completed in {result.Duration.TotalMinutes:F1} minutes."
+                            : $"⚠️ Orchestration finished with issues: {result.Error}"));
+                }
+                finally
+                {
+                    try { orchestrator.Dispose(); } catch { }
+                    http.Dispose();
+                }
+            }).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            plan.SaveToFile(planPath);
-            AddSystemMessage("Orchestration cancelled. Progress saved.");
+            try { plan.SaveToFile(planPath); } catch { }
+            Dispatcher.UIThread.Post(() =>
+                AddSystemMessage("Orchestration cancelled. Progress saved."));
         }
         catch (Exception ex)
         {
-            AddSystemMessage($"⚠️ Orchestration failed: {ex.Message}");
+            Dispatcher.UIThread.Post(() =>
+                AddSystemMessage($"⚠️ Orchestration failed: {ex.Message}"));
         }
         finally
         {
-            IsProcessing = false;
-            CanSend = true;
+            _orchestrationCts?.Dispose();
+            _orchestrationCts = null;
+            Dispatcher.UIThread.Post(() =>
+            {
+                IsProcessing = false;
+                CanSend = true;
+            });
         }
     }
 

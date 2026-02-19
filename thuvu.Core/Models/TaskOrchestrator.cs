@@ -249,7 +249,12 @@ namespace thuvu.Models
             if (_disposed) return;
             _disposed = true;
             
-            StopAllAsync().GetAwaiter().GetResult();
+            // Fire-and-forget stop to avoid synchronous deadlock risk
+            _ = Task.Run(async () =>
+            {
+                try { await StopAllAsync(); }
+                catch { }
+            });
         }
     }
     
@@ -306,7 +311,7 @@ namespace thuvu.Models
             {
                 // Create orchestration branch
                 var orchBranch = $"orchestration/{plan.TaskId}";
-                await CreateOrchestrationBranchAsync(orchBranch, ct);
+                await CreateOrchestrationBranchAsync(orchBranch, ct).ConfigureAwait(false);
                 
                 int phaseNum = 1;
                 
@@ -355,7 +360,7 @@ namespace thuvu.Models
                     // Execute tasks in this phase (potentially in parallel)
                     var phaseTasks = group.Select(subtask => ExecuteSubTaskAsync(subtask, plan, ct));
                     SessionLogger.Instance.LogInfo($"Waiting for {group.Count} task(s) in phase {phaseNum}...");
-                    var phaseResults = await Task.WhenAll(phaseTasks);
+                    var phaseResults = await Task.WhenAll(phaseTasks).ConfigureAwait(false);
                     SessionLogger.Instance.LogInfo($"Phase {phaseNum} WhenAll completed with {phaseResults.Length} results");
                     
                     // Check for failures
@@ -393,7 +398,7 @@ namespace thuvu.Models
                     
                     // Persist plan state after each phase
                     SessionLogger.Instance.LogInfo($"Saving plan progress after phase {phaseNum}...");
-                    await SavePlanProgressAsync(plan, ct);
+                    await SavePlanProgressAsync(plan, ct).ConfigureAwait(false);
                     SessionLogger.Instance.LogInfo($"Plan progress saved after phase {phaseNum}");
                     
                     OnPhaseCompleted?.Invoke(phaseDesc);
@@ -406,7 +411,7 @@ namespace thuvu.Models
                 // Merge all agent branches if successful
                 if (_config.AutoMergeResults && result.TaskResults.All(r => r.Success))
                 {
-                    await MergeAgentBranchesAsync(plan, orchBranch, ct);
+                    await MergeAgentBranchesAsync(plan, orchBranch, ct).ConfigureAwait(false);
                     result.MergedSuccessfully = true;
                 }
                 
@@ -431,7 +436,7 @@ namespace thuvu.Models
             {
                 result.CompletedAt = DateTime.Now;
                 // Final save of plan state
-                await SavePlanProgressAsync(plan, CancellationToken.None);
+                await SavePlanProgressAsync(plan, CancellationToken.None).ConfigureAwait(false);
             }
             
             return result;
@@ -468,9 +473,9 @@ namespace thuvu.Models
             try
             {
                 // Wait for an available agent
-                while ((agent = await _pool.AcquireAgentAsync(subtask.Id, ct)) == null)
+                while ((agent = await _pool.AcquireAgentAsync(subtask.Id, ct).ConfigureAwait(false)) == null)
                 {
-                    await Task.Delay(500, ct);
+                    await Task.Delay(500, ct).ConfigureAwait(false);
                 }
                 
                 result.AgentId = agent.AgentId;
@@ -480,7 +485,7 @@ namespace thuvu.Models
                 // Save in-progress status
                 if (!string.IsNullOrEmpty(_planPath))
                 {
-                    await TaskPlan.UpdateSubTaskStatusAsync(_planPath, subtask.Id, SubTaskStatus.InProgress, agent.AgentId, ct);
+                    await TaskPlan.UpdateSubTaskStatusAsync(_planPath, subtask.Id, SubTaskStatus.InProgress, agent.AgentId, ct).ConfigureAwait(false);
                 }
                 
                 OnAgentStarted?.Invoke(agent.AgentId, subtask.Id);
@@ -493,12 +498,12 @@ namespace thuvu.Models
                 if (_config.UseProcessIsolation && agent.Process != null)
                 {
                     // Send task to agent process via stdin
-                    result = await ExecuteViaProcessAsync(agent, subtask, plan, ct);
+                    result = await ExecuteViaProcessAsync(agent, subtask, plan, ct).ConfigureAwait(false);
                 }
                 else
                 {
                     // Execute in-process
-                    result = await ExecuteInProcessAsync(agent, subtask, plan, ct);
+                    result = await ExecuteInProcessAsync(agent, subtask, plan, ct).ConfigureAwait(false);
                 }
                 
                 subtask.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
@@ -683,7 +688,7 @@ namespace thuvu.Models
                     onUsage: null,
                     onToolComplete: (toolName, args, result, elapsed) => OnAgentToolCall?.Invoke(agentId, toolName, $"[{elapsed.TotalSeconds:F1}s] Done"),
                     onToolProgress: progress => OnAgentToolProgress?.Invoke(agentId, progress),
-                    maxIterations: maxIterations);
+                    maxIterations: maxIterations).ConfigureAwait(false);
                 
                 // Log token usage from this agent's context
                 var tokenTracker = agentContext.TokenTracker;
