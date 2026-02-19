@@ -43,6 +43,14 @@ public partial class ChatViewModel : DocumentViewModel
     [ObservableProperty] private string _inputText = string.Empty;
     [ObservableProperty] private bool _isProcessing;
 
+    // Context usage tracking
+    [ObservableProperty] private int _promptTokens;
+    [ObservableProperty] private int _completionTokens;
+    [ObservableProperty] private int _totalTokens;
+    [ObservableProperty] private int _maxContextTokens;
+    [ObservableProperty] private double _contextUsagePercent;
+    [ObservableProperty] private string _contextUsageText = "";
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SendMessageCommand))]
     private bool _canSend = true;
@@ -125,6 +133,8 @@ public partial class ChatViewModel : DocumentViewModel
             Dispatcher.UIThread.Post(() => FinalizeResponse());
         _agentService.OnError += error =>
             Dispatcher.UIThread.Post(() => HandleError(error));
+        _agentService.OnUsage += usage =>
+            Dispatcher.UIThread.Post(() => UpdateContextUsage(usage));
     }
 
     [RelayCommand(CanExecute = nameof(CanSend))]
@@ -729,5 +739,19 @@ public partial class ChatViewModel : DocumentViewModel
         }
         IsProcessing = false;
         CanSend = true;
+    }
+
+    private void UpdateContextUsage(thuvu.Models.Usage usage)
+    {
+        PromptTokens = usage.PromptTokens;
+        CompletionTokens = usage.CompletionTokens;
+        TotalTokens = usage.TotalTokens;
+
+        var max = usage.MaxContextLength ?? _maxContextTokens;
+        if (max <= 0) max = 32768; // fallback default
+        MaxContextTokens = max;
+
+        ContextUsagePercent = Math.Min(100.0, (double)usage.PromptTokens / max * 100.0);
+        ContextUsageText = $"{usage.PromptTokens:N0} / {max:N0} tokens ({ContextUsagePercent:F0}%)";
     }
 }

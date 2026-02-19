@@ -227,7 +227,16 @@ public partial class MainWindowViewModel : ObservableObject
         agent.OnUsage += usage =>
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                TokenUsageText = $"Tokens: {usage.PromptTokens}↑ {usage.CompletionTokens}↓");
+            {
+                TokenUsageText = $"Tokens: {usage.PromptTokens}↑ {usage.CompletionTokens}↓";
+                if (!string.IsNullOrEmpty(agent.SessionId))
+                {
+                    var max = usage.MaxContextLength ?? 32768;
+                    var pct = Math.Min(100, (int)(usage.PromptTokens * 100.0 / max));
+                    _agentsPanel?.UpdateContextInfo(agent.SessionId,
+                        $"ctx: {usage.PromptTokens:N0}/{max:N0} ({pct}%)");
+                }
+            });
         };
     }
 

@@ -31,6 +31,23 @@ public partial class ChatView : UserControl
     public static readonly FuncValueConverter<string?, bool> IsNotAssistantConverter =
         new(role => role != "assistant");
 
+    /// <summary>Converts context usage percentage (0-100) to a width within 80px bar</summary>
+    public static readonly FuncValueConverter<double, double> PercentToWidthConverter =
+        new(pct => Math.Max(0, Math.Min(80, pct / 100.0 * 80)));
+
+    /// <summary>Converts context usage percentage to a color (green → yellow → red)</summary>
+    public static readonly FuncMultiValueConverter<object?, IBrush?> PercentToColorConverter =
+        new(values =>
+        {
+            var pct = values.OfType<double>().FirstOrDefault();
+            return pct switch
+            {
+                >= 90 => new SolidColorBrush(Color.FromRgb(220, 50, 50)),   // red
+                >= 70 => new SolidColorBrush(Color.FromRgb(220, 160, 30)),  // yellow
+                _ => new SolidColorBrush(Color.FromRgb(60, 180, 80))        // green
+            };
+        });
+
     private static readonly SlashCommand[] AllCommands =
     [
         new("/help", "❓", "Show available commands"),

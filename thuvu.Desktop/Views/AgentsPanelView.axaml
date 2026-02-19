@@ -29,6 +29,8 @@
                             <StackPanel Orientation="Vertical" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding Name}" FontSize="13" />
                                 <TextBlock Text="{Binding Status}" FontSize="10" Foreground="Gray" />
+                                <TextBlock Text="{Binding ContextInfo}" FontSize="9" Foreground="#888888"
+                                           IsVisible="{Binding ContextInfo, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                             </StackPanel>
                         </DockPanel>
 

@@ -15,6 +15,7 @@ public partial class AgentListItem : ObservableObject
     [ObservableProperty] private string _status = "Idle";
     [ObservableProperty] private bool _isRenaming;
     [ObservableProperty] private string _renamingText = "";
+    [ObservableProperty] private string _contextInfo = "";
 
     public string StatusIcon => Status switch
     {
@@ -64,6 +65,13 @@ public partial class AgentsPanelViewModel : ToolViewModel
     {
         var item = Agents.FirstOrDefault(a => a.AgentId == id);
         if (item != null) item.Status = status;
+    }
+
+    /// <summary>Update context usage info for an agent</summary>
+    public void UpdateContextInfo(string id, string info)
+    {
+        var item = Agents.FirstOrDefault(a => a.AgentId == id);
+        if (item != null) item.ContextInfo = info;
     }
 
     [RelayCommand]
