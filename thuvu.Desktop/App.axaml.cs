@@ -41,14 +41,13 @@ public partial class App : Application
                 return;
             }
 
-            dummyWindow.Close();
-
             var mainWindow = new MainWindow
             {
                 DataContext = new MainWindowViewModel(startupDialog.SelectedProject)
             };
             desktop.MainWindow = mainWindow;
             mainWindow.Show();
+            dummyWindow.Close();
         }
 
         base.OnFrameworkInitializationCompleted();
