@@ -20,15 +20,12 @@ public partial class EditorView : UserControl
     {
         if (DataContext is not EditorViewModel vm) return;
         var editor = this.FindControl<TextEditor>("Editor");
-        if (editor == null) return;
+        if (editor == null || _textMateInstallation != null) return;
 
-        // Setup TextMate syntax highlighting
         try
         {
-            if (_textMateInstallation != null) return; // already initialized
             var registryOptions = new RegistryOptions(ThemeName.DarkPlus);
             _textMateInstallation = editor.InstallTextMate(registryOptions);
-
             var lang = DetectLanguage(vm.FilePath, registryOptions);
             if (lang != null)
                 _textMateInstallation.SetGrammar(registryOptions.GetScopeByLanguageId(lang));

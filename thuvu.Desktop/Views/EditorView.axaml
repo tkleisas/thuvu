@@ -7,17 +7,12 @@
              x:Class="thuvu.Desktop.Views.EditorView"
              x:DataType="vm:EditorViewModel">
 
-    <DockPanel>
-        <!-- Editor -->
-        <AvaloniaEdit:TextEditor Name="Editor"
-                                  ShowLineNumbers="True"
-                                  FontFamily="Cascadia Code, Consolas, Courier New"
-                                  FontSize="13"
-                                  WordWrap="False"
-                                  Background="Transparent">
-            <i:Interaction.Behaviors>
-                <behaviors:DocumentTextBindingBehavior Text="{Binding Content, Mode=TwoWay}" />
-            </i:Interaction.Behaviors>
-        </AvaloniaEdit:TextEditor>
-    </DockPanel>
+    <AvaloniaEdit:TextEditor Name="Editor"
+                              ShowLineNumbers="True"
+                              FontFamily="Cascadia Code, Consolas, Courier New"
+                              FontSize="13">
+        <i:Interaction.Behaviors>
+            <behaviors:DocumentTextBindingBehavior Text="{ReflectionBinding Content, Mode=TwoWay}" />
+        </i:Interaction.Behaviors>
+    </AvaloniaEdit:TextEditor>
 </UserControl>

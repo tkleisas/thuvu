@@ -11,6 +11,7 @@ namespace thuvu.Desktop.Behaviors;
 public class DocumentTextBindingBehavior : Behavior<TextEditor>
 {
     private TextEditor? _textEditor;
+    private bool _updating;
 
     public static readonly StyledProperty<string> TextProperty =
         AvaloniaProperty.Register<DocumentTextBindingBehavior, string>(
@@ -28,8 +29,7 @@ public class DocumentTextBindingBehavior : Behavior<TextEditor>
         if (AssociatedObject is TextEditor textEditor)
         {
             _textEditor = textEditor;
-            _textEditor.TextChanged += OnTextChanged;
-            this.GetObservable(TextProperty).Subscribe(OnTextPropertyChanged);
+            _textEditor.TextChanged += OnEditorTextChanged;
         }
     }
 
@@ -37,23 +37,33 @@ public class DocumentTextBindingBehavior : Behavior<TextEditor>
     {
         base.OnDetaching();
         if (_textEditor != null)
-            _textEditor.TextChanged -= OnTextChanged;
+            _textEditor.TextChanged -= OnEditorTextChanged;
     }
 
-    private void OnTextChanged(object? sender, EventArgs e)
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
+        base.OnPropertyChanged(change);
+        if (change.Property == TextProperty && !_updating)
+        {
+            _updating = true;
+            var text = change.GetNewValue<string>() ?? "";
+            if (_textEditor?.Document != null)
+            {
+                var caretOffset = _textEditor.CaretOffset;
+                _textEditor.Document.Text = text;
+                if (caretOffset <= text.Length)
+                    _textEditor.CaretOffset = caretOffset;
+            }
+            _updating = false;
+        }
+    }
+
+    private void OnEditorTextChanged(object? sender, EventArgs e)
+    {
+        if (_updating) return;
+        _updating = true;
         if (_textEditor?.Document != null)
             Text = _textEditor.Document.Text;
-    }
-
-    private void OnTextPropertyChanged(string? text)
-    {
-        if (_textEditor?.Document != null && text != null)
-        {
-            var caretOffset = _textEditor.CaretOffset;
-            _textEditor.Document.Text = text;
-            if (caretOffset <= text.Length)
-                _textEditor.CaretOffset = caretOffset;
-        }
+        _updating = false;
     }
 }
