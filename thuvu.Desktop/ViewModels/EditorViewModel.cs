@@ -13,6 +13,23 @@ public partial class EditorViewModel : DocumentViewModel
     [ObservableProperty] private bool _isDirty;
     [ObservableProperty] private string _syntaxHighlighting = "Text";
 
+    public string RelativePath
+    {
+        get
+        {
+            try
+            {
+                var cwd = Directory.GetCurrentDirectory();
+                if (FilePath.StartsWith(cwd, StringComparison.OrdinalIgnoreCase))
+                    return Path.GetRelativePath(cwd, FilePath);
+            }
+            catch { }
+            return FilePath;
+        }
+    }
+
+    partial void OnFilePathChanged(string value) => OnPropertyChanged(nameof(RelativePath));
+
     public EditorViewModel()
     {
         Id = "Editor";
