@@ -226,7 +226,11 @@ namespace thuvu.Tools
 
             // Create indexes on migrated columns (after migrations ensure columns exist)
             await using var indexCmd = conn.CreateCommand();
-            indexCmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_messages_summarized ON messages(is_summarized);";
+            indexCmd.CommandText = @"
+                CREATE INDEX IF NOT EXISTS idx_messages_summarized ON messages(is_summarized);
+                CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
+            ";
             await indexCmd.ExecuteNonQueryAsync(ct);
 
             _initialized = true;
@@ -288,6 +292,34 @@ namespace thuvu.Tools
                 alterCmd.CommandText = "ALTER TABLE sessions ADD COLUMN is_active INTEGER DEFAULT 0;";
                 await alterCmd.ExecuteNonQueryAsync(ct);
                 AgentLogger.LogInfo("Migration: Added is_active column to sessions table");
+            }
+
+            // Migration: Add agent_id column to sessions if missing
+            if (!existingColumns.Contains("agent_id"))
+            {
+                await using var alterCmd = conn.CreateCommand();
+                alterCmd.CommandText = "ALTER TABLE sessions ADD COLUMN agent_id TEXT;";
+                await alterCmd.ExecuteNonQueryAsync(ct);
+                AgentLogger.LogInfo("Migration: Added agent_id column to sessions table");
+            }
+
+            // Migration: Add agent_id column to messages if missing
+            {
+                var msgColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                await using (var pragmaCmd = conn.CreateCommand())
+                {
+                    pragmaCmd.CommandText = "PRAGMA table_info(messages);";
+                    await using var msgReader = await pragmaCmd.ExecuteReaderAsync(ct);
+                    while (await msgReader.ReadAsync(ct))
+                        msgColumns.Add(msgReader.GetString(1));
+                }
+                if (!msgColumns.Contains("agent_id"))
+                {
+                    await using var alterCmd = conn.CreateCommand();
+                    alterCmd.CommandText = "ALTER TABLE messages ADD COLUMN agent_id TEXT;";
+                    await alterCmd.ExecuteNonQueryAsync(ct);
+                    AgentLogger.LogInfo("Migration: Added agent_id column to messages table");
+                }
             }
         }
 
@@ -776,11 +808,12 @@ namespace thuvu.Tools
             await using var cmd = conn.CreateCommand();
 
             cmd.CommandText = @"
-                INSERT INTO sessions (session_id, system_prompt, model_id, agent_role, title, 
+                INSERT INTO sessions (session_id, agent_id, system_prompt, model_id, agent_role, title, 
                                       work_directory, created_at, last_activity_at, metadata_json)
-                VALUES (@session_id, @system_prompt, @model_id, @agent_role, @title,
+                VALUES (@session_id, @agent_id, @system_prompt, @model_id, @agent_role, @title,
                         @work_directory, @created_at, @last_activity_at, @metadata_json)
                 ON CONFLICT(session_id) DO UPDATE SET
+                    agent_id = @agent_id,
                     system_prompt = @system_prompt,
                     model_id = @model_id,
                     agent_role = @agent_role,
@@ -791,6 +824,7 @@ namespace thuvu.Tools
             ";
 
             cmd.Parameters.AddWithValue("@session_id", session.SessionId);
+            cmd.Parameters.AddWithValue("@agent_id", (object?)session.AgentId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@system_prompt", (object?)session.SystemPrompt ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@model_id", (object?)session.ModelId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@agent_role", (object?)session.AgentRole ?? "main");
@@ -814,7 +848,7 @@ namespace thuvu.Tools
 
             cmd.CommandText = @"
                 SELECT session_id, system_prompt, model_id, agent_role, title,
-                       work_directory, created_at, last_activity_at, metadata_json
+                       work_directory, created_at, last_activity_at, metadata_json, agent_id
                 FROM sessions
                 WHERE session_id = @session_id
             ";
@@ -838,7 +872,7 @@ namespace thuvu.Tools
 
             cmd.CommandText = @"
                 SELECT s.session_id, s.system_prompt, s.model_id, s.agent_role, s.title,
-                       s.work_directory, s.created_at, s.last_activity_at, s.metadata_json,
+                       s.work_directory, s.created_at, s.last_activity_at, s.metadata_json, s.agent_id,
                        (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.session_id) as message_count
                 FROM sessions s
                 ORDER BY s.last_activity_at DESC
@@ -851,7 +885,36 @@ namespace thuvu.Tools
             while (await reader.ReadAsync(ct))
             {
                 var session = ReadSession(reader);
-                session.MessageCount = reader.IsDBNull(9) ? 0 : reader.GetInt32(9);
+                session.MessageCount = reader.IsDBNull(10) ? 0 : reader.GetInt32(10);
+                results.Add(session);
+            }
+            return results;
+        }
+
+        /// <summary>
+        /// Get sessions for a specific agent ID, ordered by last activity.
+        /// </summary>
+        public async Task<List<SessionData>> GetSessionsByAgentIdAsync(string agentId, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            await using var cmd = conn.CreateCommand();
+
+            cmd.CommandText = @"
+                SELECT s.session_id, s.system_prompt, s.model_id, s.agent_role, s.title,
+                       s.work_directory, s.created_at, s.last_activity_at, s.metadata_json, s.agent_id,
+                       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.session_id) as message_count
+                FROM sessions s
+                WHERE s.agent_id = @agent_id
+                ORDER BY s.last_activity_at DESC
+            ";
+            cmd.Parameters.AddWithValue("@agent_id", agentId);
+
+            var results = new List<SessionData>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var session = ReadSession(reader);
+                session.MessageCount = reader.IsDBNull(10) ? 0 : reader.GetInt32(10);
                 results.Add(session);
             }
             return results;
@@ -989,7 +1052,8 @@ namespace thuvu.Tools
                 WorkDirectory = reader.IsDBNull(5) ? null : reader.GetString(5),
                 CreatedAt = reader.IsDBNull(6) ? DateTime.Now : DateTime.Parse(reader.GetString(6)),
                 LastActivityAt = reader.IsDBNull(7) ? DateTime.Now : DateTime.Parse(reader.GetString(7)),
-                MetadataJson = reader.IsDBNull(8) ? null : reader.GetString(8)
+                MetadataJson = reader.IsDBNull(8) ? null : reader.GetString(8),
+                AgentId = reader.FieldCount > 9 && !reader.IsDBNull(9) ? reader.GetString(9) : null
             };
         }
 
@@ -1007,14 +1071,14 @@ namespace thuvu.Tools
 
             cmd.CommandText = @"
                 INSERT INTO messages (
-                    session_id, parent_message_id, started_at, agent_role, agent_depth, model_id,
+                    session_id, agent_id, parent_message_id, started_at, agent_role, agent_depth, model_id,
                     system_prompt_id, message_type, request_content, response_content, context_mode, context_token_count,
                     tool_name, tool_args_json, tool_result_json,
                     prompt_tokens, completion_tokens, total_tokens,
                     max_iterations, max_duration_ms, status
                 )
                 VALUES (
-                    @session_id, @parent_message_id, @started_at, @agent_role, @agent_depth, @model_id,
+                    @session_id, @agent_id, @parent_message_id, @started_at, @agent_role, @agent_depth, @model_id,
                     @system_prompt_id, @message_type, @request_content, @response_content, @context_mode, @context_token_count,
                     @tool_name, @tool_args_json, @tool_result_json,
                     @prompt_tokens, @completion_tokens, @total_tokens,
@@ -1024,6 +1088,7 @@ namespace thuvu.Tools
             ";
 
             cmd.Parameters.AddWithValue("@session_id", message.SessionId);
+            cmd.Parameters.AddWithValue("@agent_id", (object?)message.AgentId ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@parent_message_id", message.ParentMessageId.HasValue ? message.ParentMessageId.Value : DBNull.Value);
             cmd.Parameters.AddWithValue("@started_at", message.StartedAt.ToString("o"));
             cmd.Parameters.AddWithValue("@agent_role", (object?)message.AgentRole ?? DBNull.Value);
@@ -1598,6 +1663,7 @@ namespace thuvu.Tools
     public class SessionData
     {
         public string SessionId { get; set; } = "";
+        public string? AgentId { get; set; }
         public string? SystemPrompt { get; set; }
         public string? ModelId { get; set; }
         public string AgentRole { get; set; } = "main";
@@ -1618,6 +1684,7 @@ namespace thuvu.Tools
     {
         public long Id { get; set; }
         public string SessionId { get; set; } = "";
+        public string? AgentId { get; set; }
         public long? ParentMessageId { get; set; }
         
         // Timing

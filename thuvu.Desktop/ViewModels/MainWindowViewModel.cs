@@ -8,6 +8,7 @@ using Dock.Model.Mvvm.Controls;
 using thuvu.Desktop.Models;
 using thuvu.Desktop.Services;
 using thuvu.Models;
+using thuvu.Tools;
 
 namespace thuvu.Desktop.ViewModels;
 
@@ -51,9 +52,15 @@ public partial class MainWindowViewModel : ObservableObject
         _registry = AgentRegistry.Instance;
         _registry.WorkDirectory = _project.ResolvedWorkDirectory;
 
-        // Set up session persistence
-        var sessionStore = new SessionStore(_project.ProjectDirectory);
-        _registry.SessionStore = sessionStore;
+        // Initialize SQLite for session persistence and code indexing
+        var dbDir = Path.Combine(_project.ProjectDirectory, ".db");
+        SqliteConfig.Instance.DatabasePath = Path.Combine(dbDir, "thuvu.db");
+        SqliteConfig.Instance.Enabled = true;
+        _ = Task.Run(async () =>
+        {
+            try { await SqliteService.Instance.InitializeAsync(); }
+            catch (Exception ex) { AgentLogger.LogError("SQLite init failed: {Error}", ex.Message); }
+        });
 
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();
@@ -69,29 +76,42 @@ public partial class MainWindowViewModel : ObservableObject
                 _factory.RemoveDockable(placeholder, false);
         }
 
-        // Try to restore saved sessions
-        var savedIndex = sessionStore.LoadIndex();
+        // Try to restore saved sessions from SQLite
         bool restored = false;
         DesktopAgentService? firstAgent = null;
         ChatViewModel? activeChat = null;
 
-        if (savedIndex != null && savedIndex.Sessions.Count > 0)
+        try
         {
-            foreach (var summary in savedIndex.Sessions)
+            if (SqliteService.Instance != null)
             {
-                var data = sessionStore.LoadSession(summary.Id);
-                if (data == null || data.UiMessages.Count == 0) continue;
+                // Use a dedicated agent_id prefix to find Desktop sessions
+                var sessions = SqliteService.Instance.GetSessionsByAgentIdAsync("desktop")
+                    .GetAwaiter().GetResult();
 
-                var (chatVm, agent) = _registry.RestoreAgent(data);
-                WireAgentToStatusBar(agent);
-                if (docDock != null) _factory.AddDockable(docDock, chatVm);
+                foreach (var session in sessions)
+                {
+                    if (session.MessageCount == 0) continue;
+                    var messages = SqliteService.Instance.GetSessionMessagesAsync(session.SessionId)
+                        .GetAwaiter().GetResult();
+                    if (messages.Count == 0) continue;
 
-                firstAgent ??= agent;
-                if (summary.Id == savedIndex.ActiveSessionId)
-                    activeChat = chatVm;
+                    var (chatVm, agent) = _registry.RestoreAgentFromDb(session, messages);
+                    WireAgentToStatusBar(agent);
+                    if (docDock != null) _factory.AddDockable(docDock, chatVm);
 
-                restored = true;
+                    firstAgent ??= agent;
+                    // Use metadata to track which tab was active
+                    if (session.MetadataJson?.Contains("\"active\":true") == true)
+                        activeChat = chatVm;
+
+                    restored = true;
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.LogError("Failed to restore sessions: {Error}", ex.Message);
         }
 
         // If nothing was restored, create a fresh first chat

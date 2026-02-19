@@ -31,6 +31,9 @@ public class DesktopAgentService
     /// <summary>Working directory for this agent's tools. When set, tools resolve paths relative to this.</summary>
     public string? WorkDirectory { get; set; }
 
+    /// <summary>Session ID for SQLite message recording (set by AgentRegistry)</summary>
+    public string? SessionId { get; set; }
+
     /// <summary>Override model for this agent session. Null = use global default.</summary>
     public string? ModelOverride { get; private set; }
 
@@ -152,6 +155,9 @@ public class DesktopAgentService
 
         _messages.Add(new ChatMessage("user", prompt));
 
+        // Record user message to SQLite
+        RecordMessageAsync(SessionId, "user", requestContent: prompt);
+
         try
         {
             if (!string.IsNullOrEmpty(WorkDirectory))
@@ -163,6 +169,11 @@ public class DesktopAgentService
             {
                 await ExecuteAgentLoopAsync();
             }
+
+            // Record assistant response (last assistant message in the list)
+            var lastAssistant = _messages.LastOrDefault(m => m.Role == "assistant");
+            if (lastAssistant != null)
+                RecordMessageAsync(SessionId, "assistant", responseContent: lastAssistant.Content);
 
             OnComplete?.Invoke();
         }
@@ -185,6 +196,7 @@ public class DesktopAgentService
     private async Task ExecuteAgentLoopAsync()
     {
         var model = EffectiveModel;
+        var sid = SessionId;
         if (AgentConfig.Config.Stream)
         {
             await AgentLoop.CompleteWithToolsStreamingAsync(
@@ -194,10 +206,19 @@ public class DesktopAgentService
                 _tools,
                 _currentCts!.Token,
                 onToolResult: (name, json) => OnToolCall?.Invoke(name, json),
-                onToolComplete: (name, args, res, elapsed) => OnToolComplete?.Invoke(name, args, res, elapsed),
+                onToolComplete: (name, args, res, elapsed) =>
+                {
+                    OnToolComplete?.Invoke(name, args, res, elapsed);
+                    RecordMessageAsync(sid, "tool_call", toolName: name, toolArgs: args,
+                        toolResult: res, durationMs: (long)elapsed.TotalMilliseconds);
+                },
                 onToolCall: (name, args) => OnToolCall?.Invoke(name, args),
                 onToken: token => OnToken?.Invoke(token),
-                onUsage: usage => OnUsage?.Invoke(usage),
+                onUsage: usage =>
+                {
+                    OnUsage?.Invoke(usage);
+                    _lastUsage = usage;
+                },
                 onReasoningToken: token => OnReasoningToken?.Invoke(token)
             );
         }
@@ -210,10 +231,64 @@ public class DesktopAgentService
                 _tools,
                 _currentCts!.Token,
                 onToolResult: (name, json) => OnToolCall?.Invoke(name, json),
-                onToolComplete: (name, args, res, elapsed) => OnToolComplete?.Invoke(name, args, res, elapsed),
+                onToolComplete: (name, args, res, elapsed) =>
+                {
+                    OnToolComplete?.Invoke(name, args, res, elapsed);
+                    RecordMessageAsync(sid, "tool_call", toolName: name, toolArgs: args,
+                        toolResult: res, durationMs: (long)elapsed.TotalMilliseconds);
+                },
                 onToolCall: (name, args) => OnToolCall?.Invoke(name, args)
             );
         }
+    }
+
+    private Usage? _lastUsage;
+
+    /// <summary>Fire-and-forget message recording to SQLite</summary>
+    private void RecordMessageAsync(string? sessionId, string messageType,
+        string? requestContent = null, string? responseContent = null,
+        string? toolName = null, string? toolArgs = null, string? toolResult = null,
+        long durationMs = 0)
+    {
+        if (string.IsNullOrEmpty(sessionId)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var record = new MessageRecord
+                {
+                    SessionId = sessionId,
+                    AgentId = "desktop",
+                    StartedAt = DateTime.Now,
+                    AgentRole = "main",
+                    AgentDepth = 0,
+                    ModelId = EffectiveModel,
+                    MessageType = messageType,
+                    RequestContent = requestContent,
+                    ResponseContent = responseContent,
+                    ToolName = toolName,
+                    ToolArgsJson = toolArgs,
+                    ToolResultJson = toolResult,
+                    PromptTokens = _lastUsage?.PromptTokens,
+                    CompletionTokens = _lastUsage?.CompletionTokens,
+                    TotalTokens = _lastUsage?.TotalTokens,
+                    Status = "completed"
+                };
+                var id = await SqliteService.Instance.StartMessageAsync(record);
+                if (durationMs > 0)
+                {
+                    await SqliteService.Instance.CompleteMessageAsync(id, new MessageCompleteInfo
+                    {
+                        CompletedAt = DateTime.Now,
+                        DurationMs = durationMs,
+                        ToolName = toolName,
+                        ToolArgsJson = toolArgs,
+                        ToolResultJson = toolResult
+                    });
+                }
+            }
+            catch { }
+        });
     }
 
     public void CancelRequest()
@@ -227,6 +302,12 @@ public class DesktopAgentService
         {
             new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt())
         };
+        // Clear messages in DB but keep the session
+        if (!string.IsNullOrEmpty(SessionId))
+        {
+            try { SqliteService.Instance.DeleteSessionMessagesAsync(SessionId).GetAwaiter().GetResult(); }
+            catch { }
+        }
     }
 
     /// <summary>Replace the message history with a previously saved one (for session restore)</summary>

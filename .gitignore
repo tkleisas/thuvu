@@ -367,4 +367,4 @@ FodyWeavers.xsd
 .stream/
 
 # THUVU session state (conversation history)
-.thuvu-sessions/
+.db/
