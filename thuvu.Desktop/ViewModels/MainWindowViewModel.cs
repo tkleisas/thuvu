@@ -56,11 +56,8 @@ public partial class MainWindowViewModel : ObservableObject
         var dbDir = Path.Combine(_project.ProjectDirectory, ".db");
         SqliteConfig.Instance.DatabasePath = Path.Combine(dbDir, "thuvu.db");
         SqliteConfig.Instance.Enabled = true;
-        _ = Task.Run(async () =>
-        {
-            try { await SqliteService.Instance.InitializeAsync(); }
-            catch (Exception ex) { AgentLogger.LogError("SQLite init failed: {Error}", ex.Message); }
-        });
+        try { SqliteService.Instance.InitializeAsync().GetAwaiter().GetResult(); }
+        catch (Exception ex) { AgentLogger.LogError("SQLite init failed: {Error}", ex.Message); }
 
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();
