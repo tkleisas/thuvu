@@ -777,8 +777,19 @@ public partial class ChatViewModel : DocumentViewModel
         CompletionTokens = usage.CompletionTokens;
         TotalTokens = usage.TotalTokens;
 
-        var max = usage.MaxContextLength ?? _maxContextTokens;
-        if (max <= 0) max = 32768; // fallback default
+        // Resolve max context: API response > model config > agent config > fallback
+        var max = usage.MaxContextLength ?? 0;
+        if (max <= 0 && _agentService != null)
+        {
+            var modelId = _agentService.EffectiveModel;
+            var modelEntry = thuvu.Models.ModelRegistry.Instance.GetModel(modelId);
+            if (modelEntry != null && modelEntry.MaxContextLength > 0)
+                max = modelEntry.MaxContextLength;
+        }
+        if (max <= 0 && thuvu.Models.AgentConfig.Config.MaxContextLength > 0)
+            max = thuvu.Models.AgentConfig.Config.MaxContextLength;
+        if (max <= 0) max = _maxContextTokens;
+        if (max <= 0) max = 32768;
         MaxContextTokens = max;
 
         ContextUsagePercent = Math.Min(100.0, (double)usage.PromptTokens / max * 100.0);

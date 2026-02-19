@@ -228,13 +228,27 @@ public partial class MainWindowViewModel : ObservableObject
                 TokenUsageText = $"Tokens: {usage.PromptTokens}↑ {usage.CompletionTokens}↓";
                 if (!string.IsNullOrEmpty(agent.SessionId))
                 {
-                    var max = usage.MaxContextLength ?? 32768;
+                    var max = ResolveMaxContext(agent, usage);
                     var pct = Math.Min(100, (int)(usage.PromptTokens * 100.0 / max));
                     _agentsPanel?.UpdateContextInfo(agent.SessionId,
                         $"ctx: {usage.PromptTokens:N0}/{max:N0} ({pct}%)");
                 }
             });
         };
+    }
+
+    private static int ResolveMaxContext(DesktopAgentService agent, thuvu.Models.Usage usage)
+    {
+        var max = usage.MaxContextLength ?? 0;
+        if (max <= 0)
+        {
+            var entry = thuvu.Models.ModelRegistry.Instance.GetModel(agent.EffectiveModel);
+            if (entry != null && entry.MaxContextLength > 0) max = entry.MaxContextLength;
+        }
+        if (max <= 0 && thuvu.Models.AgentConfig.Config.MaxContextLength > 0)
+            max = thuvu.Models.AgentConfig.Config.MaxContextLength;
+        if (max <= 0) max = 32768;
+        return max;
     }
 
     /// <summary>Get the active chat's agent service</summary>
