@@ -347,6 +347,18 @@ public partial class ChatViewModel : DocumentViewModel
             return true;
         }
 
+        if (trimmed.StartsWith("/plan", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandlePlanCommandAsync(trimmed);
+            return true;
+        }
+
+        if (trimmed.StartsWith("/orchestrate", StringComparison.OrdinalIgnoreCase))
+        {
+            await HandleOrchestrateCommandAsync(trimmed);
+            return true;
+        }
+
         // Unknown slash command - don't send to LLM
         if (!trimmed.Contains(' ') || trimmed.Split(' ')[0].Length < 20)
         {
@@ -355,6 +367,265 @@ public partial class ChatViewModel : DocumentViewModel
         }
 
         return false;
+    }
+
+    private string GetWorkDir() => _agentService?.WorkDirectory ?? AgentConfig.GetWorkDirectory();
+
+    private string GetPlanPath(string? customPath = null)
+    {
+        var workDir = GetWorkDir();
+        if (customPath != null)
+            return Path.IsPathRooted(customPath) ? customPath : Path.Combine(workDir, customPath);
+        return Path.Combine(workDir, "current-plan.json");
+    }
+
+    private async Task HandlePlanCommandAsync(string input)
+    {
+        var parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var subCmd = parts.Length > 1 ? parts[1].ToLowerInvariant() : "";
+
+        if (subCmd == "help" || subCmd == "")
+        {
+            AddSystemMessage("**Plan Command**\n" +
+                "/plan <task description> — Analyze and decompose a task\n" +
+                "/plan show — Show current plan\n" +
+                "/plan load [file] — Load plan from file");
+            return;
+        }
+
+        if (subCmd == "show")
+        {
+            var planPath = GetPlanPath();
+            if (!File.Exists(planPath))
+            {
+                AddSystemMessage("No current plan. Use `/plan <description>` to create one.");
+                return;
+            }
+            var plan = TaskPlan.LoadFromFile(planPath);
+            if (plan == null) { AddSystemMessage("Failed to parse plan file."); return; }
+            AddSystemMessage(FormatPlanSummary(plan));
+            return;
+        }
+
+        if (subCmd == "load")
+        {
+            var file = parts.Length > 2 ? parts[2] : null;
+            var planPath = GetPlanPath(file);
+            if (!File.Exists(planPath)) { AddSystemMessage($"Plan file not found: {planPath}"); return; }
+            var plan = TaskPlan.LoadFromFile(planPath);
+            if (plan == null) { AddSystemMessage("Failed to parse plan file."); return; }
+            AddSystemMessage(FormatPlanSummary(plan));
+            return;
+        }
+
+        // Decompose task
+        var taskDescription = input.Length > 5 ? input[5..].Trim() : "";
+        if (string.IsNullOrWhiteSpace(taskDescription))
+        {
+            AddSystemMessage("Please provide a task description. Use `/plan help` for usage.");
+            return;
+        }
+
+        AddSystemMessage("🔍 Analyzing task and creating decomposition plan...");
+
+        try
+        {
+            // Get codebase context
+            string? codebaseContext = null;
+            var workDir = GetWorkDir();
+            try
+            {
+                var files = Directory.GetFiles(workDir, "*.cs", SearchOption.AllDirectories)
+                    .Take(20).Select(f => Path.GetRelativePath(workDir, f)).ToList();
+                codebaseContext = files.Any()
+                    ? $"Existing project files: {string.Join(", ", files.Take(10))}"
+                    : "Work directory is empty - new project.";
+            }
+            catch { }
+
+            var http = new HttpClient();
+            AgentConfig.ApplyConfig(http);
+            var decomposer = new TaskDecomposer(http);
+            var plan = await decomposer.DecomposeAsync(taskDescription, codebaseContext, CancellationToken.None);
+
+            var jsonPath = GetPlanPath();
+            var mdPath = Path.ChangeExtension(jsonPath, ".md");
+            plan.SaveToFile(jsonPath);
+            plan.SaveToMarkdown(mdPath);
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(FormatPlanSummary(plan));
+            sb.AppendLine();
+            sb.AppendLine($"📁 Plan saved to: `{jsonPath}`");
+            sb.AppendLine($"Use `/orchestrate` to execute this plan.");
+            AddSystemMessage(sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"⚠️ Failed to decompose task: {ex.Message}");
+        }
+    }
+
+    private async Task HandleOrchestrateCommandAsync(string input)
+    {
+        var parts = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        int? maxAgents = null;
+        bool autoMerge = true;
+        string? planFile = null;
+        bool resetProgress = false;
+        bool retryFailed = false;
+
+        for (int i = 1; i < parts.Length; i++)
+        {
+            if (parts[i] == "--agents" && i + 1 < parts.Length && int.TryParse(parts[i + 1], out var n))
+            { maxAgents = Math.Clamp(n, 1, 8); i++; }
+            else if (parts[i] == "--no-merge") autoMerge = false;
+            else if (parts[i] == "--plan" && i + 1 < parts.Length) planFile = parts[++i];
+            else if (parts[i] == "--reset") resetProgress = true;
+            else if (parts[i] == "--retry") retryFailed = true;
+            else if (parts[i] == "help")
+            {
+                AddSystemMessage("**Orchestrate Command**\n" +
+                    "/orchestrate — Execute current plan\n" +
+                    "/orchestrate --agents N — Use N agents (1-8)\n" +
+                    "/orchestrate --plan FILE — Use specific plan file\n" +
+                    "/orchestrate --no-merge — Don't auto-merge branches\n" +
+                    "/orchestrate --reset — Reset all tasks to pending\n" +
+                    "/orchestrate --retry — Retry failed tasks only");
+                return;
+            }
+        }
+
+        var planPath = GetPlanPath(planFile);
+        var workDir = GetWorkDir();
+
+        if (!File.Exists(planPath))
+        {
+            AddSystemMessage($"No plan found at `{planPath}`. Use `/plan <description>` to create one.");
+            return;
+        }
+
+        TaskPlan? plan;
+        try
+        {
+            plan = TaskPlan.LoadFromFile(planPath);
+            if (plan == null) { AddSystemMessage("Failed to load plan file."); return; }
+        }
+        catch (Exception ex) { AddSystemMessage($"⚠️ Error loading plan: {ex.Message}"); return; }
+
+        // Handle reset/retry
+        if (resetProgress)
+        {
+            foreach (var task in plan.SubTasks)
+            {
+                task.Status = SubTaskStatus.Pending;
+                task.AssignedAgentId = null;
+            }
+            plan.SaveToFile(planPath);
+            AddSystemMessage("Reset all task statuses to Pending.");
+        }
+        else if (retryFailed)
+        {
+            int resetCount = plan.ResetFailedTasks();
+            plan.SaveToFile(planPath);
+            AddSystemMessage(resetCount > 0
+                ? $"Reset {resetCount} failed/blocked task(s) to Pending."
+                : "No tasks to retry.");
+        }
+
+        var (pending, completed, failed, blocked, inProgress) = plan.GetStatusCounts();
+
+        if (!plan.CanMakeProgress())
+        {
+            AddSystemMessage($"Cannot make progress: no tasks ready.\n" +
+                $"Pending: {pending}, Completed: {completed}, Failed: {failed}, Blocked: {blocked}\n" +
+                $"Use `--retry` or `--reset` to reset tasks.");
+            return;
+        }
+
+        var config = new OrchestratorConfig
+        {
+            MaxAgents = maxAgents ?? plan.RecommendedAgentCount,
+            AutoMergeResults = autoMerge,
+            UseProcessIsolation = false
+        };
+
+        bool isResume = completed > 0 || failed > 0;
+        AddSystemMessage($"🚀 {(isResume ? "Resuming" : "Starting")} orchestration with {config.MaxAgents} agent(s)...\n" +
+            $"Plan: {plan.Summary}\nRemaining: {pending} tasks\nWork dir: `{workDir}`");
+
+        var http = new HttpClient();
+        AgentConfig.ApplyConfig(http);
+        using var orchestrator = new TaskOrchestrator(http, config, workDir);
+
+        orchestrator.OnAgentStarted += (agentId, taskId) =>
+            Dispatcher.UIThread.Post(() =>
+                AddSystemMessage($"[{agentId}] Starting task {taskId}..."));
+
+        orchestrator.OnTaskCompleted += (agentId, result) =>
+        {
+            var task = plan.SubTasks.FirstOrDefault(t => t.Id == result.TaskId);
+            if (task != null)
+            {
+                task.Status = result.Success ? SubTaskStatus.Completed : SubTaskStatus.Failed;
+                task.AssignedAgentId = agentId;
+                try { plan.SaveToFile(planPath); } catch { }
+            }
+            Dispatcher.UIThread.Post(() =>
+            {
+                var icon = result.Success ? "✅" : "❌";
+                AddSystemMessage($"{icon} [{agentId}] Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)");
+            });
+        };
+
+        orchestrator.OnPhaseCompleted += phase =>
+            Dispatcher.UIThread.Post(() =>
+                AddSystemMessage($"── {phase} completed ──"));
+
+        try
+        {
+            var result = await orchestrator.ExecutePlanAsync(plan, CancellationToken.None);
+            plan.SaveToFile(planPath);
+            plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
+
+            AddSystemMessage(result.Success
+                ? $"✅ Orchestration completed in {result.Duration.TotalMinutes:F1} minutes."
+                : $"⚠️ Orchestration failed: {result.Error}");
+        }
+        catch (OperationCanceledException)
+        {
+            plan.SaveToFile(planPath);
+            AddSystemMessage("Orchestration cancelled. Progress saved.");
+        }
+        catch (Exception ex)
+        {
+            AddSystemMessage($"⚠️ Orchestration failed: {ex.Message}");
+        }
+    }
+
+    private static string FormatPlanSummary(TaskPlan plan)
+    {
+        var (pending, completed, failed, blocked, inProgress) = plan.GetStatusCounts();
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"**Plan: {plan.Summary}**");
+        sb.AppendLine($"Tasks: {plan.SubTasks.Count} | Agents: {plan.RecommendedAgentCount} | Est: {plan.TotalEstimatedMinutes} min");
+        sb.AppendLine($"Status: ✅{completed} ⏳{pending} 🔄{inProgress} ❌{failed} 🚫{blocked}");
+        sb.AppendLine();
+        foreach (var task in plan.SubTasks)
+        {
+            var icon = task.Status switch
+            {
+                SubTaskStatus.Completed => "✅",
+                SubTaskStatus.Failed => "❌",
+                SubTaskStatus.InProgress => "🔄",
+                SubTaskStatus.Blocked => "🚫",
+                _ => "⬜"
+            };
+            sb.AppendLine($"{icon} **{task.Id}**: {task.Title}");
+            if (!string.IsNullOrEmpty(task.Description))
+                sb.AppendLine($"   {task.Description}");
+        }
+        return sb.ToString().TrimEnd();
     }
 
     private void AddSystemMessage(string content)
