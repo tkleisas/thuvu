@@ -1,71 +1,180 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:thuvu.Desktop.ViewModels"
         x:Class="thuvu.Desktop.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
         Title="Settings — T.H.U.V.U."
-        Width="600" Height="500"
+        Width="750" Height="600"
         WindowStartupLocation="CenterOwner"
         CanResize="True">
 
-    <TabControl Margin="12">
-        <!-- Providers Tab -->
-        <TabItem Header="🔌 Providers">
-            <ScrollViewer Padding="12">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="LLM Providers" FontSize="16" FontWeight="Bold" />
-                    
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Host URL" FontWeight="SemiBold" />
-                        <TextBox Name="HostUrlBox" Watermark="http://127.0.0.1:1234" />
+    <DockPanel Margin="12">
+        <!-- Bottom: Save button -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Spacing="8" Margin="0,12,0,0">
+            <TextBlock Text="✓ Saved" Foreground="Green" FontWeight="SemiBold"
+                       VerticalAlignment="Center" IsVisible="{Binding Saved}" />
+            <Button Content="Save" Command="{Binding SaveCommand}" Classes="accent"
+                    Padding="24,8" FontWeight="SemiBold" />
+        </StackPanel>
+
+        <TabControl>
+            <!-- Providers Tab -->
+            <TabItem Header="🔌 Providers">
+                <Grid ColumnDefinitions="220,12,*" Margin="0,8,0,0">
+                    <!-- Provider list -->
+                    <DockPanel Grid.Column="0">
+                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="4" Margin="0,8,0,0">
+                            <Button Content="➕ Add" Command="{Binding AddProviderCommand}" Padding="8,4" />
+                            <Button Content="📋 Dup" Command="{Binding DuplicateProviderCommand}" Padding="8,4" />
+                            <Button Content="🗑 Remove" Command="{Binding RemoveProviderCommand}" Padding="8,4" />
+                        </StackPanel>
+                        <ListBox ItemsSource="{Binding Providers}"
+                                 SelectedItem="{Binding SelectedProvider}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="vm:ProviderViewModel">
+                                    <StackPanel Spacing="1" Margin="2">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12" />
+                                        <TextBlock Text="{Binding HostUrl}" FontSize="10" Foreground="Gray" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+
+                    <GridSplitter Grid.Column="1" Width="1" Background="Gray" ResizeDirection="Columns" />
+
+                    <!-- Provider detail editor -->
+                    <ScrollViewer Grid.Column="2" IsVisible="{Binding SelectedProvider, Converter={x:Static ObjectConverters.IsNotNull}}">
+                        <StackPanel Spacing="10" Margin="8,0,0,0"
+                                    DataContext="{Binding SelectedProvider}">
+                            <TextBlock Text="Provider Details" FontSize="15" FontWeight="Bold" />
+
+                            <CheckBox Content="Enabled" IsChecked="{Binding Enabled}" />
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Display Name" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding DisplayName}" Watermark="My Provider" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Model ID" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding ModelId}" Watermark="qwen/qwen3-coder-30b" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Host URL" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding HostUrl}" Watermark="http://127.0.0.1:1234" />
+                            </StackPanel>
+
+                            <Separator Margin="0,4" />
+                            <TextBlock Text="Authentication" FontSize="13" FontWeight="SemiBold" />
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="API Key / Auth Token" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding AuthToken}" Watermark="sk-..." PasswordChar="•"
+                                         RevealPassword="False" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Auth Scheme" FontWeight="SemiBold" FontSize="12" />
+                                <TextBox Text="{Binding AuthScheme}" Watermark="Bearer" />
+                            </StackPanel>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Chat Completions Path (blank = default v1/chat/completions)" FontSize="12" />
+                                <TextBox Text="{Binding ChatCompletionsPath}" Watermark="v1/chat/completions" />
+                            </StackPanel>
+
+                            <Separator Margin="0,4" />
+                            <TextBlock Text="Model Capabilities" FontSize="13" FontWeight="SemiBold" />
+
+                            <WrapPanel Orientation="Horizontal">
+                                <CheckBox Content="Local" IsChecked="{Binding IsLocal}" Margin="0,0,12,0" />
+                                <CheckBox Content="Streaming" IsChecked="{Binding Stream}" Margin="0,0,12,0" />
+                                <CheckBox Content="Tool Calling" IsChecked="{Binding SupportsTools}" Margin="0,0,12,0" />
+                                <CheckBox Content="Vision" IsChecked="{Binding SupportsVision}" Margin="0,0,12,0" />
+                                <CheckBox Content="Thinking Model" IsChecked="{Binding IsThinkingModel}" />
+                            </WrapPanel>
+
+                            <Grid ColumnDefinitions="*,12,*" RowDefinitions="Auto,Auto,Auto" Margin="0,4,0,0">
+                                <StackPanel Grid.Row="0" Grid.Column="0" Spacing="4">
+                                    <TextBlock Text="Max Context Length" FontSize="12" />
+                                    <NumericUpDown Value="{Binding MaxContextLength}" Minimum="0" Maximum="2000000"
+                                                   Increment="1024" FormatString="N0" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="0" Grid.Column="2" Spacing="4">
+                                    <TextBlock Text="Max Output Tokens" FontSize="12" />
+                                    <NumericUpDown Value="{Binding MaxOutputTokens}" Minimum="0" Maximum="1000000"
+                                                   Increment="256" FormatString="N0" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="0" Spacing="4" Margin="0,8,0,0">
+                                    <TextBlock Text="Temperature" FontSize="12" />
+                                    <NumericUpDown Value="{Binding Temperature}" Minimum="0" Maximum="2"
+                                                   Increment="0.1" FormatString="F1" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="1" Grid.Column="2" Spacing="4" Margin="0,8,0,0">
+                                    <TextBlock Text="Timeout (minutes)" FontSize="12" />
+                                    <NumericUpDown Value="{Binding TimeoutMinutes}" Minimum="1" Maximum="1440"
+                                                   Increment="5" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- No selection placeholder -->
+                    <TextBlock Grid.Column="2" Text="Select a provider to edit"
+                               VerticalAlignment="Center" HorizontalAlignment="Center"
+                               Foreground="Gray" FontStyle="Italic"
+                               IsVisible="{Binding SelectedProvider, Converter={x:Static ObjectConverters.IsNull}}" />
+                </Grid>
+            </TabItem>
+
+            <!-- Agent Tab -->
+            <TabItem Header="🤖 Agent">
+                <ScrollViewer Padding="12">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Agent Configuration" FontSize="16" FontWeight="Bold" />
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Default Model ID" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding DefaultModelId}" Watermark="model-id from providers list" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Work Directory" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding WorkDirectory}" Watermark="./work" />
+                        </StackPanel>
+
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Max Iterations" FontWeight="SemiBold" />
+                                <NumericUpDown Value="{Binding MaxIterations}" Minimum="1" Maximum="200"
+                                               Increment="1" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Process Timeout (seconds)" FontWeight="SemiBold" />
+                                <NumericUpDown Value="{Binding TimeoutSeconds}" Minimum="10" Maximum="36000"
+                                               Increment="10" />
+                            </StackPanel>
+                        </Grid>
+
+                        <CheckBox Content="Enable Streaming" IsChecked="{Binding Streaming}" />
+                        <CheckBox Content="Auto-Approve Tool Calls" IsChecked="{Binding AutoApproveTools}" />
                     </StackPanel>
+                </ScrollViewer>
+            </TabItem>
 
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Model ID" FontWeight="SemiBold" />
-                        <TextBox Name="ModelIdBox" Watermark="qwen/qwen3-coder-30b" />
+            <!-- Features Tab -->
+            <TabItem Header="✨ Features">
+                <ScrollViewer Padding="12">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Feature Toggles" FontSize="16" FontWeight="Bold" />
+                        <CheckBox Content="MCP Code Execution (Deno Sandbox)" IsChecked="{Binding McpEnabled}" />
+                        <CheckBox Content="RAG Vector Search (PostgreSQL/pgvector)" IsChecked="{Binding RagEnabled}" />
                     </StackPanel>
-
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Max Context Length" FontWeight="SemiBold" />
-                        <NumericUpDown Name="ContextLengthBox" Minimum="1024" Maximum="1000000"
-                                       Increment="1024" Value="32768" />
-                    </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
-        </TabItem>
-
-        <!-- Agent Tab -->
-        <TabItem Header="🤖 Agent">
-            <ScrollViewer Padding="12">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="Agent Configuration" FontSize="16" FontWeight="Bold" />
-
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Max Iterations" FontWeight="SemiBold" />
-                        <NumericUpDown Name="MaxIterationsBox" Minimum="1" Maximum="200"
-                                       Increment="1" Value="50" />
-                    </StackPanel>
-
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Process Timeout (seconds)" FontWeight="SemiBold" />
-                        <NumericUpDown Name="TimeoutBox" Minimum="10" Maximum="36000"
-                                       Increment="10" Value="1800" />
-                    </StackPanel>
-
-                    <CheckBox Name="StreamingCheckBox" Content="Enable Streaming" IsChecked="True" />
-                    <CheckBox Name="AutoApproveCheckBox" Content="Auto-Approve Tool Calls" IsChecked="False" />
-                </StackPanel>
-            </ScrollViewer>
-        </TabItem>
-
-        <!-- Features Tab -->
-        <TabItem Header="✨ Features">
-            <ScrollViewer Padding="12">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="Feature Toggles" FontSize="16" FontWeight="Bold" />
-                    <CheckBox Name="McpCheckBox" Content="MCP Code Execution (Deno Sandbox)" />
-                    <CheckBox Name="RagCheckBox" Content="RAG Vector Search (PostgreSQL/pgvector)" />
-                    <CheckBox Name="BrowserCheckBox" Content="Browser Tools" IsChecked="True" IsEnabled="False" />
-                </StackPanel>
-            </ScrollViewer>
-        </TabItem>
-    </TabControl>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
 </Window>
