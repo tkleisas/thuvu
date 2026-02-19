@@ -32,25 +32,52 @@
         <!-- Input Area -->
         <Border DockPanel.Dock="Bottom" Padding="8" BorderThickness="0,1,0,0"
                 BorderBrush="{DynamicResource SystemBaseMediumColor}">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Bottom">
-                    <Button Content="Send" Command="{Binding SendMessageCommand}"
-                            Classes="accent" Padding="16,8" />
-                    <Button Content="Cancel" Command="{Binding CancelRequestCommand}"
-                            IsVisible="{Binding IsProcessing}" Padding="16,8" />
-                </StackPanel>
-                <TextBox Name="InputBox"
-                         Text="{Binding InputText}"
-                         Watermark="Type a message or /command... (Enter to send, Shift+Enter for newline)"
-                         AcceptsReturn="True"
-                         MinHeight="60" MaxHeight="150"
-                         TextWrapping="Wrap"
-                         Margin="0,0,8,0" />
-            </DockPanel>
+            <Panel>
+                <!-- Slash command autocomplete popup -->
+                <Popup x:Name="CommandPopup" PlacementTarget="{Binding #InputBox}"
+                       Placement="Top" IsOpen="False" MaxHeight="250" MinWidth="300"
+                       IsLightDismissEnabled="True">
+                    <Border Background="{DynamicResource SystemChromeMediumColor}"
+                            BorderBrush="{DynamicResource SystemBaseMediumColor}"
+                            BorderThickness="1" CornerRadius="6" Padding="4">
+                        <ListBox x:Name="CommandList" MaxHeight="230"
+                                 SelectionMode="Single" Background="Transparent">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel Margin="4,2">
+                                        <TextBlock DockPanel.Dock="Left" Text="{Binding Icon}" FontSize="14"
+                                                   VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding Command}" FontWeight="SemiBold" FontSize="12" />
+                                            <TextBlock Text="{Binding Description}" FontSize="10" Foreground="Gray" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </Popup>
+
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Bottom">
+                        <Button Content="Send" Command="{Binding SendMessageCommand}"
+                                Classes="accent" Padding="16,8" />
+                        <Button Content="Cancel" Command="{Binding CancelRequestCommand}"
+                                IsVisible="{Binding IsProcessing}" Padding="16,8" />
+                    </StackPanel>
+                    <TextBox Name="InputBox"
+                             Text="{Binding InputText}"
+                             Watermark="Type a message or /command... (Enter to send, Shift+Enter for newline)"
+                             AcceptsReturn="True"
+                             MinHeight="60" MaxHeight="150"
+                             TextWrapping="Wrap"
+                             Margin="0,0,8,0" />
+                </DockPanel>
+            </Panel>
         </Border>
 
         <!-- Messages Area -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ScrollViewer x:Name="MessagesScroller" VerticalScrollBarVisibility="Auto">
             <ItemsControl ItemsSource="{Binding Messages}" Padding="8">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="vm:ChatMessageViewModel">
@@ -67,9 +94,23 @@
                                     <Panel />
                                 </DockPanel>
 
+                                <!-- Thinking/reasoning content (collapsible) -->
+                                <Expander IsVisible="{Binding ThinkingContent, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                          Header="💭 Thinking..." Padding="0" Margin="0,2,0,4"
+                                          IsExpanded="{Binding ShowThinking}">
+                                    <Border Background="#15FFFFFF" CornerRadius="4" Padding="8" MaxHeight="200">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                            <SelectableTextBlock Text="{Binding ThinkingContent}" TextWrapping="Wrap"
+                                                                 FontSize="11" Foreground="Gray" FontStyle="Italic" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Expander>
+
                                 <!-- Markdown for assistant messages -->
                                 <md:MarkdownScrollViewer Markdown="{Binding Content}"
-                                    IsVisible="{Binding Role, Converter={x:Static views:ChatView.IsAssistantConverter}}" />
+                                    MarkdownStyleName="FluentTheme"
+                                    IsVisible="{Binding Role, Converter={x:Static views:ChatView.IsAssistantConverter}}"
+                                    SaveScrollValueWhenContentUpdated="False" />
 
                                 <!-- Plain text for user/tool messages -->
                                 <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"

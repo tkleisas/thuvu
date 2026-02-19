@@ -18,6 +18,23 @@ public partial class EditorView : UserControl
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttachedToVisualTree;
+        KeyDown += OnKeyDown;
+    }
+
+    private async void OnKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
+    {
+        if (e.Key == Avalonia.Input.Key.S && e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control))
+        {
+            e.Handled = true;
+            if (DataContext is EditorViewModel vm)
+            {
+                // Sync editor text to ViewModel before saving
+                var editor = this.FindControl<TextEditor>("Editor");
+                if (editor != null)
+                    vm.Content = editor.Document.Text;
+                await vm.SaveFileCommand.ExecuteAsync(null);
+            }
+        }
     }
 
     private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
