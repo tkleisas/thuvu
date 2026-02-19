@@ -362,3 +362,6 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /temp_build
+
+# THUVU debug stream logs
+.stream/

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using thuvu.Models;
 using thuvu.Tools;
 
@@ -47,14 +48,14 @@ public class DesktopAgentService
         if (endpoint != null && !string.IsNullOrEmpty(endpoint.HostUrl))
         {
             _http.Dispose();
-            _http = CreateHttpClientForEndpoint(endpoint);
+            _http = CreateHttpClientWithLoggingForEndpoint(endpoint);
         }
     }
 
     public DesktopAgentService()
     {
         AgentConfig.LoadConfig();
-        _http = CreateHttpClient();
+        _http = CreateHttpClientWithLogging();
         _tools = BuildTools.GetToolsForSession();
         _messages = new List<ChatMessage>
         {
@@ -109,20 +110,30 @@ public class DesktopAgentService
     {
         if (IsProcessing) return;
         _http.Dispose();
-        _http = CreateHttpClient();
+        _http = CreateHttpClientWithLogging();
         OnConfigReloaded?.Invoke();
     }
 
-    private static HttpClient CreateHttpClient()
+    private string? GetStreamLogDir()
     {
-        var client = new HttpClient();
+        if (string.IsNullOrEmpty(WorkDirectory)) return null;
+        return Path.Combine(WorkDirectory, ".stream");
+    }
+
+    private HttpClient CreateHttpClientWithLogging()
+    {
+        var inner = new HttpClientHandler();
+        var handler = new StreamLogHandler(GetStreamLogDir, inner);
+        var client = new HttpClient(handler);
         AgentConfig.ApplyConfig(client);
         return client;
     }
 
-    private static HttpClient CreateHttpClientForEndpoint(ModelEndpoint endpoint)
+    private HttpClient CreateHttpClientWithLoggingForEndpoint(ModelEndpoint endpoint)
     {
-        var client = new HttpClient();
+        var inner = new HttpClientHandler();
+        var handler = new StreamLogHandler(GetStreamLogDir, inner);
+        var client = new HttpClient(handler);
         client.BaseAddress = new Uri(endpoint.HostUrl.TrimEnd('/') + "/");
         client.Timeout = TimeSpan.FromMinutes(endpoint.TimeoutMinutes > 0 ? endpoint.TimeoutMinutes : 60);
         if (!string.IsNullOrEmpty(endpoint.AuthToken))
@@ -220,4 +231,76 @@ public class DesktopAgentService
 
     public string GetModelName() => AgentConfig.Config.Model;
     public string GetHostUrl() => AgentConfig.Config.HostUrl;
+
+    /// <summary>
+    /// DelegatingHandler that logs full HTTP request/response bodies to .stream/ directory.
+    /// </summary>
+    private class StreamLogHandler : DelegatingHandler
+    {
+        private readonly Func<string?> _getLogDir;
+        private int _requestCounter;
+
+        public StreamLogHandler(Func<string?> getLogDir, HttpMessageHandler inner) : base(inner)
+        {
+            _getLogDir = getLogDir;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var logDir = _getLogDir();
+            if (string.IsNullOrEmpty(logDir))
+                return await base.SendAsync(request, cancellationToken);
+
+            Directory.CreateDirectory(logDir);
+            var seq = Interlocked.Increment(ref _requestCounter);
+            var timestamp = DateTime.Now.ToString("HHmmss_fff");
+            var prefix = Path.Combine(logDir, $"{timestamp}_{seq:D4}");
+
+            // Log request
+            string? requestBody = null;
+            if (request.Content != null)
+            {
+                requestBody = await request.Content.ReadAsStringAsync(cancellationToken);
+                await File.WriteAllTextAsync($"{prefix}_request.json", FormatJson(requestBody), cancellationToken);
+                // Re-create content since it was consumed
+                request.Content = new StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
+            }
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await base.SendAsync(request, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                await File.WriteAllTextAsync($"{prefix}_error.txt",
+                    $"Exception: {ex.GetType().Name}\n{ex.Message}\n\n{ex.StackTrace}", cancellationToken);
+                throw;
+            }
+
+            // Log response
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            var logContent = $"HTTP {(int)response.StatusCode} {response.StatusCode}\n\n{FormatJson(responseBody)}";
+            await File.WriteAllTextAsync($"{prefix}_response.json", logContent, cancellationToken);
+
+            // Response body was consumed, create a new response with the same content
+            var newContent = new StringContent(responseBody, System.Text.Encoding.UTF8, response.Content.Headers.ContentType?.MediaType ?? "application/json");
+            response.Content = newContent;
+
+            return response;
+        }
+
+        private static string FormatJson(string json)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                return JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
+            }
+            catch
+            {
+                return json;
+            }
+        }
+    }
 }
