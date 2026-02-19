@@ -1,14 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using thuvu.Models;
-using System.Buffers;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+using thuvu.Models;
 namespace thuvu
 {
 
@@ -89,15 +87,12 @@ namespace thuvu
             if (req.Tools != null)
             {
                 var toolNames = req.Tools.Select(t => t.Function?.Name ?? "?").ToList();
-                Console.WriteLine($"[StreamResult] Sending {toolNames.Count} tools: {string.Join(", ", toolNames)}");
+                SessionLogger.Instance.LogInfo($"[StreamResult] Sending {toolNames.Count} tools: {string.Join(", ", toolNames)}");
             }
 
             void LogStream(string msg) 
             {
-                var logLine = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
-                System.Diagnostics.Debug.WriteLine(logLine);
-                Console.WriteLine($"[StreamResult] {msg}");
-                try { File.AppendAllText("stream_debug.log", logLine + Environment.NewLine); } catch { }
+                SessionLogger.Instance.LogInfo($"[StreamResult] {msg}");
             }
             
             LogStream($"Sending HTTP POST request to BaseAddress={http.BaseAddress}, Model={streamingReq.model}");
@@ -133,9 +128,7 @@ namespace thuvu
                 throw new InvalidOperationException($"API returned HTML instead of JSON. Response: {rawResponse.Substring(0, Math.Min(500, rawResponse.Length))}");
             }
 
-            LogStream("Processing response as SSE stream...");
             using var reader = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawResponse)));
-            LogStream("Stream reader created");
 
             var sbContent = new StringBuilder();
             var sbReasoning = new StringBuilder(); // For thinking model reasoning_content
@@ -146,8 +139,6 @@ namespace thuvu
 
             string? line;
             Usage? usage = null;
-            
-            LogStream("Starting stream read loop");
             
             while (true)
             {
@@ -189,22 +180,15 @@ namespace thuvu
                 }
                 
                 if (line is null)
-                {
-                    LogStream("Line is null - end of stream");
                     break; // End of stream
-                }
 
                 if (line.Length == 0) continue; // SSE event delimiter
                 if (line.StartsWith("data: ") is false) continue;
 
                 var payload = line.AsSpan(6).Trim().ToString();
-                LogStream($"Payload: {payload}");
                 
                 if (payload == "[DONE]")
-                {
-                    LogStream("Received [DONE]");
                     break;
-                }
 
                 using var doc = JsonDocument.Parse(payload);
                 var root = doc.RootElement;
@@ -218,7 +202,6 @@ namespace thuvu
                     usage = JsonSerializer.Deserialize<Usage>(usageEl.GetRawText());
                     if(usage!=null) 
                     {
-                        LogStream($"Got usage: prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
                         onUsage?.Invoke(usage);
                     }
                 }
@@ -226,7 +209,6 @@ namespace thuvu
                 if (choice.TryGetProperty("finish_reason", out var fr) && fr.ValueKind == JsonValueKind.String)
                 {
                     finishReason = fr.GetString();
-                    LogStream($"Got finish_reason: {finishReason}");
                     // If we have a finish reason like "stop" or "tool_calls", we should exit soon
                     // But first process any remaining delta content in this message
                 }
@@ -288,13 +270,10 @@ namespace thuvu
                 
                 // If we received a finish_reason, exit the loop after processing this delta
                 if (!string.IsNullOrEmpty(finishReason))
-                {
-                    LogStream($"Breaking due to finish_reason: {finishReason}");
                     break;
-                }
             }
             
-            LogStream($"Exited loop, content length={sbContent.Length}, toolBuilders={toolBuilders.Count}");
+            LogStream($"Stream completed: content={sbContent.Length} chars, toolCalls={toolBuilders.Count}, finish={finishReason}");
 
             // Build final ToolCalls if any
             List<ToolCall>? toolCalls = null;

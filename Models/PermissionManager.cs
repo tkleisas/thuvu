@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -21,7 +22,7 @@ namespace thuvu.Models
 
     public sealed class PermissionManager
     {
-        private static readonly Dictionary<string, PermissionScope> SessionPermissions = new();
+        private static readonly ConcurrentDictionary<string, PermissionScope> SessionPermissions = new();
         private static string? _currentRepoPath;
         
         /// <summary>

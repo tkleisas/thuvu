@@ -22,9 +22,7 @@ namespace thuvu
         
         private static void LogAgent(string msg)
         {
-            var logLine = $"[{DateTime.Now:HH:mm:ss.fff}] [AGENT] {msg}";
-            System.Diagnostics.Debug.WriteLine(logLine);
-            try { File.AppendAllText("stream_debug.log", logLine + Environment.NewLine); } catch { }
+            SessionLogger.Instance.LogInfo($"[AGENT] {msg}");
         }
 
         // Loop detection settings
