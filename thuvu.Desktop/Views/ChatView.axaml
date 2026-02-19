@@ -58,6 +58,29 @@
                     </Border>
                 </Popup>
 
+                <!-- File autocomplete popup (@) -->
+                <Popup x:Name="FilePopup" PlacementTarget="{Binding #InputBox}"
+                       Placement="Top" IsOpen="False" MaxHeight="300" MinWidth="350"
+                       IsLightDismissEnabled="True">
+                    <Border Background="{DynamicResource SystemChromeMediumColor}"
+                            BorderBrush="{DynamicResource SystemBaseMediumColor}"
+                            BorderThickness="1" CornerRadius="6" Padding="4">
+                        <ListBox x:Name="FileList" MaxHeight="280"
+                                 SelectionMode="Single" Background="Transparent">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <DockPanel Margin="4,2">
+                                        <TextBlock DockPanel.Dock="Left" Text="{ReflectionBinding Icon}" FontSize="14"
+                                                   VerticalAlignment="Center" Margin="0,0,8,0" />
+                                        <TextBlock Text="{ReflectionBinding RelativePath}" FontSize="12"
+                                                   VerticalAlignment="Center" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                </Popup>
+
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Bottom">
                         <Button Content="Send" Command="{Binding SendMessageCommand}"
@@ -67,7 +90,7 @@
                     </StackPanel>
                     <TextBox Name="InputBox"
                              Text="{Binding InputText}"
-                             Watermark="Type a message or /command... (Enter to send, Shift+Enter for newline)"
+                             Watermark="Type a message, /command, or @file... (Enter to send, Shift+Enter for newline)"
                              AcceptsReturn="True"
                              MinHeight="60" MaxHeight="150"
                              TextWrapping="Wrap"

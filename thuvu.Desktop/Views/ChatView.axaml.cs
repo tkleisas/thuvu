@@ -13,6 +13,7 @@ using thuvu.Desktop.ViewModels;
 namespace thuvu.Desktop.Views;
 
 public record SlashCommand(string Command, string Icon, string Description);
+public record FileEntry(string RelativePath, string Icon, string FullPath);
 
 public partial class ChatView : UserControl
 {
@@ -54,8 +55,20 @@ public partial class ChatView : UserControl
     ];
 
     private readonly ObservableCollection<SlashCommand> _filteredCommands = new();
+    private readonly ObservableCollection<FileEntry> _filteredFiles = new();
     private Popup? _commandPopup;
     private ListBox? _commandList;
+    private Popup? _filePopup;
+    private ListBox? _fileList;
+
+    // Track @ trigger position in text
+    private int _atTriggerIndex = -1;
+
+    private static readonly HashSet<string> _excludedDirs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bin", "obj", "node_modules", ".git", ".vs", ".idea", "packages",
+        "TestResults", "wwwroot\\lib", "dist", "build", ".thuvu"
+    };
 
     public ChatView()
     {
@@ -72,6 +85,14 @@ public partial class ChatView : UserControl
         {
             _commandList.ItemsSource = _filteredCommands;
             _commandList.DoubleTapped += CommandList_DoubleTapped;
+        }
+
+        _filePopup = this.FindControl<Popup>("FilePopup");
+        _fileList = this.FindControl<ListBox>("FileList");
+        if (_fileList != null)
+        {
+            _fileList.ItemsSource = _filteredFiles;
+            _fileList.DoubleTapped += FileList_DoubleTapped;
         }
 
         AttachedToVisualTree += OnAttachedToVisualTree;
@@ -105,6 +126,34 @@ public partial class ChatView : UserControl
     {
         if (sender is not TextBox tb) return;
         var text = tb.Text ?? "";
+        var caretPos = tb.CaretIndex;
+
+        // Check for @ file trigger at caret position
+        var atIndex = FindAtTrigger(text, caretPos);
+        if (atIndex >= 0)
+        {
+            _atTriggerIndex = atIndex;
+            var partial = text[(atIndex + 1)..caretPos];
+            UpdateFileSuggestions(partial);
+
+            if (_filteredFiles.Count > 0 && _filePopup != null)
+            {
+                _filePopup.IsOpen = true;
+                _fileList?.ScrollIntoView(_filteredFiles[0]);
+                if (_fileList != null) _fileList.SelectedIndex = 0;
+            }
+            else if (_filePopup != null)
+            {
+                _filePopup.IsOpen = false;
+            }
+
+            // Close command popup if open
+            if (_commandPopup != null) _commandPopup.IsOpen = false;
+            return;
+        }
+
+        _atTriggerIndex = -1;
+        if (_filePopup != null) _filePopup.IsOpen = false;
 
         // Show popup when text starts with / and is a single line
         if (text.StartsWith("/") && !text.Contains('\n'))
@@ -133,6 +182,102 @@ public partial class ChatView : UserControl
         }
     }
 
+    /// <summary>Find the @ trigger position relative to caret. Returns -1 if not in @ context.</summary>
+    private static int FindAtTrigger(string text, int caretPos)
+    {
+        // Search backward from caret for @
+        for (int i = caretPos - 1; i >= 0; i--)
+        {
+            var ch = text[i];
+            if (ch == '@')
+            {
+                // @ must be at start or preceded by whitespace
+                if (i == 0 || char.IsWhiteSpace(text[i - 1]))
+                    return i;
+                return -1;
+            }
+            // Stop searching if we hit whitespace (the @ isn't in current word)
+            if (ch == '\n' || ch == '\r')
+                return -1;
+        }
+        return -1;
+    }
+
+    private void UpdateFileSuggestions(string partial)
+    {
+        _filteredFiles.Clear();
+        var workDir = (DataContext as ChatViewModel)?.AgentService?.WorkDirectory;
+        if (string.IsNullOrEmpty(workDir) || !Directory.Exists(workDir)) return;
+
+        // Normalize partial path separators
+        var searchPartial = partial.Replace('/', Path.DirectorySeparatorChar);
+
+        try
+        {
+            var files = EnumerateProjectFiles(workDir, 3)
+                .Where(f => f.Contains(searchPartial, StringComparison.OrdinalIgnoreCase))
+                .Take(20)
+                .ToList();
+
+            foreach (var relPath in files)
+            {
+                var icon = Path.HasExtension(relPath) ? "📄" : "📁";
+                var ext = Path.GetExtension(relPath).ToLowerInvariant();
+                icon = ext switch
+                {
+                    ".cs" => "🟣",
+                    ".ts" or ".js" => "🟡",
+                    ".json" => "📋",
+                    ".xml" or ".axaml" or ".xaml" => "🔶",
+                    ".md" => "📝",
+                    ".csproj" or ".sln" => "🔧",
+                    _ => icon
+                };
+                _filteredFiles.Add(new FileEntry(relPath, icon, Path.Combine(workDir, relPath)));
+            }
+        }
+        catch
+        {
+            // Ignore filesystem errors during autocomplete
+        }
+    }
+
+    private IEnumerable<string> EnumerateProjectFiles(string rootDir, int maxDepth)
+    {
+        return EnumerateFilesRecursive(rootDir, rootDir, 0, maxDepth);
+    }
+
+    private IEnumerable<string> EnumerateFilesRecursive(string rootDir, string currentDir, int depth, int maxDepth)
+    {
+        if (depth > maxDepth) yield break;
+
+        string[] entries;
+        try { entries = Directory.GetFileSystemEntries(currentDir); }
+        catch { yield break; }
+
+        foreach (var entry in entries)
+        {
+            var name = Path.GetFileName(entry);
+            if (name.StartsWith('.')) continue;
+
+            var relativePath = Path.GetRelativePath(rootDir, entry);
+
+            if (Directory.Exists(entry))
+            {
+                if (_excludedDirs.Contains(name)) continue;
+                // Yield directory itself
+                yield return relativePath + Path.DirectorySeparatorChar;
+                // Recurse
+                foreach (var child in EnumerateFilesRecursive(rootDir, entry, depth + 1, maxDepth))
+                    yield return child;
+            }
+            else
+            {
+                yield return relativePath;
+            }
+        }
+    }
+
     private void AcceptSelectedCommand()
     {
         if (_commandList?.SelectedItem is SlashCommand selected)
@@ -155,6 +300,37 @@ public partial class ChatView : UserControl
         AcceptSelectedCommand();
     }
 
+    private void FileList_DoubleTapped(object? sender, TappedEventArgs e)
+    {
+        AcceptSelectedFile();
+    }
+
+    private void AcceptSelectedFile()
+    {
+        if (_fileList?.SelectedItem is FileEntry selected && DataContext is ChatViewModel vm)
+        {
+            var text = vm.InputText ?? "";
+            if (_atTriggerIndex >= 0 && _atTriggerIndex < text.Length)
+            {
+                var inputBox = this.FindControl<TextBox>("InputBox");
+                var caretPos = inputBox?.CaretIndex ?? text.Length;
+
+                // Replace @partial with @filepath
+                var before = text[.._atTriggerIndex];
+                var after = caretPos <= text.Length ? text[caretPos..] : "";
+                var inserted = $"@{selected.RelativePath} ";
+                vm.InputText = before + inserted + after;
+
+                if (_filePopup != null) _filePopup.IsOpen = false;
+                _atTriggerIndex = -1;
+
+                inputBox?.Focus();
+                if (inputBox != null)
+                    inputBox.CaretIndex = before.Length + inserted.Length;
+            }
+        }
+    }
+
     private void ApplyAppearance()
     {
         var svc = AppearanceService.Instance;
@@ -175,7 +351,41 @@ public partial class ChatView : UserControl
 
     private void InputBox_KeyDown(object? sender, KeyEventArgs e)
     {
-        // Handle autocomplete navigation
+        // Handle file autocomplete navigation
+        if (_filePopup?.IsOpen == true)
+        {
+            if (e.Key == Key.Down)
+            {
+                e.Handled = true;
+                var idx = _fileList?.SelectedIndex ?? -1;
+                if (idx < _filteredFiles.Count - 1)
+                    _fileList!.SelectedIndex = idx + 1;
+                return;
+            }
+            if (e.Key == Key.Up)
+            {
+                e.Handled = true;
+                var idx = _fileList?.SelectedIndex ?? 0;
+                if (idx > 0)
+                    _fileList!.SelectedIndex = idx - 1;
+                return;
+            }
+            if (e.Key == Key.Tab || (e.Key == Key.Enter && _fileList?.SelectedItem != null))
+            {
+                e.Handled = true;
+                AcceptSelectedFile();
+                return;
+            }
+            if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                _filePopup.IsOpen = false;
+                _atTriggerIndex = -1;
+                return;
+            }
+        }
+
+        // Handle command autocomplete navigation
         if (_commandPopup?.IsOpen == true)
         {
             if (e.Key == Key.Down)
