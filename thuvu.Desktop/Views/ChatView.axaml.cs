@@ -445,4 +445,17 @@ public partial class ChatView : UserControl
             }
         }
     }
+
+    private async void OnMessageDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is Border { DataContext: ChatMessageViewModel msg })
+        {
+            var dialog = new MessageDetailDialog(msg);
+            var topLevel = TopLevel.GetTopLevel(this) as Window;
+            if (topLevel != null)
+                await dialog.ShowDialog(topLevel);
+            else
+                dialog.Show();
+        }
+    }
 }

@@ -137,7 +137,8 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="vm:ChatMessageViewModel">
                         <Border Margin="0,4" Padding="12,8" CornerRadius="8"
-                                Background="{Binding Role, Converter={x:Static views:ChatView.RoleBrushConverter}}">
+                                Background="{Binding Role, Converter={x:Static views:ChatView.RoleBrushConverter}}"
+                                DoubleTapped="OnMessageDoubleTapped">
                             <StackPanel Spacing="4">
                                 <DockPanel>
                                     <TextBlock DockPanel.Dock="Left"
