@@ -33,6 +33,8 @@ public partial class FileTreeNodeViewModel : ObservableObject
 public partial class FileTreeViewModel : ToolViewModel
 {
     [ObservableProperty] private string _rootPath = string.Empty;
+
+    public List<string> ExcludePatterns { get; set; } = new() { "bin", "obj", "node_modules", ".git" };
     
     public ObservableCollection<FileTreeNodeViewModel> RootNodes { get; } = new();
 
@@ -68,7 +70,7 @@ public partial class FileTreeViewModel : ToolViewModel
             foreach (var dir in Directory.GetDirectories(path).OrderBy(d => Path.GetFileName(d)))
             {
                 var dirName = Path.GetFileName(dir);
-                if (dirName.StartsWith('.') || dirName is "bin" or "obj" or "node_modules") continue;
+                if (dirName.StartsWith('.') || ExcludePatterns.Contains(dirName, StringComparer.OrdinalIgnoreCase)) continue;
                 
                 var dirNode = new FileTreeNodeViewModel
                 {

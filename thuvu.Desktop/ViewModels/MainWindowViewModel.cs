@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using Dock.Model.Controls;
 using Dock.Model.Core;
 using Dock.Model.Mvvm.Controls;
+using thuvu.Desktop.Models;
 using thuvu.Desktop.Services;
 using thuvu.Models;
 
@@ -23,6 +24,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     private readonly DockFactory _factory;
     private readonly DesktopAgentService _agentService;
+    private ProjectConfig _project;
 
     /// <summary>Set by MainWindow to show file picker dialog</summary>
     public Func<Task<string?>>? ShowOpenFileDialog { get; set; }
@@ -30,8 +32,18 @@ public partial class MainWindowViewModel : ObservableObject
     /// <summary>Set by MainWindow to show settings dialog</summary>
     public Func<Task>? ShowSettingsDialog { get; set; }
 
-    public MainWindowViewModel()
+    public MainWindowViewModel() : this(new ProjectConfig
     {
+        Name = "Default",
+        WorkDirectory = ".",
+        FilePath = Path.Combine(Directory.GetCurrentDirectory(), ".thuvu")
+    })
+    { }
+
+    public MainWindowViewModel(ProjectConfig project)
+    {
+        _project = project;
+
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();
         _factory.InitLayout(layout);
@@ -39,7 +51,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         _agentService = new DesktopAgentService();
         ModelName = _agentService.GetModelName();
-        StatusText = $"Connected to {_agentService.GetHostUrl()}";
+        StatusText = $"{project.Name} — {_agentService.GetHostUrl()}";
 
         // Wire agent service to chat
         var chat = FindDockable<ChatViewModel>(layout);
@@ -55,21 +67,28 @@ public partial class MainWindowViewModel : ObservableObject
             });
         };
 
-        // Initialize file tree with project root
-        var fileTree = FindDockable<FileTreeViewModel>(layout);
-        if (fileTree != null)
-        {
-            var rootPath = Directory.GetCurrentDirectory();
-            fileTree.RootPath = rootPath;
-            fileTree.RefreshCommand.Execute(null);
-            fileTree.FileOpenRequested += path => OpenFileInEditor(path);
-        }
+        InitializeFileTree(layout);
 
         _agentService.OnUsage += usage =>
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
                 TokenUsageText = $"Tokens: {usage.PromptTokens}↑ {usage.CompletionTokens}↓");
         };
+    }
+
+    private void InitializeFileTree(IDock layout)
+    {
+        var fileTree = FindDockable<FileTreeViewModel>(layout);
+        if (fileTree == null) return;
+
+        var rootPath = _project.ResolvedWorkDirectory;
+        if (!Directory.Exists(rootPath))
+            Directory.CreateDirectory(rootPath);
+
+        fileTree.RootPath = rootPath;
+        fileTree.ExcludePatterns = _project.ExcludePatterns;
+        fileTree.RefreshCommand.Execute(null);
+        fileTree.FileOpenRequested += path => OpenFileInEditor(path);
     }
 
     private T? FindDockable<T>(IDock dock) where T : class
@@ -162,7 +181,7 @@ public partial class MainWindowViewModel : ObservableObject
         // Reload config in case the user saved changes
         _agentService.ReloadConfig();
         ModelName = _agentService.GetModelName();
-        StatusText = $"Connected to {_agentService.GetHostUrl()}";
+        StatusText = $"{_project.Name} — {_agentService.GetHostUrl()}";
     }
 
     [RelayCommand]
@@ -205,13 +224,7 @@ public partial class MainWindowViewModel : ObservableObject
         var chat = FindDockable<ChatViewModel>(layout);
         chat?.SetAgentService(_agentService);
 
-        var fileTree = FindDockable<FileTreeViewModel>(layout);
-        if (fileTree != null)
-        {
-            fileTree.RootPath = Directory.GetCurrentDirectory();
-            fileTree.RefreshCommand.Execute(null);
-            fileTree.FileOpenRequested += path => OpenFileInEditor(path);
-        }
+        InitializeFileTree(layout);
 
         StatusText = "Layout reset";
     }
