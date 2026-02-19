@@ -42,6 +42,18 @@ public partial class EditorViewModel : DocumentViewModel
         Id = $"Editor_{filePath.GetHashCode():X}";
         Title = Path.GetFileName(filePath);
         SyntaxHighlighting = DetectHighlighting(filePath);
+
+        // Load file content synchronously during construction so it's available
+        // before the view binds to this ViewModel
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                Content = File.ReadAllText(filePath);
+                IsDirty = false;
+            }
+        }
+        catch { }
     }
 
     [RelayCommand]

@@ -6,13 +6,6 @@
              x:DataType="vm:EditorViewModel">
 
     <DockPanel>
-        <!-- Toolbar -->
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="4" Margin="4">
-            <Button Content="💾" Command="{Binding SaveFileCommand}" ToolTip.Tip="Save" Padding="4" />
-            <TextBlock Text="{Binding RelativePath}" VerticalAlignment="Center" Foreground="Gray" FontSize="11"
-                       Margin="8,0,0,0" />
-        </StackPanel>
-
         <!-- Editor -->
         <AvaloniaEdit:TextEditor Name="Editor"
                                   ShowLineNumbers="True"

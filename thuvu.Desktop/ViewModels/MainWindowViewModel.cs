@@ -127,7 +127,6 @@ public partial class MainWindowViewModel : ObservableObject
         }
 
         var editor = new EditorViewModel(filePath);
-        _ = editor.LoadFileCommand.ExecuteAsync(null);
         _factory.AddDockable(docDock, editor);
         _factory.SetActiveDockable(editor);
         _factory.SetFocusedDockable(docDock, editor);
