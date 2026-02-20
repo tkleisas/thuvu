@@ -23,52 +23,60 @@ namespace thuvu.Tools
 
         /// <summary>
         /// Index code files in a directory or single file.
+        /// Runs on the thread pool to avoid blocking the UI thread.
         /// </summary>
         public static async Task<string> CodeIndexAsync(string path, bool force = false, CancellationToken ct = default)
         {
-            try
+            // Run the entire indexing operation on the thread pool to prevent UI freezes.
+            // Microsoft.Data.Sqlite async methods are often sync-over-async internally,
+            // and Roslyn parsing is CPU-intensive — both can starve the thread pool or
+            // block UI continuations if a SynchronizationContext is captured.
+            return await Task.Run(async () =>
             {
-                if (!SqliteConfig.Instance.Enabled)
+                try
                 {
-                    return JsonSerializer.Serialize(new { success = false, error = "SQLite indexing is disabled" }, _jsonOptions);
-                }
-
-                var fullPath = Path.GetFullPath(path);
-
-                if (Directory.Exists(fullPath))
-                {
-                    var result = await _indexer.IndexDirectoryAsync(fullPath, force, ct);
-                    return JsonSerializer.Serialize(new
+                    if (!SqliteConfig.Instance.Enabled)
                     {
-                        success = true,
-                        path = fullPath,
-                        totalFiles = result.TotalFiles,
-                        indexedFiles = result.IndexedFiles,
-                        skippedFiles = result.SkippedFiles,
-                        errors = result.Errors.Count > 0 ? result.Errors.Take(10).ToList() : null
-                    }, _jsonOptions);
-                }
-                else if (File.Exists(fullPath))
-                {
-                    var indexed = await _indexer.IndexFileAsync(fullPath, force, ct);
-                    return JsonSerializer.Serialize(new
+                        return JsonSerializer.Serialize(new { success = false, error = "SQLite indexing is disabled" }, _jsonOptions);
+                    }
+
+                    var fullPath = Path.GetFullPath(path);
+
+                    if (Directory.Exists(fullPath))
                     {
-                        success = true,
-                        path = fullPath,
-                        indexed,
-                        message = indexed ? "File indexed successfully" : "File unchanged, skipped"
-                    }, _jsonOptions);
+                        var result = await _indexer.IndexDirectoryAsync(fullPath, force, ct).ConfigureAwait(false);
+                        return JsonSerializer.Serialize(new
+                        {
+                            success = true,
+                            path = fullPath,
+                            totalFiles = result.TotalFiles,
+                            indexedFiles = result.IndexedFiles,
+                            skippedFiles = result.SkippedFiles,
+                            errors = result.Errors.Count > 0 ? result.Errors.Take(10).ToList() : null
+                        }, _jsonOptions);
+                    }
+                    else if (File.Exists(fullPath))
+                    {
+                        var indexed = await _indexer.IndexFileAsync(fullPath, force, ct).ConfigureAwait(false);
+                        return JsonSerializer.Serialize(new
+                        {
+                            success = true,
+                            path = fullPath,
+                            indexed,
+                            message = indexed ? "File indexed successfully" : "File unchanged, skipped"
+                        }, _jsonOptions);
+                    }
+                    else
+                    {
+                        return JsonSerializer.Serialize(new { success = false, error = $"Path not found: {path}" }, _jsonOptions);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    return JsonSerializer.Serialize(new { success = false, error = $"Path not found: {path}" }, _jsonOptions);
+                    AgentLogger.LogError(ex, "code_index failed");
+                    return JsonSerializer.Serialize(new { success = false, error = ex.Message }, _jsonOptions);
                 }
-            }
-            catch (Exception ex)
-            {
-                AgentLogger.LogError(ex, "code_index failed");
-                return JsonSerializer.Serialize(new { success = false, error = ex.Message }, _jsonOptions);
-            }
+            }, ct).ConfigureAwait(false);
         }
 
         /// <summary>

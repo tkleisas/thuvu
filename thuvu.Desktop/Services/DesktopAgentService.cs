@@ -321,8 +321,8 @@ public class DesktopAgentService
         // Clear messages in DB but keep the session
         if (!string.IsNullOrEmpty(SessionId))
         {
-            try { SqliteService.Instance.DeleteSessionMessagesAsync(SessionId).GetAwaiter().GetResult(); }
-            catch { }
+            var sid = SessionId;
+            _ = Task.Run(async () => { try { await SqliteService.Instance.DeleteSessionMessagesAsync(sid); } catch { } });
         }
     }
 

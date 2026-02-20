@@ -107,8 +107,7 @@ public class AgentRegistry
     public void RemoveAgent(string chatId)
     {
         _agents.Remove(chatId);
-        try { SqliteService.Instance.DeleteSessionAsync(chatId).GetAwaiter().GetResult(); }
-        catch { }
+        _ = Task.Run(async () => { try { await SqliteService.Instance.DeleteSessionAsync(chatId); } catch { } });
     }
 
     /// <summary>Reload config on all agents (after settings change)</summary>
@@ -136,7 +135,7 @@ public class AgentRegistry
                     LastActivityAt = DateTime.Now,
                     MetadataJson = isActive ? "{\"active\":true}" : null
                 };
-                SqliteService.Instance.SaveSessionAsync(session).GetAwaiter().GetResult();
+                _ = Task.Run(async () => { try { await SqliteService.Instance.SaveSessionAsync(session); } catch { } });
             }
             catch { }
         }
@@ -144,21 +143,17 @@ public class AgentRegistry
 
     private static void SaveSessionToDb(string id, string name, DesktopAgentService agent)
     {
-        try
+        var session = new SqSessionData
         {
-            var session = new SqSessionData
-            {
-                SessionId = id,
-                AgentId = "desktop",
-                Title = name,
-                ModelId = agent.ModelOverride,
-                SystemPrompt = SystemPromptManager.Instance.GetCurrentSystemPrompt(),
-                CreatedAt = DateTime.Now,
-                LastActivityAt = DateTime.Now
-            };
-            SqliteService.Instance.SaveSessionAsync(session).GetAwaiter().GetResult();
-        }
-        catch { }
+            SessionId = id,
+            AgentId = "desktop",
+            Title = name,
+            ModelId = agent.ModelOverride,
+            SystemPrompt = SystemPromptManager.Instance.GetCurrentSystemPrompt(),
+            CreatedAt = DateTime.Now,
+            LastActivityAt = DateTime.Now
+        };
+        _ = Task.Run(async () => { try { await SqliteService.Instance.SaveSessionAsync(session); } catch { } });
     }
 
     /// <summary>Reconstruct Core ChatMessage list from DB message records</summary>

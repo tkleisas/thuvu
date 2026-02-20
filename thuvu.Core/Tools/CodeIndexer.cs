@@ -57,7 +57,7 @@ namespace thuvu.Tools
 
                 try
                 {
-                    var indexed = await IndexFileAsync(file, force, ct);
+                    var indexed = await IndexFileAsync(file, force, ct).ConfigureAwait(false);
                     if (indexed)
                         result.IndexedFiles++;
                     else
@@ -92,7 +92,7 @@ namespace thuvu.Tools
 
             // Check if file needs reindexing
             var hash = ComputeFileHash(fullPath);
-            var existingMeta = await _db.GetFileMetadataAsync(fullPath, ct);
+            var existingMeta = await _db.GetFileMetadataAsync(fullPath, ct).ConfigureAwait(false);
 
             if (!force && existingMeta != null && existingMeta.Hash == hash)
             {
@@ -102,20 +102,14 @@ namespace thuvu.Tools
 
             // Parse and index based on extension
             var ext = Path.GetExtension(fullPath).ToLowerInvariant();
-            var symbols = await ParseFileAsync(fullPath, ext, ct);
+            var symbols = await ParseFileAsync(fullPath, ext, ct).ConfigureAwait(false);
 
-            // Delete existing symbols for this file
-            await _db.DeleteSymbolsForFileAsync(fullPath, ct);
-
-            // Insert new symbols
+            // Set file path on all symbols
             foreach (var symbol in symbols)
-            {
                 symbol.FilePath = fullPath;
-                await _db.UpsertSymbolAsync(symbol, ct);
-            }
 
-            // Update file metadata
-            await _db.UpsertFileAsync(fullPath, hash, fileInfo.Length, symbols.Count, ct);
+            // Batch: delete + insert all symbols + upsert file metadata in one transaction
+            await _db.IndexFileBatchAsync(fullPath, hash, fileInfo.Length, symbols, ct).ConfigureAwait(false);
 
             AgentLogger.LogInfo("Indexed {Path}: {Count} symbols", fullPath, symbols.Count);
             return true;
@@ -131,18 +125,18 @@ namespace thuvu.Tools
                 return ext switch
                 {
                     // C# - Roslyn parser (most accurate)
-                    ".cs" => await ParseCSharpFileAsync(filePath, ct),
+                    ".cs" => await ParseCSharpFileAsync(filePath, ct).ConfigureAwait(false),
                     
                     // TypeScript/JavaScript - Regex parser
                     ".ts" or ".tsx" or ".js" or ".jsx" or ".mjs" or ".mts" 
-                        => await _tsParser.ParseAsync(filePath, ct),
+                        => await _tsParser.ParseAsync(filePath, ct).ConfigureAwait(false),
                     
                     // Python - Regex parser
                     ".py" or ".pyw" or ".pyi" 
-                        => await _pyParser.ParseAsync(filePath, ct),
+                        => await _pyParser.ParseAsync(filePath, ct).ConfigureAwait(false),
                     
                     // Go - Regex parser
-                    ".go" => await _goParser.ParseAsync(filePath, ct),
+                    ".go" => await _goParser.ParseAsync(filePath, ct).ConfigureAwait(false),
                     
                     // Unsupported extension - return empty list
                     _ => new List<CodeSymbol>()
@@ -161,9 +155,9 @@ namespace thuvu.Tools
         private async Task<List<CodeSymbol>> ParseCSharpFileAsync(string filePath, CancellationToken ct)
         {
             var symbols = new List<CodeSymbol>();
-            var code = await File.ReadAllTextAsync(filePath, ct);
+            var code = await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false);
             var tree = CSharpSyntaxTree.ParseText(code, cancellationToken: ct);
-            var root = await tree.GetRootAsync(ct);
+            var root = await tree.GetRootAsync(ct).ConfigureAwait(false);
 
             // Extract namespace, class, interface, struct, enum declarations
             var typeDeclarations = root.DescendantNodes()

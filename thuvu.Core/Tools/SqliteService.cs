@@ -468,13 +468,87 @@ namespace thuvu.Tools
         /// </summary>
         public async Task<int> DeleteSymbolsForFileAsync(string filePath, CancellationToken ct = default)
         {
-            await using var conn = await GetConnectionAsync(ct);
+            await using var conn = await GetConnectionAsync(ct).ConfigureAwait(false);
             await using var cmd = conn.CreateCommand();
 
             cmd.CommandText = "DELETE FROM symbols WHERE file_path = @file_path";
             cmd.Parameters.AddWithValue("@file_path", filePath);
 
-            return await cmd.ExecuteNonQueryAsync(ct);
+            return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Batch index a file: delete old symbols, insert new ones, and update file metadata in a single transaction.
+        /// Much more efficient than individual UpsertSymbolAsync calls.
+        /// </summary>
+        public async Task IndexFileBatchAsync(string filePath, string hash, long fileSize,
+            List<CodeSymbol> symbols, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct).ConfigureAwait(false);
+            await using var tx = await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+            try
+            {
+                // Delete existing symbols for this file
+                await using (var delCmd = conn.CreateCommand())
+                {
+                    delCmd.CommandText = "DELETE FROM symbols WHERE file_path = @file_path";
+                    delCmd.Parameters.AddWithValue("@file_path", filePath);
+                    await delCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+
+                // Insert all symbols
+                foreach (var symbol in symbols)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await using var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"
+                        INSERT INTO symbols (name, full_name, kind, file_path, line_start, line_end, column_start, 
+                                             signature, documentation, parent_id, visibility, is_static, return_type, last_indexed)
+                        VALUES (@name, @full_name, @kind, @file_path, @line_start, @line_end, @column_start,
+                                @signature, @documentation, @parent_id, @visibility, @is_static, @return_type, @last_indexed)
+                    ";
+                    cmd.Parameters.AddWithValue("@name", symbol.Name);
+                    cmd.Parameters.AddWithValue("@full_name", (object?)symbol.FullName ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@kind", symbol.Kind);
+                    cmd.Parameters.AddWithValue("@file_path", filePath);
+                    cmd.Parameters.AddWithValue("@line_start", symbol.LineStart);
+                    cmd.Parameters.AddWithValue("@line_end", symbol.LineEnd);
+                    cmd.Parameters.AddWithValue("@column_start", symbol.ColumnStart);
+                    cmd.Parameters.AddWithValue("@signature", (object?)symbol.Signature ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@documentation", (object?)symbol.Documentation ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@parent_id", symbol.ParentId.HasValue ? symbol.ParentId.Value : DBNull.Value);
+                    cmd.Parameters.AddWithValue("@visibility", (object?)symbol.Visibility ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@is_static", symbol.IsStatic ? 1 : 0);
+                    cmd.Parameters.AddWithValue("@return_type", (object?)symbol.ReturnType ?? DBNull.Value);
+                    cmd.Parameters.AddWithValue("@last_indexed", DateTime.UtcNow.ToString("o"));
+                    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+
+                // Upsert file metadata
+                await using (var fileCmd = conn.CreateCommand())
+                {
+                    fileCmd.CommandText = @"
+                        INSERT INTO files (path, hash, size, last_indexed, symbol_count)
+                        VALUES (@path, @hash, @size, @last_indexed, @symbol_count)
+                        ON CONFLICT(path) DO UPDATE SET
+                            hash = @hash, size = @size, last_indexed = @last_indexed, symbol_count = @symbol_count
+                    ";
+                    fileCmd.Parameters.AddWithValue("@path", filePath);
+                    fileCmd.Parameters.AddWithValue("@hash", hash);
+                    fileCmd.Parameters.AddWithValue("@size", fileSize);
+                    fileCmd.Parameters.AddWithValue("@last_indexed", DateTime.UtcNow.ToString("o"));
+                    fileCmd.Parameters.AddWithValue("@symbol_count", symbols.Count);
+                    await fileCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+
+                await tx.CommitAsync(ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct).ConfigureAwait(false);
+                throw;
+            }
         }
 
         private static CodeSymbol ReadSymbol(SqliteDataReader reader)
