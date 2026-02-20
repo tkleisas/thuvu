@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using FlaUI.Core;
 using FlaUI.Core.AutomationElements;
 using FlaUI.Core.Conditions;
@@ -19,6 +21,33 @@ namespace thuvu.Tools.UIAutomation.Windows
     {
         private readonly UIA3Automation _automation;
         private bool _disposed;
+
+        static WindowsUIAutomation()
+        {
+            // FlaUI.UIA3 requires the .NET Framework Accessibility.dll which .NET 8
+            // won't probe for automatically. Resolve it from the app directory or
+            // the .NET Framework install folder.
+            AppDomain.CurrentDomain.AssemblyResolve += (_, args) =>
+            {
+                var name = new AssemblyName(args.Name);
+                if (!name.Name.Equals("Accessibility", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                // Try app directory first (copied by build)
+                var local = Path.Combine(AppContext.BaseDirectory, "Accessibility.dll");
+                if (File.Exists(local))
+                    return Assembly.LoadFrom(local);
+
+                // Fallback to .NET Framework directory
+                var fw = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                    @"Microsoft.NET\Framework64\v4.0.30319\Accessibility.dll");
+                if (File.Exists(fw))
+                    return Assembly.LoadFrom(fw);
+
+                return null;
+            };
+        }
         
         public WindowsUIAutomation()
         {
