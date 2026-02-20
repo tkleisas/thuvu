@@ -376,6 +376,7 @@ namespace thuvu
                             name: name,
                             toolCallId: call.Id
                         ));
+                        InjectVisionImageIfApplicable(name, toolResult, model, messages);
                     }
 
                     continue;
@@ -681,6 +682,7 @@ namespace thuvu
                             name: name,
                             toolCallId: call.Id
                         ));
+                        InjectVisionImageIfApplicable(name, toolResult, model, messages);
                     }
 
                     LogAgent("Continuing loop for next LLM response...");
@@ -919,6 +921,38 @@ namespace thuvu
             }
 
             return summarized || tracker.UsagePercent >= TruncationThreshold;
+        }
+
+        /// <summary>
+        /// If the tool result contains base64 image data and the active model supports vision,
+        /// inject a multimodal user message so the LLM can "see" the image directly.
+        /// </summary>
+        private static void InjectVisionImageIfApplicable(string toolName, string toolResult, string model, List<ChatMessage> messages)
+        {
+            if (toolName != "ui_capture") return;
+            
+            var modelEndpoint = ModelRegistry.Instance.GetModel(model);
+            if (modelEndpoint == null || !modelEndpoint.SupportsVision) return;
+            
+            try
+            {
+                using var doc = JsonDocument.Parse(toolResult);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("base64_data", out var b64Prop)) return;
+                if (!root.TryGetProperty("success", out var successProp) || !successProp.GetBoolean()) return;
+                
+                var base64 = b64Prop.GetString();
+                if (string.IsNullOrEmpty(base64)) return;
+                
+                var mime = root.TryGetProperty("mime_type", out var mimeProp) 
+                    ? mimeProp.GetString() ?? "image/png" 
+                    : "image/png";
+                
+                messages.Add(ChatMessage.CreateWithImage("user", 
+                    "[Screenshot captured — see image below]", base64, mime));
+                LogAgent($"Injected screenshot image into conversation for vision model ({base64.Length / 1024}KB base64)");
+            }
+            catch { /* not parseable, skip */ }
         }
 
         /// <summary>
