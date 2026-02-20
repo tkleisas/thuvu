@@ -28,6 +28,10 @@
     <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="prompts\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <DQ>"</DQ>
   </PropertyGroup>

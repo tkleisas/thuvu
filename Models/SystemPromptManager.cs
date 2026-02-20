@@ -15,18 +15,18 @@ namespace thuvu.Models
         
         public SystemPromptManager()
         {
-            // Look for prompts directory in multiple locations
+            // Prompts are copied to output directory via thuvu.Core.csproj Content items.
+            // Also check CWD and config dir for development/override scenarios.
             var configDir = Path.GetDirectoryName(AgentConfig.GetConfigPath()) ?? "";
             var candidates = new[]
             {
-                Path.Combine(Directory.GetCurrentDirectory(), "prompts"),
                 Path.Combine(AppContext.BaseDirectory, "prompts"),
+                Path.Combine(Directory.GetCurrentDirectory(), "prompts"),
                 Path.Combine(configDir, "prompts"),
-                Path.Combine(AgentConfig.GetWorkDirectory(), "..", "prompts")
             };
             
             _promptsDirectory = candidates.FirstOrDefault(Directory.Exists) 
-                ?? Path.Combine(Directory.GetCurrentDirectory(), "prompts");
+                ?? Path.Combine(AppContext.BaseDirectory, "prompts");
         }
         
         /// <summary>
