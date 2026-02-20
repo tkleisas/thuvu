@@ -5,7 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using Dock.Model.Controls;
 using Dock.Model.Core;
 using Dock.Model.Mvvm.Controls;
-using Dock.Serializer.SystemTextJson;
+using System.Text.Json;
 using thuvu.Desktop.Models;
 using thuvu.Desktop.Services;
 using thuvu.Models;
@@ -27,8 +27,6 @@ public partial class MainWindowViewModel : ObservableObject
 
     private readonly DockFactory _factory;
     private readonly AgentRegistry _registry;
-    private readonly DockSerializer _dockSerializer = new();
-    private readonly Dock.Model.DockState _dockState = new();
     private ProjectConfig _project;
     private AgentsPanelViewModel? _agentsPanel;
 
@@ -63,8 +61,9 @@ public partial class MainWindowViewModel : ObservableObject
         catch (Exception ex) { AgentLogger.LogError("SQLite init failed: {Error}", ex.Message); }
 
         _factory = new DockFactory();
-        var layout = LoadDockLayout() ?? _factory.CreateLayout();
+        var layout = _factory.CreateLayout();
         _factory.InitLayout(layout);
+        ApplySavedProportions(layout);
         DockLayout = layout;
 
         // Remove the placeholder chat from DockFactory
@@ -478,7 +477,7 @@ public partial class MainWindowViewModel : ObservableObject
     private string GetLayoutPath() =>
         Path.Combine(_project.ProjectDirectory, ".db", "layout.json");
 
-    /// <summary>Save dock layout using built-in Dock.Avalonia serializer</summary>
+    /// <summary>Save dock proportions to JSON</summary>
     private void SaveDockLayout()
     {
         if (DockLayout == null) return;
@@ -486,10 +485,10 @@ public partial class MainWindowViewModel : ObservableObject
         {
             var layoutPath = GetLayoutPath();
             Directory.CreateDirectory(Path.GetDirectoryName(layoutPath)!);
-            _dockState.Save(DockLayout);
-            using var stream = File.Create(layoutPath);
-            _dockSerializer.Save(stream, DockLayout);
-            AgentLogger.LogInfo("Dock layout saved to: {Path}", layoutPath);
+            var state = new Dictionary<string, double>();
+            CollectProportions(DockLayout, state);
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(layoutPath, json);
         }
         catch (Exception ex)
         {
@@ -497,26 +496,43 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    /// <summary>Load dock layout from saved file, returns null if not available</summary>
-    private IRootDock? LoadDockLayout()
+    /// <summary>Apply saved proportions to the dock model before visual tree creation</summary>
+    private void ApplySavedProportions(IDockable layout)
     {
         var path = GetLayoutPath();
-        if (!File.Exists(path)) return null;
+        if (!File.Exists(path)) return;
         try
         {
-            using var stream = File.OpenRead(path);
-            var layout = _dockSerializer.Load<IRootDock?>(stream);
-            if (layout != null)
-            {
-                _dockState.Restore(layout);
-                AgentLogger.LogInfo("Dock layout restored from: {Path}", path);
-            }
-            return layout;
+            var json = File.ReadAllText(path);
+            var state = JsonSerializer.Deserialize<Dictionary<string, double>>(json);
+            if (state != null)
+                ApplyProportions(layout, state);
         }
         catch (Exception ex)
         {
-            AgentLogger.LogError("Failed to load dock layout, using default: {Error}", ex.Message);
-            return null;
+            AgentLogger.LogError("Failed to restore dock layout: {Error}", ex.Message);
+        }
+    }
+
+    private static void CollectProportions(IDockable dockable, Dictionary<string, double> state)
+    {
+        if (dockable.Id != null && dockable is IDock dock)
+        {
+            state[dockable.Id] = dock.Proportion;
+            if (dock.VisibleDockables != null)
+                foreach (var child in dock.VisibleDockables)
+                    CollectProportions(child, state);
+        }
+    }
+
+    private static void ApplyProportions(IDockable dockable, Dictionary<string, double> state)
+    {
+        if (dockable.Id != null && dockable is IDock dock && state.TryGetValue(dockable.Id, out var val))
+        {
+            dock.Proportion = val;
+            if (dock.VisibleDockables != null)
+                foreach (var child in dock.VisibleDockables)
+                    ApplyProportions(child, state);
         }
     }
 

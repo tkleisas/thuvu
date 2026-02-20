@@ -22,7 +22,6 @@
     <PackageReference Include="Dock.Avalonia" Version="11.2.0.2" />
     <PackageReference Include="Dock.Model.Mvvm" Version="11.2.0.2" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
-    <PackageReference Include="Dock.Serializer.SystemTextJson" Version="11.2.0.2" />
     <PackageReference Include="Iciclecreek.Avalonia.Terminal" Version="1.0.7" />
     <PackageReference Include="Markdown.Avalonia" Version="11.0.3-a1" />
   </ItemGroup>
