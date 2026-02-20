@@ -22,20 +22,27 @@ public partial class ChatMessageViewModel : ObservableObject
     [ObservableProperty] private string? _toolResult;
     [ObservableProperty] private string? _thinkingContent;
     [ObservableProperty] private bool _showThinking;
+    [ObservableProperty] private bool _markdownFailed;
 
     /// <summary>
     /// True when streaming is done and markdown should be rendered.
-    /// During streaming, plain text is shown to avoid expensive re-parsing on every token.
+    /// Falls back to plain text if markdown rendering produced empty output.
     /// </summary>
-    public bool ShowMarkdown => Role == "assistant" && !IsStreaming;
+    public bool ShowMarkdown => Role == "assistant" && !IsStreaming && !MarkdownFailed;
 
-    /// <summary>Show plain text while streaming, hide once markdown takes over</summary>
-    public bool ShowStreamingText => Role == "assistant" && IsStreaming;
+    /// <summary>Show plain text while streaming OR as fallback when markdown fails</summary>
+    public bool ShowPlainText => Role == "assistant" && (IsStreaming || MarkdownFailed);
 
     partial void OnIsStreamingChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowMarkdown));
-        OnPropertyChanged(nameof(ShowStreamingText));
+        OnPropertyChanged(nameof(ShowPlainText));
+    }
+
+    partial void OnMarkdownFailedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowMarkdown));
+        OnPropertyChanged(nameof(ShowPlainText));
     }
 }
 

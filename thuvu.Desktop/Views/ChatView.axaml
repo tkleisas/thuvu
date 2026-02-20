@@ -166,11 +166,12 @@
                                 <md:MarkdownScrollViewer Markdown="{Binding Content}"
                                     MarkdownStyleName="FluentTheme"
                                     IsVisible="{Binding ShowMarkdown}"
+                                    Loaded="OnMarkdownLoaded"
                                     SaveScrollValueWhenContentUpdated="False" />
 
-                                <!-- Plain text while streaming (avoids expensive markdown re-parsing per token) -->
+                                <!-- Plain text while streaming OR as fallback when markdown rendering fails -->
                                 <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
-                                    IsVisible="{Binding ShowStreamingText}" />
+                                    IsVisible="{Binding ShowPlainText}" />
 
                                 <!-- Plain text for user/tool messages -->
                                 <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"

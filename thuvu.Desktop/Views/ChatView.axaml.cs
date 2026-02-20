@@ -458,4 +458,25 @@ public partial class ChatView : UserControl
                 dialog.Show();
         }
     }
+
+    /// <summary>
+    /// After MarkdownScrollViewer loads, check if it rendered anything.
+    /// If the control has zero height but the message has content,
+    /// the markdown parser failed — fall back to plain text.
+    /// </summary>
+    private void OnMarkdownLoaded(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Markdown.Avalonia.MarkdownScrollViewer md) return;
+        if (md.DataContext is not ChatMessageViewModel msg) return;
+        if (string.IsNullOrEmpty(msg.Content)) return;
+
+        // Check after layout completes
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (md.Bounds.Height < 2 && !string.IsNullOrEmpty(msg.Content) && !msg.IsStreaming)
+            {
+                msg.MarkdownFailed = true;
+            }
+        }, Avalonia.Threading.DispatcherPriority.Loaded);
+    }
 }
