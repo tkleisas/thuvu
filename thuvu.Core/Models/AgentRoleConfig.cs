@@ -219,17 +219,23 @@ namespace thuvu.Models
                 {
                     new() { RoleId = "main", DisplayName = "Main Agent", CanDelegate = true, 
                             AllowedDelegations = new() { "planner", "coder", "tester", "reviewer", "debugger" },
+                            SystemPromptFile = "prompts/roles/main.md",
                             MaxIterations = 50, MaxDurationMs = 1800000 },
                     new() { RoleId = "planner", DisplayName = "Planning Agent", CanDelegate = false, 
+                            SystemPromptFile = "prompts/roles/planner.md",
                             MaxIterations = 10, MaxDurationMs = 300000 },
                     new() { RoleId = "coder", DisplayName = "Coding Agent", CanDelegate = true,
                             AllowedDelegations = new() { "debugger" },
+                            SystemPromptFile = "prompts/roles/coder.md",
                             MaxIterations = 30, MaxDurationMs = 900000 },
                     new() { RoleId = "tester", DisplayName = "Testing Agent", CanDelegate = false,
+                            SystemPromptFile = "prompts/roles/tester.md",
                             MaxIterations = 20, MaxDurationMs = 600000 },
                     new() { RoleId = "reviewer", DisplayName = "Review Agent", CanDelegate = false,
+                            SystemPromptFile = "prompts/roles/reviewer.md",
                             MaxIterations = 10, MaxDurationMs = 300000 },
                     new() { RoleId = "debugger", DisplayName = "Debugging Agent", CanDelegate = false,
+                            SystemPromptFile = "prompts/roles/debugger.md",
                             MaxIterations = 25, MaxDurationMs = 600000 }
                 }
             };
