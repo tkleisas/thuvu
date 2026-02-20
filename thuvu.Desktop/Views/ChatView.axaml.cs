@@ -5,6 +5,7 @@ using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using thuvu.Desktop.Models;
@@ -135,7 +136,11 @@ public partial class ChatView : UserControl
 
     private void ScrollToBottom()
     {
-        var scroller = this.FindControl<ScrollViewer>("MessagesScroller");
+        var listBox = this.FindControl<ListBox>("MessagesScroller");
+        if (listBox == null) return;
+        // ListBox contains an internal ScrollViewer — find it in the visual tree
+        var scroller = listBox.Scroll as ScrollViewer
+            ?? listBox.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
         scroller?.ScrollToEnd();
     }
 

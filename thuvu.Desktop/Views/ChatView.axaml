@@ -163,9 +163,25 @@
         </Border>
 
         <!-- Messages Area -->
-        <ScrollViewer x:Name="MessagesScroller" VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding Messages}" Padding="8">
-                <ItemsControl.ItemTemplate>
+        <ListBox x:Name="MessagesScroller" ItemsSource="{Binding Messages}" Padding="8"
+                 Background="Transparent" BorderThickness="0"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 SelectionMode="Single">
+            <ListBox.Styles>
+                <Style Selector="ListBoxItem">
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+                <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+                    <Setter Property="Background" Value="Transparent" />
+                </Style>
+                <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+                    <Setter Property="Background" Value="Transparent" />
+                </Style>
+            </ListBox.Styles>
+            <ListBox.ItemTemplate>
                     <DataTemplate DataType="vm:ChatMessageViewModel">
                         <Border Margin="0,4" Padding="12,8" CornerRadius="8"
                                 Background="{Binding Role, Converter={x:Static views:ChatView.RoleBrushConverter}}"
@@ -251,8 +267,7 @@
                             </StackPanel>
                         </Border>
                     </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+            </ListBox.ItemTemplate>
+        </ListBox>
     </DockPanel>
 </UserControl>
