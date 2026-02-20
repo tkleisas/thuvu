@@ -40,40 +40,96 @@ namespace thuvu
         {
             if (string.IsNullOrEmpty(content)) return (null, content);
 
-            // Build set of known tool names
             var toolNames = new HashSet<string>(tools.Select(t => t.Function.Name));
-            
-            // Pattern: tool_name followed by { ... } JSON object
-            var pattern = @"(\b(?:" + string.Join("|", toolNames.Select(System.Text.RegularExpressions.Regex.Escape)) + @"))\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})";
-            var matches = System.Text.RegularExpressions.Regex.Matches(content, pattern);
-            
-            if (matches.Count == 0) return (null, content);
-
             var result = new List<ToolCall>();
-            var cleaned = content;
-            for (int i = matches.Count - 1; i >= 0; i--)
+            var spans = new List<(int Start, int Length)>();
+
+            foreach (var name in toolNames)
             {
-                var m = matches[i];
-                var name = m.Groups[1].Value;
-                var argsJson = m.Groups[2].Value;
-                
-                try
+                int searchFrom = 0;
+                while (searchFrom < content.Length)
                 {
-                    using var doc = JsonDocument.Parse(argsJson);
-                    result.Insert(0, new ToolCall
+                    int nameIdx = content.IndexOf(name, searchFrom, StringComparison.Ordinal);
+                    if (nameIdx < 0) break;
+
+                    if (nameIdx > 0 && char.IsLetterOrDigit(content[nameIdx - 1]))
                     {
-                        Id = Guid.NewGuid().ToString("N"),
-                        Type = "function",
-                        Function = new FunctionCall { Name = name, Arguments = argsJson }
-                    });
-                    cleaned = cleaned.Remove(m.Index, m.Length);
-                    LogAgent($"Parsed inline tool call: {name}({argsJson.Length} chars)");
+                        searchFrom = nameIdx + name.Length;
+                        continue;
+                    }
+
+                    int braceStart = nameIdx + name.Length;
+                    while (braceStart < content.Length && char.IsWhiteSpace(content[braceStart]))
+                        braceStart++;
+
+                    if (braceStart >= content.Length || content[braceStart] != '{')
+                    {
+                        searchFrom = nameIdx + name.Length;
+                        continue;
+                    }
+
+                    int? braceEnd = FindMatchingBrace(content, braceStart);
+                    if (braceEnd == null)
+                    {
+                        searchFrom = nameIdx + name.Length;
+                        continue;
+                    }
+
+                    var argsJson = content.Substring(braceStart, braceEnd.Value - braceStart + 1);
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(argsJson);
+                        result.Add(new ToolCall
+                        {
+                            Id = Guid.NewGuid().ToString("N"),
+                            Type = "function",
+                            Function = new FunctionCall { Name = name, Arguments = argsJson }
+                        });
+                        spans.Add((nameIdx, braceEnd.Value - nameIdx + 1));
+                        LogAgent($"Parsed inline tool call: {name}({argsJson.Length} chars)");
+                        searchFrom = braceEnd.Value + 1;
+                    }
+                    catch (JsonException)
+                    {
+                        searchFrom = nameIdx + name.Length;
+                    }
                 }
-                catch (JsonException) { }
             }
 
             if (result.Count == 0) return (null, content);
+
+            var cleaned = content;
+            foreach (var span in spans.OrderByDescending(s => s.Start))
+                cleaned = cleaned.Remove(span.Start, span.Length);
+
             return (result, cleaned.Trim());
+        }
+
+        private static int? FindMatchingBrace(string text, int start)
+        {
+            if (start >= text.Length || text[start] != '{') return null;
+            int depth = 0;
+            bool inString = false;
+            for (int i = start; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (inString)
+                {
+                    if (c == '\\') { i++; continue; }
+                    if (c == '"') inString = false;
+                    continue;
+                }
+                switch (c)
+                {
+                    case '"': inString = true; break;
+                    case '{': depth++; break;
+                    case '}':
+                        depth--;
+                        if (depth == 0) return i;
+                        break;
+                }
+            }
+            return null;
         }
         
         /// <summary>
