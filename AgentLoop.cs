@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -28,6 +29,47 @@ namespace thuvu
         // Loop detection settings
         public const int DefaultMaxIterations = 50; // Fallback default
         private const int MaxConsecutiveFailures = 10;
+
+        /// <summary>
+        /// Attempt to parse inline tool calls from content text.
+        /// Some models (especially via OpenRouter) emit tool calls as plain text like:
+        /// read_file{"path": "file.cs"} instead of using proper tool_calls JSON.
+        /// </summary>
+        private static List<ToolCall>? TryParseInlineToolCalls(string? content, List<Tool> tools)
+        {
+            if (string.IsNullOrEmpty(content)) return null;
+
+            // Build set of known tool names
+            var toolNames = new HashSet<string>(tools.Select(t => t.Function.Name));
+            
+            // Pattern: tool_name followed by { ... } JSON object
+            var pattern = @"(\b(?:" + string.Join("|", toolNames.Select(System.Text.RegularExpressions.Regex.Escape)) + @"))\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})";
+            var matches = System.Text.RegularExpressions.Regex.Matches(content, pattern);
+            
+            if (matches.Count == 0) return null;
+
+            var result = new List<ToolCall>();
+            foreach (System.Text.RegularExpressions.Match m in matches)
+            {
+                var name = m.Groups[1].Value;
+                var argsJson = m.Groups[2].Value;
+                
+                try
+                {
+                    using var doc = JsonDocument.Parse(argsJson);
+                    result.Add(new ToolCall
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Type = "function",
+                        Function = new FunctionCall { Name = name, Arguments = argsJson }
+                    });
+                    LogAgent($"Parsed inline tool call: {name}({argsJson.Length} chars)");
+                }
+                catch (JsonException) { }
+            }
+
+            return result.Count > 0 ? result : null;
+        }
         
         /// <summary>
         /// Gets the configured max iterations from AgentConfig, falling back to default.
@@ -148,6 +190,16 @@ namespace thuvu
                 {
                     LogAgent("Detected 'thuvu Finished' in response. Task complete.");
                     return msg.Content;
+                }
+
+                if (msg.ToolCalls == null || msg.ToolCalls.Count == 0)
+                {
+                    var inlineCalls = TryParseInlineToolCalls(msg.Content, tools);
+                    if (inlineCalls != null)
+                    {
+                        LogAgent($"Recovered {inlineCalls.Count} inline tool call(s) from content text");
+                        msg.ToolCalls = inlineCalls;
+                    }
                 }
 
                 // Check if the model indicated it wants to continue but didn't make a tool call
@@ -394,6 +446,23 @@ namespace thuvu
                 // Check if the model indicated it wants to continue but didn't make a tool call
                 // This handles cases where the model says "Now let me..." but forgets to call the tool
                 // We look for action phrases, especially those ending with ":" which strongly indicate intent
+                if (result.ToolCalls == null || result.ToolCalls.Count == 0)
+                {
+                    var inlineCalls = TryParseInlineToolCalls(result.Content, tools);
+                    if (inlineCalls != null)
+                    {
+                        LogAgent($"Recovered {inlineCalls.Count} inline tool call(s) from streaming content text");
+                        result = new StreamResult
+                        {
+                            Content = result.Content,
+                            ReasoningContent = result.ReasoningContent,
+                            ToolCalls = inlineCalls,
+                            FinishReason = result.FinishReason,
+                            Usage = result.Usage
+                        };
+                    }
+                }
+
                 if (result.ToolCalls == null || result.ToolCalls.Count == 0)
                 {
                     bool wantsToContinue = false;

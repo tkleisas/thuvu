@@ -907,7 +907,7 @@ public partial class ChatViewModel : DocumentViewModel
         var toolMsg = Messages.LastOrDefault(m => m.Role == "tool" && m.ToolName == name);
         if (toolMsg != null)
         {
-            toolMsg.ToolResult = $"[{elapsed.TotalSeconds:F1}s] {(result.Length > 500 ? result[..500] + "..." : result)}";
+            toolMsg.ToolResult = $"[{elapsed.TotalSeconds:F1}s] {result}";
         }
     }
 

@@ -26,7 +26,7 @@
                          FontFamily="Cascadia Code, Consolas" FontSize="11"
                          TextWrapping="Wrap" AcceptsReturn="True" />
                 <TextBlock Text="Result:" FontSize="11" Foreground="Gray" />
-                <TextBox Name="ToolResultText" IsReadOnly="True" MaxHeight="150"
+                <TextBox Name="ToolResultText" IsReadOnly="True" MaxHeight="400"
                          FontFamily="Cascadia Code, Consolas" FontSize="11"
                          TextWrapping="Wrap" AcceptsReturn="True" />
             </StackPanel>

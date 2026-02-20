@@ -194,7 +194,20 @@ namespace thuvu
                 var root = doc.RootElement;
 
                 // choices[0]
-                if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
+                if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
+                {
+                    // Some providers (OpenRouter) send a separate usage-only chunk with no choices
+                    if (root.TryGetProperty("usage", out var usageOnlyEl) && usageOnlyEl.ValueKind == JsonValueKind.Object)
+                    {
+                        usage = JsonSerializer.Deserialize<Usage>(usageOnlyEl.GetRawText());
+                        if (usage != null)
+                        {
+                            LogStream($"Got usage (no-choices chunk): prompt={usage.PromptTokens}, completion={usage.CompletionTokens}, total={usage.TotalTokens}");
+                            onUsage?.Invoke(usage);
+                        }
+                    }
+                    continue;
+                }
                 var choice = choices[0];
                 if (root.TryGetProperty("usage", out var usageEl) && usageEl.ValueKind == JsonValueKind.Object)
                 {
@@ -268,9 +281,9 @@ namespace thuvu
                     }
                 }
                 
-                // If we received a finish_reason, exit the loop after processing this delta
-                if (!string.IsNullOrEmpty(finishReason))
-                    break;
+                // If we received a finish_reason, don't break yet — continue looping
+                // to capture any subsequent usage-only chunks from the provider.
+                // The [DONE] sentinel (line 187) will terminate the loop.
             }
             
             LogStream($"Stream completed: content={sbContent.Length} chars, toolCalls={toolBuilders.Count}, finish={finishReason}");
