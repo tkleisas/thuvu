@@ -20,7 +20,9 @@ public partial class AgentListItem : ObservableObject
     public string StatusIcon => Status switch
     {
         "Processing" => "⏳",
-        "Error" => "⚠️",
+        "Error" or "Failed" => "⚠️",
+        "Done" => "✅",
+        _ when Status.StartsWith("🔨") => "🔨",
         _ => "💬"
     };
 

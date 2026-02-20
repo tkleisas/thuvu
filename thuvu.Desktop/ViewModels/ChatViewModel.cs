@@ -57,6 +57,10 @@ public partial class ChatViewModel : DocumentViewModel
 
     private CancellationTokenSource? _orchestrationCts;
     private DesktopAgentService? _agentService;
+
+    /// <summary>Raised when an orchestration sub-agent changes state (agentId, status)</summary>
+    public event Action<string, string>? OrchestrationAgentChanged;
+
     /// <summary>Display name for this session (used in session index)</summary>
     public string SessionName { get; set; } = "Chat";
 
@@ -591,6 +595,21 @@ public partial class ChatViewModel : DocumentViewModel
         AddSystemMessage($"🚀 {(isResume ? "Resuming" : "Starting")} orchestration with {config.MaxAgents} agent(s)...\n" +
             $"Plan: {plan.Summary}\nRemaining: {pending} tasks\nWork dir: `{workDir}`");
 
+        // Show subtask overview
+        var taskList = string.Join("\n", plan.SubTasks.Select(t =>
+        {
+            var icon = t.Status switch
+            {
+                SubTaskStatus.Completed => "✅",
+                SubTaskStatus.Failed => "❌",
+                SubTaskStatus.Blocked => "🚫",
+                SubTaskStatus.InProgress => "⏳",
+                _ => "⬜"
+            };
+            return $"  {icon} {t.Id}: {t.Title}";
+        }));
+        AddSystemMessage($"📋 Tasks:\n{taskList}");
+
         IsProcessing = true;
         CanSend = false;
         _orchestrationCts = new CancellationTokenSource();
@@ -606,9 +625,21 @@ public partial class ChatViewModel : DocumentViewModel
 
                 try
                 {
+                    // Track active orchestration agents for UI
+                    var activeAgents = new HashSet<string>();
+
                     orchestrator.OnAgentStarted += (agentId, taskId) =>
+                    {
+                        var taskTitle = plan.SubTasks.FirstOrDefault(t => t.Id == taskId)?.Title ?? taskId;
                         Dispatcher.UIThread.Post(() =>
-                            AddSystemMessage($"[{agentId}] Starting task {taskId}..."));
+                        {
+                            AddSystemMessage($"🔧 [{agentId}] Starting: {taskTitle}");
+                            if (activeAgents.Add(agentId))
+                                OrchestrationAgentChanged?.Invoke(agentId, "Processing");
+                            else
+                                OrchestrationAgentChanged?.Invoke(agentId, "Processing");
+                        });
+                    };
 
                     orchestrator.OnTaskCompleted += (agentId, result) =>
                     {
@@ -622,21 +653,27 @@ public partial class ChatViewModel : DocumentViewModel
                         Dispatcher.UIThread.Post(() =>
                         {
                             var icon = result.Success ? "✅" : "❌";
-                            AddSystemMessage($"{icon} [{agentId}] Task {result.TaskId} ({result.Duration.TotalSeconds:F1}s)");
+                            var taskTitle = task?.Title ?? result.TaskId;
+                            AddSystemMessage($"{icon} [{agentId}] {taskTitle} ({result.Duration.TotalSeconds:F1}s)");
+                            OrchestrationAgentChanged?.Invoke(agentId, result.Success ? "Done" : "Failed");
                         });
                     };
 
                     orchestrator.OnPhaseCompleted += phase =>
                         Dispatcher.UIThread.Post(() =>
-                            AddSystemMessage($"── {phase} completed ──"));
+                            AddSystemMessage($"── {phase} ──"));
+
+                    orchestrator.OnAgentToolCall += (agentId, toolName, status) =>
+                        Dispatcher.UIThread.Post(() =>
+                            OrchestrationAgentChanged?.Invoke(agentId, $"🔨 {toolName}"));
 
                     orchestrator.OnAgentOutput += (agentId, token) =>
                         Dispatcher.UIThread.Post(() =>
                         {
-                            // Show agent streaming output as system messages (throttled)
+                            // Append streaming tokens to the last message from this agent
                             var last = Messages.LastOrDefault();
-                            if (last?.Role == "system" && last.Content?.StartsWith($"[{agentId}] ") == true
-                                && !last.Content.Contains("Starting task") && !last.Content.Contains("completed"))
+                            if (last?.Role == "system" && last.Content?.StartsWith($"[{agentId}]") == true
+                                && !last.Content.Contains("Starting:") && !last.Content.Contains("completed"))
                             {
                                 last.Content += token;
                             }
@@ -646,10 +683,23 @@ public partial class ChatViewModel : DocumentViewModel
                     plan.SaveToFile(planPath);
                     plan.SaveToMarkdown(Path.ChangeExtension(planPath, ".md"));
 
+                    // Build final summary
+                    var summary = new System.Text.StringBuilder();
+                    if (result.Success)
+                        summary.AppendLine($"✅ Orchestration completed in {result.Duration.TotalMinutes:F1} minutes.");
+                    else
+                        summary.AppendLine($"⚠️ Orchestration finished with issues: {result.Error}");
+
+                    var (p2, c2, f2, b2, ip2) = plan.GetStatusCounts();
+                    summary.AppendLine($"📊 Results: {c2} completed, {f2} failed, {b2} blocked, {p2} pending");
+
                     Dispatcher.UIThread.Post(() =>
-                        AddSystemMessage(result.Success
-                            ? $"✅ Orchestration completed in {result.Duration.TotalMinutes:F1} minutes."
-                            : $"⚠️ Orchestration finished with issues: {result.Error}"));
+                    {
+                        AddSystemMessage(summary.ToString().TrimEnd());
+                        // Remove orchestration agents from panel
+                        foreach (var aid in activeAgents)
+                            OrchestrationAgentChanged?.Invoke(aid, "Remove");
+                    });
                 }
                 finally
                 {

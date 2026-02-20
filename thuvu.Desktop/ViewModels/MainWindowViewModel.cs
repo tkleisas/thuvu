@@ -95,6 +95,7 @@ public partial class MainWindowViewModel : ObservableObject
 
                     var (chatVm, agent) = _registry.RestoreAgentFromDb(session, messages);
                     WireAgentToStatusBar(agent);
+                    WireChatOrchestration(chatVm);
                     if (docDock != null) _factory.AddDockable(docDock, chatVm);
 
                     firstAgent ??= agent;
@@ -117,6 +118,7 @@ public partial class MainWindowViewModel : ObservableObject
             var (chatVm, agent) = _registry.CreateAgent("Chat 1");
             firstAgent = agent;
             activeChat = chatVm;
+            WireChatOrchestration(chatVm);
             if (docDock != null) _factory.AddDockable(docDock, chatVm);
         }
 
@@ -267,6 +269,27 @@ public partial class MainWindowViewModel : ObservableObject
         return max;
     }
 
+    /// <summary>Wire orchestration events so sub-agents appear in the Agents panel</summary>
+    private void WireChatOrchestration(ChatViewModel chat)
+    {
+        chat.OrchestrationAgentChanged += (agentId, status) =>
+        {
+            if (status == "Remove")
+            {
+                _agentsPanel?.RemoveAgent(agentId);
+            }
+            else
+            {
+                // Add if not already present
+                var existing = _agentsPanel?.Agents.FirstOrDefault(a => a.AgentId == agentId);
+                if (existing == null)
+                    _agentsPanel?.AddAgent(agentId, agentId);
+
+                _agentsPanel?.UpdateStatus(agentId, status);
+            }
+        };
+    }
+
     /// <summary>Get the active chat's agent service</summary>
     private DesktopAgentService? GetActiveAgent()
     {
@@ -346,6 +369,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         var (chatVm, agent) = _registry.CreateAgent();
         WireAgentToStatusBar(agent);
+        WireChatOrchestration(chatVm);
         _factory.AddDockable(docDock, chatVm);
         _factory.SetActiveDockable(chatVm);
         _factory.SetFocusedDockable(docDock, chatVm);
@@ -439,6 +463,7 @@ public partial class MainWindowViewModel : ObservableObject
 
             var (chatVm, agent) = _registry.CreateAgent();
             WireAgentToStatusBar(agent);
+            WireChatOrchestration(chatVm);
             _factory.AddDockable(docDock, chatVm);
             _factory.SetActiveDockable(chatVm);
         }
