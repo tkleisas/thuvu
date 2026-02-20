@@ -530,72 +530,96 @@ public partial class ChatView : UserControl
         var clipboard = topLevel.Clipboard;
         if (clipboard == null) return;
 
-        var formats = await clipboard.GetFormatsAsync();
-        System.Diagnostics.Debug.WriteLine($"[Clipboard] Available formats: {string.Join(", ", formats)}");
-
-        // Try image data formats (PNG bytes, Bitmap bytes, etc.)
-        foreach (var fmt in new[] { "image/png", "PNG", "image/jpeg", "image/bmp", "Bitmap",
-                                     "DeviceIndependentBitmap", "System.Drawing.Bitmap" })
+        try
         {
-            if (!formats.Contains(fmt)) continue;
-            var data = await clipboard.GetDataAsync(fmt);
-            System.Diagnostics.Debug.WriteLine($"[Clipboard] Format '{fmt}' returned type: {data?.GetType().FullName ?? "null"}");
+            var formats = await clipboard.GetFormatsAsync();
+            var logPath = Path.Combine(AppContext.BaseDirectory, "clipboard_debug.log");
+            await File.AppendAllTextAsync(logPath,
+                $"\n[{DateTime.Now:HH:mm:ss}] Clipboard formats: {string.Join(", ", formats)}\n");
 
-            byte[]? bytes = data switch
+            // Try image data formats
+            foreach (var fmt in new[] { "image/png", "PNG", "image/jpeg", "image/bmp", "Bitmap",
+                                         "DeviceIndependentBitmap", "System.Drawing.Bitmap",
+                                         "image/x-png", "CF_BITMAP", "CF_DIB" })
             {
-                byte[] b => b,
-                MemoryStream ms => ms.ToArray(),
-                Stream s => ReadStreamToBytes(s),
-                _ => null
-            };
+                if (!formats.Contains(fmt)) continue;
+                var data = await clipboard.GetDataAsync(fmt);
+                await File.AppendAllTextAsync(logPath,
+                    $"  Format '{fmt}': type={data?.GetType().FullName ?? "null"}, " +
+                    $"value={(data is byte[] b ? $"{b.Length} bytes" : data?.ToString()?.Substring(0, Math.Min(200, data.ToString()!.Length)) ?? "null")}\n");
 
-            if (bytes != null && bytes.Length > 100) // sanity: at least 100 bytes for a real image
-            {
-                vm.AddPendingImage(bytes, "image/png");
-                e.Handled = true;
-                System.Diagnostics.Debug.WriteLine($"[Clipboard] Added image from format '{fmt}', {bytes.Length} bytes");
-                return;
-            }
-        }
-
-        // Check for file paths that point to images
-        foreach (var fmt in new[] { "Files", "FileNames", "text/uri-list" })
-        {
-            if (!formats.Contains(fmt)) continue;
-            var data = await clipboard.GetDataAsync(fmt);
-
-            IEnumerable<string>? paths = data switch
-            {
-                IEnumerable<Avalonia.Platform.Storage.IStorageItem> items =>
-                    items.OfType<Avalonia.Platform.Storage.IStorageFile>()
-                         .Select(f => f.Path.LocalPath),
-                IEnumerable<string> strs => strs,
-                string s => s.Split('\n', StringSplitOptions.RemoveEmptyEntries),
-                _ => null
-            };
-
-            if (paths == null) continue;
-
-            foreach (var path in paths)
-            {
-                var clean = path.Trim().TrimStart("file:///".ToCharArray());
-                var ext = Path.GetExtension(clean).ToLowerInvariant();
-                if (ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" && File.Exists(clean))
+                byte[]? bytes = data switch
                 {
-                    var fileBytes = await File.ReadAllBytesAsync(clean);
-                    var mime = ext switch
-                    {
-                        ".jpg" or ".jpeg" => "image/jpeg",
-                        ".gif" => "image/gif",
-                        ".webp" => "image/webp",
-                        ".bmp" => "image/bmp",
-                        _ => "image/png"
-                    };
-                    vm.AddPendingImage(fileBytes, mime);
+                    byte[] arr => arr,
+                    MemoryStream ms => ms.ToArray(),
+                    Stream s => ReadStreamToBytes(s),
+                    _ => null
+                };
+
+                if (bytes != null && bytes.Length > 100)
+                {
+                    vm.AddPendingImage(bytes, "image/png");
                     e.Handled = true;
-                    System.Diagnostics.Debug.WriteLine($"[Clipboard] Added image file: {clean}");
+                    return;
                 }
             }
+
+            // Fallback: try Win32 clipboard for bitmap data
+            if (OperatingSystem.IsWindows())
+            {
+                var imgBytes = TryGetImageFromWin32Clipboard();
+                if (imgBytes != null && imgBytes.Length > 100)
+                {
+                    await File.AppendAllTextAsync(logPath,
+                        $"  Win32 clipboard fallback: got {imgBytes.Length} bytes\n");
+                    vm.AddPendingImage(imgBytes, "image/png");
+                    e.Handled = true;
+                    return;
+                }
+            }
+
+            // Check for file paths that point to images
+            foreach (var fmt in new[] { "Files", "FileNames", "text/uri-list" })
+            {
+                if (!formats.Contains(fmt)) continue;
+                var data = await clipboard.GetDataAsync(fmt);
+
+                IEnumerable<string>? paths = data switch
+                {
+                    IEnumerable<Avalonia.Platform.Storage.IStorageItem> items =>
+                        items.OfType<Avalonia.Platform.Storage.IStorageFile>()
+                             .Select(f => f.Path.LocalPath),
+                    IEnumerable<string> strs => strs,
+                    string s => s.Split('\n', StringSplitOptions.RemoveEmptyEntries),
+                    _ => null
+                };
+
+                if (paths == null) continue;
+
+                foreach (var path in paths)
+                {
+                    var clean = path.Trim().TrimStart("file:///".ToCharArray());
+                    var ext = Path.GetExtension(clean).ToLowerInvariant();
+                    if (ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" && File.Exists(clean))
+                    {
+                        var fileBytes = await File.ReadAllBytesAsync(clean);
+                        var mime = ext switch
+                        {
+                            ".jpg" or ".jpeg" => "image/jpeg",
+                            ".gif" => "image/gif",
+                            ".webp" => "image/webp",
+                            ".bmp" => "image/bmp",
+                            _ => "image/png"
+                        };
+                        vm.AddPendingImage(fileBytes, mime);
+                        e.Handled = true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Clipboard] Error: {ex}");
         }
     }
 
@@ -608,6 +632,76 @@ public partial class ChatView : UserControl
             return ms.ToArray();
         }
         catch { return null; }
+    }
+
+    /// <summary>Win32 clipboard fallback: read bitmap data and convert to PNG bytes</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static byte[]? TryGetImageFromWin32Clipboard()
+    {
+        try
+        {
+            if (!Win32Clipboard.OpenClipboard(IntPtr.Zero)) return null;
+            try
+            {
+                // Try CF_DIBV5 (17) first, then CF_DIB (8)
+                foreach (uint fmt in new uint[] { 17, 8 })
+                {
+                    if (!Win32Clipboard.IsClipboardFormatAvailable(fmt)) continue;
+                    var hData = Win32Clipboard.GetClipboardData(fmt);
+                    if (hData == IntPtr.Zero) continue;
+
+                    var ptr = Win32Clipboard.GlobalLock(hData);
+                    if (ptr == IntPtr.Zero) continue;
+                    try
+                    {
+                        var size = (int)Win32Clipboard.GlobalSize(hData);
+                        if (size <= 0) continue;
+
+                        var dibBytes = new byte[size];
+                        System.Runtime.InteropServices.Marshal.Copy(ptr, dibBytes, 0, size);
+
+                        // Convert DIB to BMP file format (add BMP file header)
+                        return DibToBmp(dibBytes);
+                    }
+                    finally
+                    {
+                        Win32Clipboard.GlobalUnlock(hData);
+                    }
+                }
+            }
+            finally
+            {
+                Win32Clipboard.CloseClipboard();
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>Prepend BMP file header to a DIB (device-independent bitmap) byte array</summary>
+    private static byte[] DibToBmp(byte[] dib)
+    {
+        // BITMAPINFOHEADER size is first 4 bytes of DIB
+        int headerSize = BitConverter.ToInt32(dib, 0);
+        int bitsOffset = headerSize; // offset to pixel data after headers
+
+        // Check for color table
+        int bitCount = BitConverter.ToInt16(dib, 14);
+        int colorsUsed = BitConverter.ToInt32(dib, 32);
+        if (bitCount <= 8)
+            bitsOffset += (colorsUsed > 0 ? colorsUsed : (1 << bitCount)) * 4;
+        else if (bitCount == 16 || bitCount == 32)
+            bitsOffset += colorsUsed * 4; // color masks if present
+
+        // BMP file header: 14 bytes
+        int fileSize = 14 + dib.Length;
+        var bmp = new byte[fileSize];
+        bmp[0] = (byte)'B';
+        bmp[1] = (byte)'M';
+        BitConverter.GetBytes(fileSize).CopyTo(bmp, 2);
+        BitConverter.GetBytes(14 + bitsOffset).CopyTo(bmp, 10);
+        Array.Copy(dib, 0, bmp, 14, dib.Length);
+        return bmp;
     }
 
     /// <summary>
@@ -647,4 +741,23 @@ public partial class ChatView : UserControl
             msg.MarkdownFailed = true;
         }
     }
+}
+
+/// <summary>Win32 clipboard P/Invoke declarations</summary>
+internal static class Win32Clipboard
+{
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern bool OpenClipboard(IntPtr hWndNewOwner);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern bool CloseClipboard();
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern bool IsClipboardFormatAvailable(uint format);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern IntPtr GetClipboardData(uint format);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    public static extern IntPtr GlobalLock(IntPtr hMem);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    public static extern bool GlobalUnlock(IntPtr hMem);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    public static extern nuint GlobalSize(IntPtr hMem);
 }
