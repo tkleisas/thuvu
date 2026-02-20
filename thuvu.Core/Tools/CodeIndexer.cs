@@ -50,7 +50,9 @@ namespace thuvu.Tools
 
             var files = GetIndexableFiles(directory, config);
             result.TotalFiles = files.Count;
+            AgentLogger.LogInfo("code_index: Found {Count} indexable files in {Dir}", files.Count, directory);
 
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var file in files)
             {
                 if (ct.IsCancellationRequested) break;
@@ -66,8 +68,13 @@ namespace thuvu.Tools
                 catch (Exception ex)
                 {
                     result.Errors.Add($"{file}: {ex.Message}");
+                    AgentLogger.LogWarning("code_index: Error indexing {File}: {Error}", file, ex.Message);
                 }
             }
+
+            sw.Stop();
+            AgentLogger.LogInfo("code_index: Completed in {Elapsed}s — {Indexed} indexed, {Skipped} skipped, {Errors} errors",
+                sw.Elapsed.TotalSeconds.ToString("F1"), result.IndexedFiles, result.SkippedFiles, result.Errors.Count);
 
             return result;
         }

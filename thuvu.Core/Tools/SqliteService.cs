@@ -61,6 +61,13 @@ namespace thuvu.Tools
                 AgentLogger.LogDebug("SQLite WAL mode enabled");
             }
 
+            // Set busy timeout to wait up to 5 seconds for locks instead of failing immediately
+            await using (var busyCmd = conn.CreateCommand())
+            {
+                busyCmd.CommandText = "PRAGMA busy_timeout=5000;";
+                await busyCmd.ExecuteNonQueryAsync(ct);
+            }
+
             // Create tables
             var schema = @"
                 -- Code symbols (functions, classes, properties, etc.)
@@ -329,10 +336,16 @@ namespace thuvu.Tools
         public async Task<SqliteConnection> GetConnectionAsync(CancellationToken ct = default)
         {
             if (!_initialized)
-                await InitializeAsync(ct);
+                await InitializeAsync(ct).ConfigureAwait(false);
 
             var conn = new SqliteConnection(_connectionString);
-            await conn.OpenAsync(ct);
+            await conn.OpenAsync(ct).ConfigureAwait(false);
+
+            // Set busy timeout per-connection (PRAGMA is connection-scoped)
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA busy_timeout=5000;";
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
             return conn;
         }
 

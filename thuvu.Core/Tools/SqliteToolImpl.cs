@@ -40,7 +40,10 @@ namespace thuvu.Tools
                         return JsonSerializer.Serialize(new { success = false, error = "SQLite indexing is disabled" }, _jsonOptions);
                     }
 
-                    var fullPath = Path.GetFullPath(path);
+                    // Resolve path relative to agent's work directory, not process CWD
+                    var workDir = AgentContext.GetEffectiveWorkDirectory();
+                    var fullPath = Path.IsPathRooted(path) ? Path.GetFullPath(path)
+                        : Path.GetFullPath(Path.Combine(workDir, path));
 
                     if (Directory.Exists(fullPath))
                     {
@@ -133,7 +136,9 @@ namespace thuvu.Tools
                 // Get all symbols in a file
                 if (!string.IsNullOrEmpty(file) && string.IsNullOrEmpty(search))
                 {
-                    var fullPath = Path.GetFullPath(file);
+                    var workDir = AgentContext.GetEffectiveWorkDirectory();
+                    var fullPath = Path.IsPathRooted(file) ? Path.GetFullPath(file)
+                        : Path.GetFullPath(Path.Combine(workDir, file));
                     var symbols = await db.GetSymbolsInFileAsync(fullPath, ct);
                     return JsonSerializer.Serialize(new
                     {
