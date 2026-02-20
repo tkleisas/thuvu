@@ -209,6 +209,9 @@ public partial class MainWindowViewModel : ObservableObject
         var terminal = FindDockable<TerminalViewModel>(layout);
         if (terminal != null)
             terminal.WorkingDirectory = _project.ResolvedWorkDirectory;
+
+        // Restore saved panel proportions
+        RestoreDockLayout();
     }
 
     private void InitializeFileTree(IDock layout)
@@ -467,7 +470,99 @@ public partial class MainWindowViewModel : ObservableObject
     {
         var activeId = (DockLayout != null ? FindDocumentDock(DockLayout)?.ActiveDockable as ChatViewModel : null)?.Id;
         _registry.SaveAllSessions(activeId);
+        SaveDockLayout();
     }
+
+    #region Dock Layout Persistence
+
+    private string GetLayoutPath() =>
+        Path.Combine(_project.ProjectDirectory, ".db", "layout.json");
+
+    /// <summary>Save dock proportions and visibility to a JSON file</summary>
+    private void SaveDockLayout()
+    {
+        if (DockLayout == null) return;
+        try
+        {
+            var state = new Dictionary<string, object>();
+            CollectDockState(DockLayout, state);
+
+            var dir = Path.GetDirectoryName(GetLayoutPath())!;
+            Directory.CreateDirectory(dir);
+            var json = System.Text.Json.JsonSerializer.Serialize(state,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(GetLayoutPath(), json);
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.LogError("Failed to save dock layout: {Error}", ex.Message);
+        }
+    }
+
+    /// <summary>Restore dock proportions from a saved JSON file</summary>
+    private void RestoreDockLayout()
+    {
+        if (DockLayout == null) return;
+        var path = GetLayoutPath();
+        if (!File.Exists(path)) return;
+        try
+        {
+            var json = File.ReadAllText(path);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var state = doc.RootElement;
+            ApplyDockState(DockLayout, state);
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.LogError("Failed to restore dock layout: {Error}", ex.Message);
+        }
+    }
+
+    private static void CollectDockState(IDockable dockable, Dictionary<string, object> state)
+    {
+        if (dockable.Id != null)
+        {
+            var props = new Dictionary<string, object>();
+            if (dockable is IProportionalDock pd)
+                props["proportion"] = pd.Proportion;
+            if (dockable is IToolDock td)
+                props["proportion"] = td.Proportion;
+            if (dockable is IDocumentDock dd)
+                props["proportion"] = dd.Proportion;
+            if (props.Count > 0)
+                state[dockable.Id] = props;
+        }
+
+        if (dockable is IDock dock && dock.VisibleDockables != null)
+        {
+            foreach (var child in dock.VisibleDockables)
+                CollectDockState(child, state);
+        }
+    }
+
+    private static void ApplyDockState(IDockable dockable, System.Text.Json.JsonElement state)
+    {
+        if (dockable.Id != null && state.TryGetProperty(dockable.Id, out var props))
+        {
+            if (props.TryGetProperty("proportion", out var prop) && prop.TryGetDouble(out var val))
+            {
+                if (dockable is IProportionalDock pd)
+                    pd.Proportion = val;
+                if (dockable is IToolDock td)
+                    td.Proportion = val;
+                if (dockable is IDocumentDock dd)
+                    dd.Proportion = val;
+            }
+        }
+
+        if (dockable is IDock dock && dock.VisibleDockables != null)
+        {
+            foreach (var child in dock.VisibleDockables)
+                ApplyDockState(child, state);
+        }
+    }
+
+    #endregion
 
     [RelayCommand]
     private void ToggleFileTree()
