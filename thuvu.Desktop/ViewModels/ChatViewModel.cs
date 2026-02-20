@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Text.Json;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
@@ -881,18 +882,49 @@ public partial class ChatViewModel : DocumentViewModel
 
     private void AppendToLastAssistant(string token)
     {
-        var last = Messages.LastOrDefault(m => m.Role == "assistant");
-        if (last != null) last.Content += token;
+        var last = Messages.LastOrDefault();
+        // If the last message is not an active streaming assistant, create a new one
+        // This happens after tool calls complete — the next text chunk gets its own bubble
+        if (last == null || last.Role != "assistant" || !last.IsStreaming)
+        {
+            Messages.Add(new ChatMessageViewModel
+            {
+                Role = "assistant",
+                Content = token,
+                Timestamp = DateTime.Now.ToString("HH:mm:ss"),
+                IsStreaming = true
+            });
+            return;
+        }
+        last.Content += token;
     }
 
     private void AppendThinking(string token)
     {
-        var last = Messages.LastOrDefault(m => m.Role == "assistant");
-        if (last != null) last.ThinkingContent = (last.ThinkingContent ?? "") + token;
+        // Find the last streaming assistant message (may not be the very last message if tools are between)
+        var last = Messages.LastOrDefault(m => m.Role == "assistant" && m.IsStreaming);
+        if (last == null)
+        {
+            // Create a new assistant bubble for thinking that arrives before content
+            last = new ChatMessageViewModel
+            {
+                Role = "assistant",
+                Content = "",
+                Timestamp = DateTime.Now.ToString("HH:mm:ss"),
+                IsStreaming = true
+            };
+            Messages.Add(last);
+        }
+        last.ThinkingContent = (last.ThinkingContent ?? "") + token;
     }
 
     private void AddToolMessage(string name, string args)
     {
+        // Finalize the current streaming assistant message before inserting the tool bubble
+        var lastAssistant = Messages.LastOrDefault(m => m.Role == "assistant" && m.IsStreaming);
+        if (lastAssistant != null)
+            lastAssistant.IsStreaming = false;
+
         Messages.Add(new ChatMessageViewModel
         {
             Role = "tool",
@@ -904,7 +936,9 @@ public partial class ChatViewModel : DocumentViewModel
 
     private void UpdateToolResult(string name, string result, TimeSpan elapsed)
     {
-        var toolMsg = Messages.LastOrDefault(m => m.Role == "tool" && m.ToolName == name);
+        // Find the last tool message with this name that has no result yet
+        var toolMsg = Messages.LastOrDefault(m => m.Role == "tool" && m.ToolName == name && m.ToolResult == null);
+        toolMsg ??= Messages.LastOrDefault(m => m.Role == "tool" && m.ToolName == name);
         if (toolMsg != null)
         {
             toolMsg.ToolResult = $"[{elapsed.TotalSeconds:F1}s] {result}";
@@ -913,15 +947,23 @@ public partial class ChatViewModel : DocumentViewModel
 
     private void FinalizeResponse()
     {
-        var last = Messages.LastOrDefault(m => m.Role == "assistant");
-        if (last != null) last.IsStreaming = false;
+        // Finalize all remaining streaming assistant messages
+        foreach (var msg in Messages.Where(m => m.Role == "assistant" && m.IsStreaming))
+            msg.IsStreaming = false;
+
+        // Remove empty assistant bubbles (e.g., tool-only responses with no text)
+        var empties = Messages.Where(m => m.Role == "assistant" && string.IsNullOrWhiteSpace(m.Content) && string.IsNullOrWhiteSpace(m.ThinkingContent)).ToList();
+        foreach (var empty in empties)
+            Messages.Remove(empty);
+
         IsProcessing = false;
         CanSend = true;
     }
 
     private void HandleError(string error)
     {
-        var last = Messages.LastOrDefault(m => m.Role == "assistant");
+        var last = Messages.LastOrDefault(m => m.Role == "assistant" && m.IsStreaming)
+                   ?? Messages.LastOrDefault(m => m.Role == "assistant");
         if (last != null)
         {
             last.Content += $"\n\n⚠️ Error: {error}";
