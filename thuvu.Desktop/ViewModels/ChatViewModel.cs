@@ -104,6 +104,13 @@ public partial class ChatViewModel : DocumentViewModel
         CanClose = true;
     }
 
+    public void RefreshModels()
+    {
+        // Reload config from disk so newly added models are picked up
+        AgentConfig.LoadConfig();
+        LoadAvailableModels();
+    }
+
     private void LoadAvailableModels()
     {
         AvailableModels.Clear();

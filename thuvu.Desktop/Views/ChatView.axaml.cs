@@ -459,6 +459,12 @@ public partial class ChatView : UserControl
         }
     }
 
+    private void OnRefreshModelsClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is ChatViewModel vm)
+            vm.RefreshModels();
+    }
+
     /// <summary>
     /// After MarkdownScrollViewer loads, subscribe to visibility changes
     /// so we can detect rendering failures both on initial load (restored messages)

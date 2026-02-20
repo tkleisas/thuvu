@@ -57,6 +57,9 @@
                              MinWidth="200" MaxWidth="400" Padding="6,3"
                              FontSize="12" VerticalAlignment="Center"
                              PlaceholderText="Select model..." />
+                    <Button Content="🔄" ToolTip.Tip="Refresh model list"
+                            FontSize="12" Padding="4,2" VerticalAlignment="Center"
+                            Click="OnRefreshModelsClick" />
                 </StackPanel>
             </DockPanel>
         </Border>
