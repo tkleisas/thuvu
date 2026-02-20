@@ -260,6 +260,17 @@ namespace thuvu.Models
             if (candidates.Count > 0)
                 return candidates[0];
             
+            // For Vision, also check SupportsVision flag (user may set flag without adding Purpose)
+            if (purpose == ModelPurpose.Vision)
+            {
+                var visionCapable = Models
+                    .Where(m => m.Enabled && m.SupportsVision)
+                    .OrderByDescending(m => m.Priority)
+                    .FirstOrDefault();
+                if (visionCapable != null)
+                    return visionCapable;
+            }
+            
             // Final fallback: default model or first enabled model
             var defaultModel = GetModel(DefaultModelId);
             if (defaultModel?.Enabled == true)
