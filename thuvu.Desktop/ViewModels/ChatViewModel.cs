@@ -22,6 +22,21 @@ public partial class ChatMessageViewModel : ObservableObject
     [ObservableProperty] private string? _toolResult;
     [ObservableProperty] private string? _thinkingContent;
     [ObservableProperty] private bool _showThinking;
+
+    /// <summary>
+    /// True when streaming is done and markdown should be rendered.
+    /// During streaming, plain text is shown to avoid expensive re-parsing on every token.
+    /// </summary>
+    public bool ShowMarkdown => Role == "assistant" && !IsStreaming;
+
+    /// <summary>Show plain text while streaming, hide once markdown takes over</summary>
+    public bool ShowStreamingText => Role == "assistant" && IsStreaming;
+
+    partial void OnIsStreamingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowMarkdown));
+        OnPropertyChanged(nameof(ShowStreamingText));
+    }
 }
 
 /// <summary>

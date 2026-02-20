@@ -162,11 +162,15 @@
                                     </Border>
                                 </Expander>
 
-                                <!-- Markdown for assistant messages -->
+                                <!-- Markdown for assistant messages (shown after streaming completes) -->
                                 <md:MarkdownScrollViewer Markdown="{Binding Content}"
                                     MarkdownStyleName="FluentTheme"
-                                    IsVisible="{Binding Role, Converter={x:Static views:ChatView.IsAssistantConverter}}"
+                                    IsVisible="{Binding ShowMarkdown}"
                                     SaveScrollValueWhenContentUpdated="False" />
+
+                                <!-- Plain text while streaming (avoids expensive markdown re-parsing per token) -->
+                                <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
+                                    IsVisible="{Binding ShowStreamingText}" />
 
                                 <!-- Plain text for user/tool messages -->
                                 <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
