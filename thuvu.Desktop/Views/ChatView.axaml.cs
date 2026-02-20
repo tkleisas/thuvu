@@ -531,53 +531,83 @@ public partial class ChatView : UserControl
         if (clipboard == null) return;
 
         var formats = await clipboard.GetFormatsAsync();
+        System.Diagnostics.Debug.WriteLine($"[Clipboard] Available formats: {string.Join(", ", formats)}");
 
-        // Check for image data in clipboard (PNG preferred)
-        foreach (var fmt in new[] { "image/png", "PNG", "image/jpeg", "image/bmp", "Bitmap" })
+        // Try image data formats (PNG bytes, Bitmap bytes, etc.)
+        foreach (var fmt in new[] { "image/png", "PNG", "image/jpeg", "image/bmp", "Bitmap",
+                                     "DeviceIndependentBitmap", "System.Drawing.Bitmap" })
         {
-            if (formats.Contains(fmt))
+            if (!formats.Contains(fmt)) continue;
+            var data = await clipboard.GetDataAsync(fmt);
+            System.Diagnostics.Debug.WriteLine($"[Clipboard] Format '{fmt}' returned type: {data?.GetType().FullName ?? "null"}");
+
+            byte[]? bytes = data switch
             {
-                var data = await clipboard.GetDataAsync(fmt);
-                if (data is byte[] bytes && bytes.Length > 0)
-                {
-                    vm.AddPendingImage(bytes, "image/png");
-                    e.Handled = true;
-                    return;
-                }
+                byte[] b => b,
+                MemoryStream ms => ms.ToArray(),
+                Stream s => ReadStreamToBytes(s),
+                _ => null
+            };
+
+            if (bytes != null && bytes.Length > 100) // sanity: at least 100 bytes for a real image
+            {
+                vm.AddPendingImage(bytes, "image/png");
+                e.Handled = true;
+                System.Diagnostics.Debug.WriteLine($"[Clipboard] Added image from format '{fmt}', {bytes.Length} bytes");
+                return;
             }
         }
 
         // Check for file paths that point to images
-        if (formats.Contains("Files") || formats.Contains("FileNames"))
+        foreach (var fmt in new[] { "Files", "FileNames", "text/uri-list" })
         {
-            var data = await clipboard.GetDataAsync("Files");
-            if (data is IEnumerable<Avalonia.Platform.Storage.IStorageItem> items)
+            if (!formats.Contains(fmt)) continue;
+            var data = await clipboard.GetDataAsync(fmt);
+
+            IEnumerable<string>? paths = data switch
             {
-                foreach (var item in items)
+                IEnumerable<Avalonia.Platform.Storage.IStorageItem> items =>
+                    items.OfType<Avalonia.Platform.Storage.IStorageFile>()
+                         .Select(f => f.Path.LocalPath),
+                IEnumerable<string> strs => strs,
+                string s => s.Split('\n', StringSplitOptions.RemoveEmptyEntries),
+                _ => null
+            };
+
+            if (paths == null) continue;
+
+            foreach (var path in paths)
+            {
+                var clean = path.Trim().TrimStart("file:///".ToCharArray());
+                var ext = Path.GetExtension(clean).ToLowerInvariant();
+                if (ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" && File.Exists(clean))
                 {
-                    if (item is Avalonia.Platform.Storage.IStorageFile file)
+                    var fileBytes = await File.ReadAllBytesAsync(clean);
+                    var mime = ext switch
                     {
-                        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
-                        if (ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp")
-                        {
-                            await using var stream = await file.OpenReadAsync();
-                            using var ms = new MemoryStream();
-                            await stream.CopyToAsync(ms);
-                            var mime = ext switch
-                            {
-                                ".jpg" or ".jpeg" => "image/jpeg",
-                                ".gif" => "image/gif",
-                                ".webp" => "image/webp",
-                                ".bmp" => "image/bmp",
-                                _ => "image/png"
-                            };
-                            vm.AddPendingImage(ms.ToArray(), mime);
-                            e.Handled = true;
-                        }
-                    }
+                        ".jpg" or ".jpeg" => "image/jpeg",
+                        ".gif" => "image/gif",
+                        ".webp" => "image/webp",
+                        ".bmp" => "image/bmp",
+                        _ => "image/png"
+                    };
+                    vm.AddPendingImage(fileBytes, mime);
+                    e.Handled = true;
+                    System.Diagnostics.Debug.WriteLine($"[Clipboard] Added image file: {clean}");
                 }
             }
         }
+    }
+
+    private static byte[]? ReadStreamToBytes(Stream s)
+    {
+        try
+        {
+            using var ms = new MemoryStream();
+            s.CopyTo(ms);
+            return ms.ToArray();
+        }
+        catch { return null; }
     }
 
     /// <summary>
