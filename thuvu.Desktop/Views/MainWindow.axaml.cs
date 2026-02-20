@@ -13,6 +13,17 @@ public partial class MainWindow : Window
         KeyDown += OnKeyDown;
         DataContextChanged += OnDataContextChanged;
         Closing += OnWindowClosing;
+        Loaded += OnWindowLoaded;
+    }
+
+    private void OnWindowLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        // Apply saved proportions after the visual tree has been created and measured
+        if (DataContext is MainWindowViewModel vm)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => vm.ApplyLayoutProportions(),
+                Avalonia.Threading.DispatcherPriority.Loaded);
+        }
     }
 
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)

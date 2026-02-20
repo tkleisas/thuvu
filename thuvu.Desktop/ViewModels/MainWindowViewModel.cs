@@ -63,7 +63,6 @@ public partial class MainWindowViewModel : ObservableObject
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();
         _factory.InitLayout(layout);
-        ApplySavedProportions(layout);
         DockLayout = layout;
 
         // Remove the placeholder chat from DockFactory
@@ -496,9 +495,10 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    /// <summary>Apply saved proportions to the dock model before visual tree creation</summary>
-    private void ApplySavedProportions(IDockable layout)
+    /// <summary>Apply saved proportions after visual tree is loaded</summary>
+    public void ApplyLayoutProportions()
     {
+        if (DockLayout == null) return;
         var path = GetLayoutPath();
         if (!File.Exists(path)) return;
         try
@@ -506,7 +506,7 @@ public partial class MainWindowViewModel : ObservableObject
             var json = File.ReadAllText(path);
             var state = JsonSerializer.Deserialize<Dictionary<string, double>>(json);
             if (state != null)
-                ApplyProportions(layout, state);
+                ApplyProportions(DockLayout, state);
         }
         catch (Exception ex)
         {
