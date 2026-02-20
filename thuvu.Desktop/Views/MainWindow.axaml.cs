@@ -1,6 +1,10 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Presenters;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
+using Avalonia.VisualTree;
+using System.Text.Json;
 using thuvu.Desktop.ViewModels;
 
 namespace thuvu.Desktop.Views;
@@ -18,18 +22,58 @@ public partial class MainWindow : Window
 
     private void OnWindowLoaded(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        // Apply saved proportions after the visual tree has been created and measured
+        // Restore saved proportions after visual tree is fully built
         if (DataContext is MainWindowViewModel vm)
         {
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => vm.ApplyLayoutProportions(),
-                Avalonia.Threading.DispatcherPriority.Loaded);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                var saved = vm.LoadLayoutState();
+                if (saved != null)
+                    ApplyProportionsToVisualTree(MainDockControl, saved);
+            }, Avalonia.Threading.DispatcherPriority.Loaded);
         }
     }
 
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
         if (DataContext is MainWindowViewModel vm)
+        {
+            // Collect proportions from visual tree before saving
+            var state = new Dictionary<string, double>();
+            CollectProportionsFromVisualTree(MainDockControl, state);
+            vm.SaveLayoutState(state);
             vm.SaveAllSessions();
+        }
+    }
+
+    /// <summary>Walk the visual tree and collect ProportionalStackPanel.Proportion attached property values</summary>
+    private static void CollectProportionsFromVisualTree(Visual parent, Dictionary<string, double> state)
+    {
+        foreach (var descendant in parent.GetVisualDescendants())
+        {
+            if (descendant is ContentPresenter cp && cp.DataContext is Dock.Model.Core.IDockable dockable)
+            {
+                var proportion = ProportionalStackPanel.GetProportion(cp);
+                if (dockable.Id != null && double.IsFinite(proportion))
+                    state[dockable.Id] = proportion;
+            }
+        }
+    }
+
+    /// <summary>Walk the visual tree and set ProportionalStackPanel.Proportion attached property values</summary>
+    private static void ApplyProportionsToVisualTree(Visual parent, Dictionary<string, double> state)
+    {
+        foreach (var descendant in parent.GetVisualDescendants())
+        {
+            if (descendant is ContentPresenter cp && cp.DataContext is Dock.Model.Core.IDockable dockable)
+            {
+                if (dockable.Id != null && state.TryGetValue(dockable.Id, out var proportion))
+                    ProportionalStackPanel.SetProportion(cp, proportion);
+            }
+
+            if (descendant is Avalonia.Layout.Layoutable layoutable)
+                layoutable.InvalidateArrange();
+        }
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)

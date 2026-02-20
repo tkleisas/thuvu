@@ -468,7 +468,6 @@ public partial class MainWindowViewModel : ObservableObject
     {
         var activeId = (DockLayout != null ? FindDocumentDock(DockLayout)?.ActiveDockable as ChatViewModel : null)?.Id;
         _registry.SaveAllSessions(activeId);
-        SaveDockLayout();
     }
 
     #region Dock Layout Persistence
@@ -476,16 +475,13 @@ public partial class MainWindowViewModel : ObservableObject
     private string GetLayoutPath() =>
         Path.Combine(_project.ProjectDirectory, ".db", "layout.json");
 
-    /// <summary>Save dock proportions to JSON</summary>
-    private void SaveDockLayout()
+    /// <summary>Save layout state collected from visual tree</summary>
+    public void SaveLayoutState(Dictionary<string, double> state)
     {
-        if (DockLayout == null) return;
         try
         {
             var layoutPath = GetLayoutPath();
             Directory.CreateDirectory(Path.GetDirectoryName(layoutPath)!);
-            var state = new Dictionary<string, double>();
-            CollectProportions(DockLayout, state);
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(layoutPath, json);
         }
@@ -495,43 +491,21 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    /// <summary>Apply saved proportions after visual tree is loaded</summary>
-    public void ApplyLayoutProportions()
+    /// <summary>Load layout state from file, returns null if not available</summary>
+    public Dictionary<string, double>? LoadLayoutState()
     {
-        if (DockLayout == null) return;
         var path = GetLayoutPath();
-        if (!File.Exists(path)) return;
+        if (!File.Exists(path)) return null;
         try
         {
             var json = File.ReadAllText(path);
-            var state = JsonSerializer.Deserialize<Dictionary<string, double>>(json);
-            if (state != null)
-                ApplyProportions(DockLayout, state);
+            return JsonSerializer.Deserialize<Dictionary<string, double>>(json);
         }
         catch (Exception ex)
         {
-            AgentLogger.LogError("Failed to restore dock layout: {Error}", ex.Message);
+            AgentLogger.LogError("Failed to load dock layout: {Error}", ex.Message);
+            return null;
         }
-    }
-
-    private static void CollectProportions(IDockable dockable, Dictionary<string, double> state)
-    {
-        if (dockable.Id != null && double.IsFinite(dockable.Proportion))
-            state[dockable.Id] = dockable.Proportion;
-
-        if (dockable is IDock dock && dock.VisibleDockables != null)
-            foreach (var child in dock.VisibleDockables)
-                CollectProportions(child, state);
-    }
-
-    private static void ApplyProportions(IDockable dockable, Dictionary<string, double> state)
-    {
-        if (dockable.Id != null && state.TryGetValue(dockable.Id, out var val))
-            dockable.Proportion = val;
-
-        if (dockable is IDock dock && dock.VisibleDockables != null)
-            foreach (var child in dock.VisibleDockables)
-                ApplyProportions(child, state);
     }
 
     #endregion

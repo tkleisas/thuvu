@@ -57,6 +57,6 @@
         </Border>
 
         <!-- Main Dock Area -->
-        <dock:DockControl Layout="{Binding DockLayout}" />
+        <dock:DockControl x:Name="MainDockControl" Layout="{Binding DockLayout}" />
     </DockPanel>
 </Window>
