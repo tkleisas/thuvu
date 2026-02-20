@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using thuvu.Desktop.Services;
 using thuvu.Models;
@@ -44,6 +45,19 @@ public partial class ChatMessageViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowMarkdown));
         OnPropertyChanged(nameof(ShowPlainText));
     }
+
+    /// <summary>Images included in this message (for display in chat history)</summary>
+    public ObservableCollection<ImageData> Images { get; } = new();
+
+    public bool HasImages => Images.Count > 0;
+}
+
+/// <summary>Holds image data for display and API submission</summary>
+public class ImageData
+{
+    public string Base64 { get; set; } = "";
+    public string MimeType { get; set; } = "image/png";
+    public Bitmap? Thumbnail { get; set; }
 }
 
 /// <summary>
@@ -92,6 +106,11 @@ public partial class ChatViewModel : DocumentViewModel
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
     public ObservableCollection<ModelChoice> AvailableModels { get; } = new();
 
+    /// <summary>Images staged for the next message (preview strip)</summary>
+    public ObservableCollection<ImageData> PendingImages { get; } = new();
+
+    public bool HasPendingImages => PendingImages.Count > 0;
+
     [ObservableProperty] private ModelChoice? _selectedModel;
 
     /// <summary>The agent service powering this chat</summary>
@@ -102,7 +121,26 @@ public partial class ChatViewModel : DocumentViewModel
         Id = "Chat";
         Title = "💬 Chat";
         CanClose = true;
+        PendingImages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPendingImages));
     }
+
+    /// <summary>Add an image from raw bytes (clipboard paste, file picker)</summary>
+    public void AddPendingImage(byte[] imageBytes, string mimeType = "image/png")
+    {
+        var base64 = Convert.ToBase64String(imageBytes);
+        using var ms = new MemoryStream(imageBytes);
+        var bmp = new Bitmap(ms);
+        PendingImages.Add(new ImageData { Base64 = base64, MimeType = mimeType, Thumbnail = bmp });
+    }
+
+    /// <summary>Remove a pending image by index</summary>
+    public void RemovePendingImage(int index)
+    {
+        if (index >= 0 && index < PendingImages.Count)
+            PendingImages.RemoveAt(index);
+    }
+
+    public void ClearPendingImages() => PendingImages.Clear();
 
     public void RefreshModels()
     {
@@ -174,10 +212,14 @@ public partial class ChatViewModel : DocumentViewModel
     [RelayCommand(CanExecute = nameof(CanSend))]
     private async Task SendMessage()
     {
-        if (string.IsNullOrWhiteSpace(InputText) || _agentService == null) return;
+        if ((string.IsNullOrWhiteSpace(InputText) && PendingImages.Count == 0) || _agentService == null) return;
         
         var prompt = InputText;
         InputText = string.Empty;
+
+        // Snapshot pending images and clear the preview
+        var images = PendingImages.ToList();
+        PendingImages.Clear();
 
         // Intercept slash commands before sending to LLM
         if (prompt.StartsWith("/"))
@@ -194,12 +236,15 @@ public partial class ChatViewModel : DocumentViewModel
         }
         else
         {
-            Messages.Add(new ChatMessageViewModel
+            var userMsg = new ChatMessageViewModel
             {
                 Role = "user",
                 Content = prompt,
                 Timestamp = DateTime.Now.ToString("HH:mm:ss")
-            });
+            };
+            foreach (var img in images)
+                userMsg.Images.Add(img);
+            Messages.Add(userMsg);
         }
 
         IsProcessing = true;
@@ -214,7 +259,10 @@ public partial class ChatViewModel : DocumentViewModel
             IsStreaming = true
         });
 
-        await _agentService.SendMessageAsync(prompt);
+        if (images.Count > 0)
+            await _agentService.SendMessageWithImagesAsync(prompt, images);
+        else
+            await _agentService.SendMessageAsync(prompt);
     }
 
     [RelayCommand]

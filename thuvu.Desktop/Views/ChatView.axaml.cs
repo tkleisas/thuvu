@@ -368,6 +368,13 @@ public partial class ChatView : UserControl
 
     private void InputBox_KeyDown(object? sender, KeyEventArgs e)
     {
+        // Handle Ctrl+V paste (check clipboard for images before default text paste)
+        if (e.Key == Key.V && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            _ = TryPasteImageAsync(e);
+            return;
+        }
+
         // Handle file autocomplete navigation
         if (_filePopup?.IsOpen == true)
         {
@@ -463,6 +470,114 @@ public partial class ChatView : UserControl
     {
         if (DataContext is ChatViewModel vm)
             vm.RefreshModels();
+    }
+
+    private async void OnAttachImageClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ChatViewModel vm) return;
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return;
+
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(
+            new Avalonia.Platform.Storage.FilePickerOpenOptions
+            {
+                Title = "Select Image",
+                AllowMultiple = true,
+                FileTypeFilter = new[]
+                {
+                    new Avalonia.Platform.Storage.FilePickerFileType("Images")
+                    {
+                        Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.bmp" }
+                    }
+                }
+            });
+
+        foreach (var file in files)
+        {
+            await using var stream = await file.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+            var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+            var mime = ext switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                _ => "image/png"
+            };
+            vm.AddPendingImage(bytes, mime);
+        }
+    }
+
+    private void OnRemovePendingImage(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ChatViewModel vm) return;
+        if (sender is Button btn && btn.DataContext is ImageData img)
+        {
+            vm.PendingImages.Remove(img);
+        }
+    }
+
+    /// <summary>Handle Ctrl+V paste for images from clipboard. Falls through to default text paste if no image found.</summary>
+    private async Task TryPasteImageAsync(KeyEventArgs e)
+    {
+        if (DataContext is not ChatViewModel vm) return;
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return;
+
+        var clipboard = topLevel.Clipboard;
+        if (clipboard == null) return;
+
+        var formats = await clipboard.GetFormatsAsync();
+
+        // Check for image data in clipboard (PNG preferred)
+        foreach (var fmt in new[] { "image/png", "PNG", "image/jpeg", "image/bmp", "Bitmap" })
+        {
+            if (formats.Contains(fmt))
+            {
+                var data = await clipboard.GetDataAsync(fmt);
+                if (data is byte[] bytes && bytes.Length > 0)
+                {
+                    vm.AddPendingImage(bytes, "image/png");
+                    e.Handled = true;
+                    return;
+                }
+            }
+        }
+
+        // Check for file paths that point to images
+        if (formats.Contains("Files") || formats.Contains("FileNames"))
+        {
+            var data = await clipboard.GetDataAsync("Files");
+            if (data is IEnumerable<Avalonia.Platform.Storage.IStorageItem> items)
+            {
+                foreach (var item in items)
+                {
+                    if (item is Avalonia.Platform.Storage.IStorageFile file)
+                    {
+                        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+                        if (ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp")
+                        {
+                            await using var stream = await file.OpenReadAsync();
+                            using var ms = new MemoryStream();
+                            await stream.CopyToAsync(ms);
+                            var mime = ext switch
+                            {
+                                ".jpg" or ".jpeg" => "image/jpeg",
+                                ".gif" => "image/gif",
+                                ".webp" => "image/webp",
+                                ".bmp" => "image/bmp",
+                                _ => "image/png"
+                            };
+                            vm.AddPendingImage(ms.ToArray(), mime);
+                            e.Handled = true;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>

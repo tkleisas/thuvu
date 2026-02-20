@@ -118,18 +118,46 @@
 
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="4" VerticalAlignment="Bottom">
+                        <Button Content="📎" ToolTip.Tip="Attach image" FontSize="14"
+                                Padding="8,6" VerticalAlignment="Bottom"
+                                Click="OnAttachImageClick" />
                         <Button Content="Send" Command="{Binding SendMessageCommand}"
                                 Classes="accent" Padding="16,8" />
                         <Button Content="Cancel" Command="{Binding CancelRequestCommand}"
                                 IsVisible="{Binding IsProcessing}" Padding="16,8" />
                     </StackPanel>
-                    <TextBox Name="InputBox"
-                             Text="{Binding InputText}"
-                             Watermark="Type a message, /command, or @file... (Enter to send, Shift+Enter for newline)"
-                             AcceptsReturn="True"
-                             MinHeight="60" MaxHeight="150"
-                             TextWrapping="Wrap"
-                             Margin="0,0,8,0" />
+                    <StackPanel>
+                        <!-- Pending image preview strip -->
+                        <ItemsControl ItemsSource="{ReflectionBinding PendingImages}"
+                                      IsVisible="{ReflectionBinding HasPendingImages}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,6" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border CornerRadius="6" ClipToBounds="True"
+                                            BorderBrush="{DynamicResource SystemBaseMediumColor}"
+                                            BorderThickness="1" Padding="2" MaxHeight="90">
+                                        <Panel>
+                                            <Image Source="{ReflectionBinding Thumbnail}" MaxHeight="80"
+                                                   MaxWidth="120" Stretch="Uniform" />
+                                            <Button Content="✕" FontSize="10" Padding="3,1"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                    Click="OnRemovePendingImage" />
+                                        </Panel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBox Name="InputBox"
+                                 Text="{Binding InputText}"
+                                 Watermark="Type a message, /command, or @file... (Enter to send, Shift+Enter for newline, Ctrl+V to paste image)"
+                                 AcceptsReturn="True"
+                                 MinHeight="60" MaxHeight="150"
+                                 TextWrapping="Wrap" />
+                    </StackPanel>
                 </DockPanel>
             </Panel>
         </Border>
@@ -179,6 +207,27 @@
                                 <!-- Plain text for user/tool messages -->
                                 <SelectableTextBlock Text="{Binding Content}" TextWrapping="Wrap"
                                     IsVisible="{Binding Role, Converter={x:Static views:ChatView.IsNotAssistantConverter}}" />
+
+                                <!-- Attached images in user messages -->
+                                <ItemsControl ItemsSource="{ReflectionBinding Images}"
+                                              IsVisible="{ReflectionBinding HasImages}"
+                                              Margin="0,4,0,0">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="6" ClipToBounds="True" Margin="0,0,6,6"
+                                                    BorderBrush="{DynamicResource SystemBaseMediumColor}"
+                                                    BorderThickness="1">
+                                                <Image Source="{ReflectionBinding Thumbnail}" MaxHeight="150"
+                                                       MaxWidth="250" Stretch="Uniform" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
 
                                 <!-- Streaming indicator (pulsing dots) -->
                                 <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,4,0,0"

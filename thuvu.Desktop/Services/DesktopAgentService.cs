@@ -158,6 +158,39 @@ public class DesktopAgentService
         // Record user message to SQLite
         RecordMessageAsync(SessionId, "user", requestContent: prompt);
 
+        await RunAgentLoopAsync(prompt);
+    }
+
+    /// <summary>Send a message with one or more attached images (vision/multimodal)</summary>
+    public async Task SendMessageWithImagesAsync(string prompt, IReadOnlyList<ViewModels.ImageData> images)
+    {
+        if (IsProcessing) return;
+        IsProcessing = true;
+        _currentCts = new CancellationTokenSource();
+
+        // Build a multimodal ChatMessage with text + images
+        var msg = new ChatMessage { Role = "user" };
+        msg.ContentParts = new List<ContentPart>
+        {
+            new ContentPart { Type = "text", Text = prompt }
+        };
+        foreach (var img in images)
+        {
+            msg.ContentParts.Add(new ContentPart
+            {
+                Type = "image_url",
+                ImageUrl = new ImageUrlContent { Url = $"data:{img.MimeType};base64,{img.Base64}" }
+            });
+        }
+        _messages.Add(msg);
+
+        RecordMessageAsync(SessionId, "user", requestContent: prompt);
+
+        await RunAgentLoopAsync(prompt);
+    }
+
+    private async Task RunAgentLoopAsync(string prompt)
+    {
         try
         {
             string? response;
