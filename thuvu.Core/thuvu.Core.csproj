@@ -8,6 +8,15 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+    <Reference Include="Accessibility">
+      <HintPath>$(SystemRoot)\Microsoft.NET\Framework64\v4.0.30319\Accessibility.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <None Include="$(SystemRoot)\Microsoft.NET\Framework64\v4.0.30319\Accessibility.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Accessibility.dll</Link>
+      <Pack>false</Pack>
+    </None>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
