@@ -516,24 +516,22 @@ public partial class MainWindowViewModel : ObservableObject
 
     private static void CollectProportions(IDockable dockable, Dictionary<string, double> state)
     {
-        if (dockable.Id != null && dockable is IDock dock)
-        {
-            state[dockable.Id] = dock.Proportion;
-            if (dock.VisibleDockables != null)
-                foreach (var child in dock.VisibleDockables)
-                    CollectProportions(child, state);
-        }
+        if (dockable.Id != null)
+            state[dockable.Id] = dockable.Proportion;
+
+        if (dockable is IDock dock && dock.VisibleDockables != null)
+            foreach (var child in dock.VisibleDockables)
+                CollectProportions(child, state);
     }
 
     private static void ApplyProportions(IDockable dockable, Dictionary<string, double> state)
     {
-        if (dockable.Id != null && dockable is IDock dock && state.TryGetValue(dockable.Id, out var val))
-        {
-            dock.Proportion = val;
-            if (dock.VisibleDockables != null)
-                foreach (var child in dock.VisibleDockables)
-                    ApplyProportions(child, state);
-        }
+        if (dockable.Id != null && state.TryGetValue(dockable.Id, out var val))
+            dockable.Proportion = val;
+
+        if (dockable is IDock dock && dock.VisibleDockables != null)
+            foreach (var child in dock.VisibleDockables)
+                ApplyProportions(child, state);
     }
 
     #endregion
