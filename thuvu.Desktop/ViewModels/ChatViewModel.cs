@@ -418,7 +418,7 @@ public partial class ChatViewModel : DocumentViewModel
                 AddSystemMessage("No current plan. Use `/plan <description>` to create one.");
                 return;
             }
-            var plan = TaskPlan.LoadFromFile(planPath);
+            var plan = await TaskPlan.LoadFromFileAsync(planPath);
             if (plan == null) { AddSystemMessage("Failed to parse plan file."); return; }
             AddSystemMessage(FormatPlanSummary(plan));
             return;
@@ -429,7 +429,7 @@ public partial class ChatViewModel : DocumentViewModel
             var file = parts.Length > 2 ? parts[2] : null;
             var planPath = GetPlanPath(file);
             if (!File.Exists(planPath)) { AddSystemMessage($"Plan file not found: {planPath}"); return; }
-            var plan = TaskPlan.LoadFromFile(planPath);
+            var plan = await TaskPlan.LoadFromFileAsync(planPath);
             if (plan == null) { AddSystemMessage("Failed to parse plan file."); return; }
             AddSystemMessage(FormatPlanSummary(plan));
             return;
@@ -543,7 +543,9 @@ public partial class ChatViewModel : DocumentViewModel
         TaskPlan? plan;
         try
         {
-            plan = TaskPlan.LoadFromFile(planPath);
+            // Use async version to avoid deadlock (LoadFromFile uses .GetAwaiter().GetResult()
+            // which deadlocks on UI thread due to SemaphoreSlim + SynchronizationContext)
+            plan = await TaskPlan.LoadFromFileAsync(planPath);
             if (plan == null) { AddSystemMessage("Failed to load plan file."); return; }
         }
         catch (Exception ex) { AddSystemMessage($"⚠️ Error loading plan: {ex.Message}"); return; }
@@ -556,13 +558,13 @@ public partial class ChatViewModel : DocumentViewModel
                 task.Status = SubTaskStatus.Pending;
                 task.AssignedAgentId = null;
             }
-            plan.SaveToFile(planPath);
+            await plan.SaveToFileAsync(planPath);
             AddSystemMessage("Reset all task statuses to Pending.");
         }
         else if (retryFailed)
         {
             int resetCount = plan.ResetFailedTasks();
-            plan.SaveToFile(planPath);
+            await plan.SaveToFileAsync(planPath);
             AddSystemMessage(resetCount > 0
                 ? $"Reset {resetCount} failed/blocked task(s) to Pending."
                 : "No tasks to retry.");
