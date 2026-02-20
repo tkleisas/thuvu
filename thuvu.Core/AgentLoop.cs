@@ -308,7 +308,8 @@ namespace thuvu
             var failureTracker = new Dictionary<string, int>();
             var executedToolCalls = new HashSet<string>(); // Track tool call signatures to detect loops
             int noProgressCount = 0;
-            const int MaxNoProgress = 3;
+            const int MaxNoProgress = 5;   // warn at 3, hard-stop at 5
+            const int WarnNoProgress = 3;
             
             while (true)
             {
@@ -479,6 +480,15 @@ namespace thuvu
                         {
                             LogAgent("Model stuck repeating same tool calls. Stopping.");
                             return result.Content + "\n\n[Agent stopped: Model stuck in tool call loop.]";
+                        }
+                        if (noProgressCount >= WarnNoProgress)
+                        {
+                            // Inject a nudge instead of stopping — give the LLM a chance to recover
+                            messages.Add(new ChatMessage("user",
+                                "[SYSTEM WARNING] You are repeating the same tool calls that already failed. " +
+                                "You MUST try a completely different approach. Do NOT call the same tool with the same arguments again. " +
+                                "If you cannot complete the task, explain what is blocking you and stop."));
+                            LogAgent("Injected loop warning to model");
                         }
                     }
                     else
