@@ -254,6 +254,18 @@ public partial class ChatViewModel : DocumentViewModel
                          ?? AvailablePrompts.FirstOrDefault();
     }
 
+    /// <summary>Select a prompt by template ID (used when restoring sessions)</summary>
+    public void SelectPromptById(string templateId)
+    {
+        var match = AvailablePrompts.FirstOrDefault(p =>
+            p.TemplateId.Equals(templateId, StringComparison.OrdinalIgnoreCase));
+        if (match != null)
+            SelectedPrompt = match;
+    }
+
+    /// <summary>Current prompt template ID for persistence</summary>
+    public string? CurrentPromptTemplateId => SelectedPrompt?.TemplateId;
+
     public void SetAgentService(DesktopAgentService service)
     {
         _agentService = service;

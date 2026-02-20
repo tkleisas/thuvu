@@ -1,3 +1,4 @@
+using System.Text.Json;
 using thuvu.Desktop.ViewModels;
 using thuvu.Models;
 using thuvu.Tools;
@@ -84,6 +85,18 @@ public class AgentRegistry
         };
         chat.SetAgentService(agent);
 
+        // Restore prompt template selection from metadata
+        if (!string.IsNullOrEmpty(session.MetadataJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(session.MetadataJson);
+                if (doc.RootElement.TryGetProperty("promptTemplateId", out var ptElem))
+                    chat.SelectPromptById(ptElem.GetString() ?? "");
+            }
+            catch { }
+        }
+
         // Rebuild UI messages from DB records
         RestoreUiMessages(chat, messages);
 
@@ -125,6 +138,11 @@ public class AgentRegistry
             try
             {
                 var isActive = entry.Id == activeId;
+                var metadata = new Dictionary<string, object>();
+                if (isActive) metadata["active"] = true;
+                if (entry.Chat.CurrentPromptTemplateId != null)
+                    metadata["promptTemplateId"] = entry.Chat.CurrentPromptTemplateId;
+
                 var session = new SqSessionData
                 {
                     SessionId = entry.Id,
@@ -133,7 +151,7 @@ public class AgentRegistry
                     ModelId = entry.Agent.ModelOverride,
                     WorkDirectory = WorkDirectory,
                     LastActivityAt = DateTime.Now,
-                    MetadataJson = isActive ? "{\"active\":true}" : null
+                    MetadataJson = metadata.Count > 0 ? JsonSerializer.Serialize(metadata) : null
                 };
                 _ = Task.Run(async () => { try { await SqliteService.Instance.SaveSessionAsync(session); } catch { } });
             }
