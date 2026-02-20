@@ -516,7 +516,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     private static void CollectProportions(IDockable dockable, Dictionary<string, double> state)
     {
-        if (dockable.Id != null)
+        if (dockable.Id != null && double.IsFinite(dockable.Proportion))
             state[dockable.Id] = dockable.Proportion;
 
         if (dockable is IDock dock && dock.VisibleDockables != null)
