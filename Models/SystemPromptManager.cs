@@ -16,10 +16,12 @@ namespace thuvu.Models
         public SystemPromptManager()
         {
             // Look for prompts directory in multiple locations
+            var configDir = Path.GetDirectoryName(AgentConfig.GetConfigPath()) ?? "";
             var candidates = new[]
             {
                 Path.Combine(Directory.GetCurrentDirectory(), "prompts"),
                 Path.Combine(AppContext.BaseDirectory, "prompts"),
+                Path.Combine(configDir, "prompts"),
                 Path.Combine(AgentConfig.GetWorkDirectory(), "..", "prompts")
             };
             
