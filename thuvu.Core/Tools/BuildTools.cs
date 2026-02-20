@@ -896,12 +896,12 @@ and single characters/numbers (a-z, 0-9).",
                 Function = new FunctionDef
                 {
                     Name = "code_index",
-                    Description = "Index source code files for symbol search. Extracts classes, methods, properties, fields, etc. Supports incremental indexing (only changed files). Use to enable code_query searches.",
+                    Description = "Index source code files to enable code_query symbol search. MUST be called before code_query if the index is empty. Extracts classes, methods, properties, fields, interfaces, enums. Supports incremental indexing (skips unchanged files). Use path '.' to index the current project.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
                       "properties":{
-                        "path":{"type":"string","description":"Directory or file to index. Indexes recursively for directories."},
+                        "path":{"type":"string","description":"Directory or file to index. Use '.' for current project directory. Indexes recursively for directories, skipping bin/obj/node_modules/.git."},
                         "force":{"type":"boolean","default":false,"description":"Re-index even if file unchanged"}
                       },
                       "required":["path"]
@@ -915,7 +915,7 @@ and single characters/numbers (a-z, 0-9).",
                 Function = new FunctionDef
                 {
                     Name = "code_query",
-                    Description = "Query indexed code symbols. Search for classes, methods, properties by name. Get symbols in a file. Find references to a symbol.",
+                    Description = "Search indexed code symbols. Requires code_index to have been run first. Examples: search='UserService' finds classes/methods matching that name; kind='class' lists all classes; file='Program.cs' lists symbols in that file. Use index_stats to check if index is populated.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
@@ -979,7 +979,7 @@ and single characters/numbers (a-z, 0-9).",
                 Function = new FunctionDef
                 {
                     Name = "index_stats",
-                    Description = "Get statistics about the code index: total symbols, files, references, database size.",
+                    Description = "Check code index status: total symbols, files indexed, database size. Use this to verify if code_index has been run before attempting code_query.",
                     Parameters = JsonDocument.Parse("""
                     {
                       "type":"object",
