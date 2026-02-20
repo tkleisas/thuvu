@@ -158,6 +158,53 @@ public partial class MainWindowViewModel : ObservableObject
         foreach (var entry in _registry.Agents.Values)
             _agentsPanel?.AddAgent(entry.Id, entry.Name);
 
+        // Register create_agent tool handler so agents can spawn new tabs
+        CreateAgentToolImpl.Handler = async (request) =>
+        {
+            var tcs = new TaskCompletionSource<CreateAgentResult>();
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    var (chatVm, agent) = _registry.CreateAgent(request.Name);
+                    WireAgentToStatusBar(agent);
+                    WireChatOrchestration(chatVm);
+
+                    var dd = FindDocumentDock(DockLayout!);
+                    if (dd != null)
+                    {
+                        _factory.AddDockable(dd, chatVm);
+                        _factory.SetActiveDockable(chatVm);
+                    }
+                    _agentsPanel?.AddAgent(chatVm.Id!, request.Name ?? chatVm.Title ?? "Agent");
+
+                    // Configure model if specified
+                    if (!string.IsNullOrEmpty(request.Model))
+                    {
+                        agent.SetModel(request.Model);
+                        chatVm.SelectModelById(request.Model);
+                    }
+
+                    // Configure prompt template if specified
+                    if (!string.IsNullOrEmpty(request.PromptTemplate))
+                    {
+                        chatVm.SelectPromptById(request.PromptTemplate);
+                    }
+
+                    // Fire-and-forget: send the prompt to the new agent
+                    _ = agent.SendMessageAsync(request.Prompt);
+
+                    tcs.SetResult(new CreateAgentResult
+                    {
+                        AgentId = chatVm.Id!,
+                        WorkDirectory = _registry.WorkDirectory
+                    });
+                }
+                catch (Exception ex) { tcs.SetException(ex); }
+            });
+            return await tcs.Task.ConfigureAwait(false);
+        };
+
         // Set terminal working directory to project root
         var terminal = FindDockable<TerminalViewModel>(layout);
         if (terminal != null)

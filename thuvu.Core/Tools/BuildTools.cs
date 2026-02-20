@@ -1133,6 +1133,37 @@ The sub-agent runs synchronously and returns a detailed result with actions take
                     }
                     """).RootElement
                 }
+            },
+
+            // --- Create Agent Tool (fire-and-forget, opens new chat tab) ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "create_agent",
+                    Description = @"Spawn a new independent agent in a separate chat tab to work on a task in parallel.
+The agent starts immediately and works autonomously. This tool returns right away — it does NOT wait for the agent to finish.
+
+Use this when you want to:
+- Run tasks in parallel (e.g. one agent fixes tests while another refactors code)
+- Delegate a large independent subtask without blocking your current work
+- Have a specialist agent (different model/prompt) handle part of the work
+
+Coordination: instruct the spawned agent to write its progress/results to a file (e.g. 'agent_result.md') that you can later read with read_file.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "prompt":{"type":"string","description":"The task description / user prompt for the new agent"},
+                        "name":{"type":"string","description":"Display name for the new chat tab (e.g. 'Fix Tests')"},
+                        "model":{"type":"string","description":"Model ID to use (optional, inherits current model if omitted)"},
+                        "prompt_template":{"type":"string","description":"System prompt template name (e.g. 'agentic', 'careful'). Optional."}
+                      },
+                      "required":["prompt"]
+                    }
+                    """).RootElement
+                }
             }
         };
 
@@ -1221,6 +1252,7 @@ The sub-agent runs synchronously and returns a detailed result with actions take
                 ["agent_result"] = ToolCategory.Agents,
                 ["agent_cancel"] = ToolCategory.Agents,
                 ["delegate_to_agent"] = ToolCategory.Agents,
+                ["create_agent"] = ToolCategory.Agents,
                 
                 // MCP
                 ["execute_code"] = ToolCategory.Mcp
@@ -1248,7 +1280,8 @@ The sub-agent runs synchronously and returns a detailed result with actions take
                 ["process_start"] = new[] { "run", "execute", "launch", "background" },
                 ["code_index"] = new[] { "symbol", "class", "method", "parse" },
                 ["code_query"] = new[] { "find", "symbol", "class", "method" },
-                ["delegate_to_agent"] = new[] { "sub-agent", "specialist", "delegate", "helper" }
+                ["delegate_to_agent"] = new[] { "sub-agent", "specialist", "delegate", "helper" },
+                ["create_agent"] = new[] { "spawn", "parallel", "new-agent", "tab", "independent" }
             };
             
             // Deferred categories (not Core)

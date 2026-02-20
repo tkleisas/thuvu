@@ -159,6 +159,15 @@ public partial class ChatViewModel : DocumentViewModel
         LoadAvailableModels();
     }
 
+    /// <summary>Select a model by ID (used when spawning agents with a specific model)</summary>
+    public void SelectModelById(string modelId)
+    {
+        var match = AvailableModels.FirstOrDefault(m =>
+            m.ModelId.Equals(modelId, StringComparison.OrdinalIgnoreCase));
+        if (match != null)
+            SelectedModel = match;
+    }
+
     private void LoadAvailableModels()
     {
         AvailableModels.Clear();

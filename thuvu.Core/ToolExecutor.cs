@@ -264,6 +264,9 @@ namespace thuvu
                 // Sub-Agent Delegation tool
                 "delegate_to_agent" => await DelegateToAgentToolImpl.ExecuteAsync(argsJson, ct).ConfigureAwait(false),
                 
+                // Create independent agent (fire-and-forget)
+                "create_agent" => await CreateAgentToolImpl.ExecuteAsync(argsJson, ct).ConfigureAwait(false),
+                
                 // Tool Search/Discovery (for deferred loading)
                 "tool_search" => await Task.Run(() => ExecuteToolSearch(argsJson), ct).ConfigureAwait(false),
                 "tool_load" => await Task.Run(() => ExecuteToolLoad(argsJson), ct).ConfigureAwait(false),
