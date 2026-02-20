@@ -34,10 +34,11 @@ namespace thuvu
         /// Attempt to parse inline tool calls from content text.
         /// Some models (especially via OpenRouter) emit tool calls as plain text like:
         /// read_file{"path": "file.cs"} instead of using proper tool_calls JSON.
+        /// Returns the parsed tool calls and the content with inline calls stripped out.
         /// </summary>
-        private static List<ToolCall>? TryParseInlineToolCalls(string? content, List<Tool> tools)
+        private static (List<ToolCall>? Calls, string? CleanedContent) TryParseInlineToolCalls(string? content, List<Tool> tools)
         {
-            if (string.IsNullOrEmpty(content)) return null;
+            if (string.IsNullOrEmpty(content)) return (null, content);
 
             // Build set of known tool names
             var toolNames = new HashSet<string>(tools.Select(t => t.Function.Name));
@@ -46,29 +47,33 @@ namespace thuvu
             var pattern = @"(\b(?:" + string.Join("|", toolNames.Select(System.Text.RegularExpressions.Regex.Escape)) + @"))\s*(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})";
             var matches = System.Text.RegularExpressions.Regex.Matches(content, pattern);
             
-            if (matches.Count == 0) return null;
+            if (matches.Count == 0) return (null, content);
 
             var result = new List<ToolCall>();
-            foreach (System.Text.RegularExpressions.Match m in matches)
+            var cleaned = content;
+            for (int i = matches.Count - 1; i >= 0; i--)
             {
+                var m = matches[i];
                 var name = m.Groups[1].Value;
                 var argsJson = m.Groups[2].Value;
                 
                 try
                 {
                     using var doc = JsonDocument.Parse(argsJson);
-                    result.Add(new ToolCall
+                    result.Insert(0, new ToolCall
                     {
                         Id = Guid.NewGuid().ToString("N"),
                         Type = "function",
                         Function = new FunctionCall { Name = name, Arguments = argsJson }
                     });
+                    cleaned = cleaned.Remove(m.Index, m.Length);
                     LogAgent($"Parsed inline tool call: {name}({argsJson.Length} chars)");
                 }
                 catch (JsonException) { }
             }
 
-            return result.Count > 0 ? result : null;
+            if (result.Count == 0) return (null, content);
+            return (result, cleaned.Trim());
         }
         
         /// <summary>
@@ -194,11 +199,12 @@ namespace thuvu
 
                 if (msg.ToolCalls == null || msg.ToolCalls.Count == 0)
                 {
-                    var inlineCalls = TryParseInlineToolCalls(msg.Content, tools);
+                    var (inlineCalls, cleanedContent) = TryParseInlineToolCalls(msg.Content, tools);
                     if (inlineCalls != null)
                     {
                         LogAgent($"Recovered {inlineCalls.Count} inline tool call(s) from content text");
                         msg.ToolCalls = inlineCalls;
+                        msg.Content = cleanedContent;
                     }
                 }
 
@@ -448,13 +454,13 @@ namespace thuvu
                 // We look for action phrases, especially those ending with ":" which strongly indicate intent
                 if (result.ToolCalls == null || result.ToolCalls.Count == 0)
                 {
-                    var inlineCalls = TryParseInlineToolCalls(result.Content, tools);
+                    var (inlineCalls, cleanedContent) = TryParseInlineToolCalls(result.Content, tools);
                     if (inlineCalls != null)
                     {
                         LogAgent($"Recovered {inlineCalls.Count} inline tool call(s) from streaming content text");
                         result = new StreamResult
                         {
-                            Content = result.Content,
+                            Content = cleanedContent,
                             ReasoningContent = result.ReasoningContent,
                             ToolCalls = inlineCalls,
                             FinishReason = result.FinishReason,
