@@ -163,7 +163,8 @@ public class DesktopAgentService
             string? response;
             if (!string.IsNullOrEmpty(WorkDirectory))
             {
-                var ctx = AgentContext.CreateContext("desktop", WorkDirectory);
+                var maxCtx = ResolveMaxContextLength();
+                var ctx = AgentContext.CreateContext("desktop", WorkDirectory, maxCtx);
                 response = await AgentContext.RunInContextAsync(ctx, () => ExecuteAgentLoopAsync());
             }
             else
@@ -246,6 +247,18 @@ public class DesktopAgentService
     }
 
     private Usage? _lastUsage;
+
+    private int ResolveMaxContextLength()
+    {
+        // Try model registry first
+        var entry = ModelRegistry.Instance.GetModel(EffectiveModel);
+        if (entry != null && entry.MaxContextLength > 0) return entry.MaxContextLength;
+        // Then config
+        if (AgentConfig.Config.MaxContextLength > 0) return AgentConfig.Config.MaxContextLength;
+        // Then last known usage
+        if (_lastUsage?.MaxContextLength > 0) return _lastUsage.MaxContextLength.Value;
+        return 32768;
+    }
 
     /// <summary>Fire-and-forget message recording to SQLite</summary>
     private void RecordMessageAsync(string? sessionId, string messageType,

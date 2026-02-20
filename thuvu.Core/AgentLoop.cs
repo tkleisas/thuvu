@@ -353,6 +353,13 @@ namespace thuvu
                 var result = await StreamResult.StreamChatOnceAsync(http, req, ct, onToken, onUsage, onReasoningToken);
                 LogAgent($"StreamChatOnceAsync returned, ToolCalls={result.ToolCalls?.Count ?? 0}, Content length={result.Content?.Length ?? 0}, Reasoning length={result.ReasoningContent?.Length ?? 0}");
 
+                // Update token tracker from streaming usage (the onUsage callback doesn't do this)
+                var tracker = Models.AgentContext.GetEffectiveTokenTracker();
+                if (result.Usage != null)
+                {
+                    tracker.UpdateFromUsage(result.Usage);
+                }
+
                 // If API returned context length info, update the model config
                 if (result.Usage?.MaxContextLength.HasValue == true && result.Usage.MaxContextLength.Value > 0)
                 {
@@ -365,7 +372,6 @@ namespace thuvu
                 }
 
                 // Check context size and auto-summarize if needed
-                var tracker = Models.AgentContext.GetEffectiveTokenTracker();
                 if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
                 {
                     LogAgent($"Context at {tracker.UsagePercent:P0}, triggering auto-summarize");
