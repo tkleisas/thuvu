@@ -57,6 +57,14 @@ public class DesktopAgentService
         }
     }
 
+    public void SetSystemPrompt(string promptContent)
+    {
+        if (_messages.Count > 0 && _messages[0].Role == "system")
+            _messages[0] = new ChatMessage("system", promptContent);
+        else
+            _messages.Insert(0, new ChatMessage("system", promptContent));
+    }
+
     public DesktopAgentService()
     {
         AgentConfig.LoadConfig();

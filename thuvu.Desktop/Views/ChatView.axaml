@@ -60,6 +60,12 @@
                     <Button Content="🔄" ToolTip.Tip="Refresh model list"
                             FontSize="12" Padding="4,2" VerticalAlignment="Center"
                             Click="OnRefreshModelsClick" />
+                    <TextBlock Text="Prompt:" FontSize="12" VerticalAlignment="Center" Foreground="Gray" Margin="8,0,0,0" />
+                    <ComboBox ItemsSource="{ReflectionBinding AvailablePrompts}"
+                             SelectedItem="{ReflectionBinding SelectedPrompt}"
+                             MinWidth="120" MaxWidth="250" Padding="6,3"
+                             FontSize="12" VerticalAlignment="Center"
+                             PlaceholderText="Select prompt..." />
                 </StackPanel>
             </DockPanel>
         </Border>

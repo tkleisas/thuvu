@@ -71,6 +71,13 @@ public class ModelChoice
     public override string ToString() => DisplayLabel;
 }
 
+public class PromptChoice
+{
+    public string TemplateId { get; set; } = "";
+    public string DisplayLabel { get; set; } = "";
+    public override string ToString() => DisplayLabel;
+}
+
 /// <summary>
 /// ViewModel for the Chat dockable panel.
 /// Each chat owns an independent agent session.
@@ -106,6 +113,7 @@ public partial class ChatViewModel : DocumentViewModel
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
     public ObservableCollection<ModelChoice> AvailableModels { get; } = new();
+    public ObservableCollection<PromptChoice> AvailablePrompts { get; } = new();
 
     /// <summary>Images staged for the next message (preview strip)</summary>
     public ObservableCollection<ImageData> PendingImages { get; } = new();
@@ -113,6 +121,7 @@ public partial class ChatViewModel : DocumentViewModel
     public bool HasPendingImages => PendingImages.Count > 0;
 
     [ObservableProperty] private ModelChoice? _selectedModel;
+    [ObservableProperty] private PromptChoice? _selectedPrompt;
 
     /// <summary>The agent service powering this chat</summary>
     public DesktopAgentService? AgentService => _agentService;
@@ -187,13 +196,69 @@ public partial class ChatViewModel : DocumentViewModel
         if (value != null && _agentService != null)
         {
             _agentService.SetModel(value.ModelId);
+            // Auto-select prompt for this model
+            AutoSelectPromptForModel(value.ModelId);
         }
+    }
+
+    partial void OnSelectedPromptChanged(PromptChoice? value)
+    {
+        if (value != null && _agentService != null)
+        {
+            var content = SystemPromptManager.Instance.GetTemplate(value.TemplateId);
+            if (string.IsNullOrEmpty(content))
+                content = SystemPromptManager.Instance.GetCurrentSystemPrompt();
+            _agentService.SetSystemPrompt(content);
+        }
+    }
+
+    private void LoadAvailablePrompts()
+    {
+        AvailablePrompts.Clear();
+        var templates = SystemPromptManager.Instance.GetAvailableTemplates();
+        foreach (var t in templates)
+        {
+            AvailablePrompts.Add(new PromptChoice
+            {
+                TemplateId = t,
+                DisplayLabel = char.ToUpper(t[0]) + t.Substring(1)
+            });
+        }
+
+        // Select prompt based on current model config
+        var modelId = _agentService?.EffectiveModel ?? ModelRegistry.Instance.DefaultModelId;
+        AutoSelectPromptForModel(modelId);
+    }
+
+    private void AutoSelectPromptForModel(string modelId)
+    {
+        var model = ModelRegistry.Instance.GetModel(modelId);
+        string? templateId = null;
+
+        if (model != null && !string.IsNullOrWhiteSpace(model.SystemPromptTemplate))
+            templateId = model.SystemPromptTemplate;
+
+        if (templateId != null)
+        {
+            var match = AvailablePrompts.FirstOrDefault(p =>
+                p.TemplateId.Equals(templateId, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                SelectedPrompt = match;
+                return;
+            }
+        }
+
+        // Fall back to "default" template if available, otherwise first
+        SelectedPrompt = AvailablePrompts.FirstOrDefault(p => p.TemplateId == "default")
+                         ?? AvailablePrompts.FirstOrDefault();
     }
 
     public void SetAgentService(DesktopAgentService service)
     {
         _agentService = service;
         LoadAvailableModels();
+        LoadAvailablePrompts();
         _agentService.OnToken += token =>
             Dispatcher.UIThread.Post(() => AppendToLastAssistant(token));
         _agentService.OnReasoningToken += token =>
