@@ -460,23 +460,40 @@ public partial class ChatView : UserControl
     }
 
     /// <summary>
-    /// After MarkdownScrollViewer loads, check if it rendered anything.
-    /// If the control has zero height but the message has content,
-    /// the markdown parser failed — fall back to plain text.
+    /// After MarkdownScrollViewer loads, subscribe to visibility changes
+    /// so we can detect rendering failures both on initial load (restored messages)
+    /// and after streaming→done transitions.
     /// </summary>
     private void OnMarkdownLoaded(object? sender, RoutedEventArgs e)
     {
         if (sender is not Markdown.Avalonia.MarkdownScrollViewer md) return;
-        if (md.DataContext is not ChatMessageViewModel msg) return;
-        if (string.IsNullOrEmpty(msg.Content)) return;
 
-        // Check after layout completes
-        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        // Check immediately (for restored messages that are visible from the start)
+        CheckMarkdownRendering(md);
+
+        // Also check when visibility changes (streaming→done transition)
+        md.PropertyChanged += OnMarkdownPropertyChanged;
+    }
+
+    private void OnMarkdownPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == Visual.IsVisibleProperty && e.NewValue is true &&
+            sender is Markdown.Avalonia.MarkdownScrollViewer md)
         {
-            if (md.Bounds.Height < 2 && !string.IsNullOrEmpty(msg.Content) && !msg.IsStreaming)
-            {
-                msg.MarkdownFailed = true;
-            }
-        }, Avalonia.Threading.DispatcherPriority.Loaded);
+            // Delay check until after layout pass completes
+            Avalonia.Threading.Dispatcher.UIThread.Post(
+                () => CheckMarkdownRendering(md),
+                Avalonia.Threading.DispatcherPriority.Loaded);
+        }
+    }
+
+    private void CheckMarkdownRendering(Markdown.Avalonia.MarkdownScrollViewer md)
+    {
+        if (md.DataContext is ChatMessageViewModel msg &&
+            !string.IsNullOrEmpty(msg.Content) && !msg.IsStreaming &&
+            md.IsVisible && md.Bounds.Height < 2)
+        {
+            msg.MarkdownFailed = true;
+        }
     }
 }
