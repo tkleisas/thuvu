@@ -359,7 +359,8 @@ namespace thuvu
             ToolProgressCallback? onToolProgress = null,
             Action<string, string>? onToolCall = null,
             int? maxIterations = null,
-            Action<string>? onReasoningToken = null)
+            Action<string>? onReasoningToken = null,
+            Action<string>? onContentReplace = null)
         {
             // Set current messages in context for tools that need it (e.g., vision analysis)
             AgentContext.SetCurrentMessages(messages);
@@ -471,6 +472,8 @@ namespace thuvu
                     if (inlineCalls != null)
                     {
                         LogAgent($"Recovered {inlineCalls.Count} inline tool call(s) from streaming content text");
+                        // Update UI to remove the raw tool text that was already streamed
+                        onContentReplace?.Invoke(cleanedContent ?? "");
                         result = new StreamResult
                         {
                             Content = cleanedContent,

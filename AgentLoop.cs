@@ -354,7 +354,8 @@ namespace thuvu
             ToolProgressCallback? onToolProgress = null,
             Action<string, string>? onToolCall = null,
             int? maxIterations = null,
-            Action<string>? onReasoningToken = null)
+            Action<string>? onReasoningToken = null,
+            Action<string>? onContentReplace = null)
         {
             // Set current messages in context for tools that need it (e.g., vision analysis)
             AgentContext.SetCurrentMessages(messages);
@@ -466,6 +467,7 @@ namespace thuvu
                             FinishReason = result.FinishReason,
                             Usage = result.Usage
                         };
+                        onContentReplace?.Invoke(cleanedContent ?? "");
                     }
                 }
 

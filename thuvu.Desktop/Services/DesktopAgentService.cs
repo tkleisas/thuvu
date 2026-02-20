@@ -24,6 +24,8 @@ public class DesktopAgentService
     public event Action<string>? OnError;
     public event Action? OnComplete;
     public event Action? OnConfigReloaded;
+    /// <summary>Fired when inline tool parsing strips text — replaces current assistant content</summary>
+    public event Action<string>? OnContentReplace;
 
     public bool IsProcessing { get; private set; }
     public IReadOnlyList<ChatMessage> Messages => _messages.AsReadOnly();
@@ -255,7 +257,8 @@ public class DesktopAgentService
                     OnUsage?.Invoke(usage);
                     _lastUsage = usage;
                 },
-                onReasoningToken: token => OnReasoningToken?.Invoke(token)
+                onReasoningToken: token => OnReasoningToken?.Invoke(token),
+                onContentReplace: content => OnContentReplace?.Invoke(content)
             );
         }
         else

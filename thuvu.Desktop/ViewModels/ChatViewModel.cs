@@ -202,6 +202,8 @@ public partial class ChatViewModel : DocumentViewModel
             Dispatcher.UIThread.Post(() => AddToolMessage(name, args));
         _agentService.OnToolComplete += (name, args, result, elapsed) =>
             Dispatcher.UIThread.Post(() => UpdateToolResult(name, result, elapsed));
+        _agentService.OnContentReplace += content =>
+            Dispatcher.UIThread.Post(() => ReplaceLastAssistantContent(content));
         _agentService.OnComplete += () =>
             Dispatcher.UIThread.Post(() => FinalizeResponse());
         _agentService.OnError += error =>
@@ -897,6 +899,14 @@ public partial class ChatViewModel : DocumentViewModel
             return;
         }
         last.Content += token;
+    }
+
+    /// <summary>Replace the last streaming assistant message content (used when inline tool text is stripped)</summary>
+    private void ReplaceLastAssistantContent(string content)
+    {
+        var last = Messages.LastOrDefault(m => m.Role == "assistant" && m.IsStreaming)
+                   ?? Messages.LastOrDefault(m => m.Role == "assistant");
+        if (last != null) last.Content = content;
     }
 
     private void AppendThinking(string token)
