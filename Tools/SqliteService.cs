@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using thuvu.Models;
@@ -239,6 +240,20 @@ namespace thuvu.Tools
                 CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
             ";
             await indexCmd.ExecuteNonQueryAsync(ct);
+
+            // Create FTS5 virtual table for full-text search on messages
+            await using var ftsCmd = conn.CreateCommand();
+            ftsCmd.CommandText = @"
+                CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                    session_id UNINDEXED,
+                    message_type UNINDEXED,
+                    content,
+                    tool_name UNINDEXED,
+                    started_at UNINDEXED,
+                    content=''
+                );
+            ";
+            await ftsCmd.ExecuteNonQueryAsync(ct);
 
             _initialized = true;
             AgentLogger.LogInfo("SQLite database initialized at {Path}", dbPath);
@@ -1200,6 +1215,13 @@ namespace thuvu.Tools
             var result = await cmd.ExecuteScalarAsync(ct);
             var messageId = result != null ? Convert.ToInt64(result) : 0;
             
+            // Index request content in FTS
+            if (!string.IsNullOrWhiteSpace(message.RequestContent))
+            {
+                await IndexMessageInFtsAsync(conn, messageId, message.SessionId, message.MessageType, 
+                    message.RequestContent, message.ToolName, message.StartedAt, ct);
+            }
+            
             // Update session activity
             await UpdateSessionActivityAsync(message.SessionId, ct);
             
@@ -1249,11 +1271,14 @@ namespace thuvu.Tools
             cmd.Parameters.AddWithValue("@iteration_number", info.IterationNumber);
 
             await cmd.ExecuteNonQueryAsync(ct);
-        }
 
-        /// <summary>
-        /// Mark a message as failed.
-        /// </summary>
+            // Update FTS index with response content
+            if (!string.IsNullOrWhiteSpace(info.ResponseContent))
+            {
+                // Delete old entry and re-insert with combined content
+                await UpdateMessageFtsAsync(conn, messageId, info.ResponseContent, info.ToolName, ct);
+            }
+        }
         public async Task FailMessageAsync(long messageId, string error, string? bailoutReason = null, CancellationToken ct = default)
         {
             await using var conn = await GetConnectionAsync(ct);
@@ -1678,6 +1703,207 @@ namespace thuvu.Tools
         }
 
         #endregion
+
+        #region Memory Search (FTS)
+
+        private async Task IndexMessageInFtsAsync(SqliteConnection conn, long messageId, string sessionId, 
+            string messageType, string content, string? toolName, DateTime startedAt, CancellationToken ct)
+        {
+            try
+            {
+                await using var ftsCmd = conn.CreateCommand();
+                ftsCmd.CommandText = @"
+                    INSERT INTO messages_fts(rowid, session_id, message_type, content, tool_name, started_at)
+                    VALUES (@id, @session_id, @message_type, @content, @tool_name, @started_at)
+                ";
+                ftsCmd.Parameters.AddWithValue("@id", messageId);
+                ftsCmd.Parameters.AddWithValue("@session_id", sessionId);
+                ftsCmd.Parameters.AddWithValue("@message_type", messageType);
+                ftsCmd.Parameters.AddWithValue("@content", content);
+                ftsCmd.Parameters.AddWithValue("@tool_name", (object?)toolName ?? DBNull.Value);
+                ftsCmd.Parameters.AddWithValue("@started_at", startedAt.ToString("o"));
+                await ftsCmd.ExecuteNonQueryAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogWarning("FTS indexing failed for message {Id}: {Error}", messageId, ex.Message);
+            }
+        }
+
+        private async Task UpdateMessageFtsAsync(SqliteConnection conn, long messageId, string responseContent, string? toolName, CancellationToken ct)
+        {
+            try
+            {
+                // Get existing request content to combine
+                await using var getCmd = conn.CreateCommand();
+                getCmd.CommandText = "SELECT request_content FROM messages WHERE id = @id";
+                getCmd.Parameters.AddWithValue("@id", messageId);
+                var requestContent = await getCmd.ExecuteScalarAsync(ct) as string;
+
+                // Delete old FTS entry
+                await using var delCmd = conn.CreateCommand();
+                delCmd.CommandText = "DELETE FROM messages_fts WHERE rowid = @id";
+                delCmd.Parameters.AddWithValue("@id", messageId);
+                await delCmd.ExecuteNonQueryAsync(ct);
+
+                // Re-insert with combined content
+                var combined = string.Join("\n", new[] { requestContent, responseContent }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                
+                await using var getInfoCmd = conn.CreateCommand();
+                getInfoCmd.CommandText = "SELECT session_id, message_type, started_at FROM messages WHERE id = @id";
+                getInfoCmd.Parameters.AddWithValue("@id", messageId);
+                await using var reader = await getInfoCmd.ExecuteReaderAsync(ct);
+                if (await reader.ReadAsync(ct))
+                {
+                    var sessionId = reader.GetString(0);
+                    var messageType = reader.GetString(1);
+                    var startedAt = DateTime.Parse(reader.GetString(2));
+                    await IndexMessageInFtsAsync(conn, messageId, sessionId, messageType, combined, toolName, startedAt, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogWarning("FTS update failed for message {Id}: {Error}", messageId, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Search past messages using full-text search. Returns matches across all sessions,
+        /// prioritizing the current session. Searches both request and response content.
+        /// </summary>
+        public async Task<List<MemorySearchResult>> SearchMemoryAsync(
+            string query, string? currentSessionId = null, int limit = 10, 
+            bool includeCurrentContext = false, CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            
+            // Build FTS query — escape special characters for safety
+            var ftsQuery = EscapeFtsQuery(query);
+            if (string.IsNullOrWhiteSpace(ftsQuery))
+                return new List<MemorySearchResult>();
+
+            await using var cmd = conn.CreateCommand();
+            
+            // Search with ranking, prioritize current session via ORDER BY
+            cmd.CommandText = @"
+                SELECT 
+                    f.rowid,
+                    f.session_id,
+                    f.message_type,
+                    snippet(messages_fts, 2, '>>>', '<<<', '...', 48) as snippet,
+                    f.tool_name,
+                    f.started_at,
+                    m.is_summarized,
+                    m.response_content,
+                    m.request_content,
+                    s.title as session_title,
+                    rank
+                FROM messages_fts f
+                JOIN messages m ON m.id = f.rowid
+                LEFT JOIN sessions s ON s.session_id = f.session_id
+                WHERE messages_fts MATCH @query
+                ORDER BY 
+                    CASE WHEN f.session_id = @current_session THEN 0 ELSE 1 END,
+                    rank
+                LIMIT @limit
+            ";
+            cmd.Parameters.AddWithValue("@query", ftsQuery);
+            cmd.Parameters.AddWithValue("@current_session", (object?)currentSessionId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@limit", limit);
+
+            var results = new List<MemorySearchResult>();
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var sessionId = reader.GetString(1);
+                var isSummarized = !reader.IsDBNull(6) && reader.GetInt32(6) == 1;
+                
+                // Optionally skip messages that are in the current active context
+                if (!includeCurrentContext && sessionId == currentSessionId && !isSummarized)
+                    continue;
+
+                results.Add(new MemorySearchResult
+                {
+                    MessageId = reader.GetInt64(0),
+                    SessionId = sessionId,
+                    MessageType = reader.GetString(2),
+                    Snippet = reader.GetString(3),
+                    ToolName = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    Timestamp = DateTime.Parse(reader.GetString(5)),
+                    IsSummarized = isSummarized,
+                    ResponseContent = reader.IsDBNull(7) ? null : reader.GetString(7),
+                    RequestContent = reader.IsDBNull(8) ? null : reader.GetString(8),
+                    SessionTitle = reader.IsDBNull(9) ? null : reader.GetString(9),
+                    IsCurrentSession = sessionId == currentSessionId
+                });
+            }
+            return results;
+        }
+
+        /// <summary>
+        /// Rebuild the FTS index from existing messages. Call once after upgrade.
+        /// </summary>
+        public async Task RebuildFtsIndexAsync(CancellationToken ct = default)
+        {
+            await using var conn = await GetConnectionAsync(ct);
+            
+            // Clear existing FTS data
+            await using var clearCmd = conn.CreateCommand();
+            clearCmd.CommandText = "DELETE FROM messages_fts";
+            await clearCmd.ExecuteNonQueryAsync(ct);
+            
+            // Re-index all messages that have content
+            await using var selectCmd = conn.CreateCommand();
+            selectCmd.CommandText = @"
+                SELECT id, session_id, message_type, 
+                       COALESCE(request_content, '') || CHAR(10) || COALESCE(response_content, '') as content,
+                       tool_name, started_at
+                FROM messages
+                WHERE (request_content IS NOT NULL AND request_content != '')
+                   OR (response_content IS NOT NULL AND response_content != '')
+                ORDER BY started_at ASC
+            ";
+            
+            var count = 0;
+            await using var reader = await selectCmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var content = reader.GetString(3).Trim();
+                if (string.IsNullOrWhiteSpace(content)) continue;
+                
+                await IndexMessageInFtsAsync(conn, reader.GetInt64(0), reader.GetString(1),
+                    reader.GetString(2), content, 
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    DateTime.Parse(reader.GetString(5)), ct);
+                count++;
+            }
+            
+            AgentLogger.LogInfo("FTS index rebuilt: {Count} messages indexed", count);
+        }
+
+        private static string EscapeFtsQuery(string query)
+        {
+            // Convert natural language query to FTS5 query
+            // Split into words, wrap each in quotes for exact matching, join with OR for broad search
+            var words = query.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0) return "";
+            
+            // If it looks like a phrase (3+ words), search as phrase first
+            if (words.Length >= 3)
+            {
+                var escaped = query.Replace("\"", "\"\"");
+                return $"\"{escaped}\"";
+            }
+            
+            // For 1-2 words, use prefix matching with *
+            return string.Join(" ", words.Select(w => 
+            {
+                var escaped = w.Replace("\"", "\"\"");
+                return $"\"{escaped}\"*";
+            }));
+        }
+
+        #endregion
     }
 
     #region Models
@@ -1862,6 +2088,21 @@ namespace thuvu.Tools
         public long TotalTokens { get; set; }
         public long TotalDurationMs { get; set; }
         public int MaxDepth { get; set; }
+    }
+
+    public class MemorySearchResult
+    {
+        public long MessageId { get; set; }
+        public string SessionId { get; set; } = "";
+        public string MessageType { get; set; } = "";
+        public string Snippet { get; set; } = "";
+        public string? ToolName { get; set; }
+        public DateTime Timestamp { get; set; }
+        public bool IsSummarized { get; set; }
+        public string? ResponseContent { get; set; }
+        public string? RequestContent { get; set; }
+        public string? SessionTitle { get; set; }
+        public bool IsCurrentSession { get; set; }
     }
 
     #endregion

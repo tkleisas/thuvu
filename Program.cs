@@ -362,6 +362,9 @@ namespace thuvu
                 // Set up conversation message processor callback
                 thuvu.Web.ConversationApiEndpoints.ProcessMessageCallback = async (convId, prompt, history, emit, ct, modelOverride, systemPromptOverride, workDir) =>
                 {
+                    // Set current session for memory search context
+                    ToolExecutor.CurrentSessionId = convId;
+                    
                     var modelId = modelOverride ?? AgentConfig.Config.Model;
                     var modelEndpoint = ModelRegistry.Instance.GetModel(modelId);
                     var effectiveHttp = http;

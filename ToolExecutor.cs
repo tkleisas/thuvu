@@ -18,6 +18,11 @@ namespace thuvu
         public static TimeSpan DefaultTimeout { get; set; } = TimeSpan.FromMinutes(60);
         
         /// <summary>
+        /// Current session ID for memory search context. Set by the agent loop or conversation manager.
+        /// </summary>
+        public static string? CurrentSessionId { get; set; }
+        
+        /// <summary>
         /// Executes a tool by name, returning a JSON string result
         /// </summary>
         public static Task<string> ExecuteToolAsync(string name, string argsJson, CancellationToken ct)
@@ -270,6 +275,10 @@ namespace thuvu
                 
                 // LSP Code Intelligence
                 "lsp" => await LspToolImpl.ExecuteAsync(argsJson, ct).ConfigureAwait(false),
+                
+                // Memory Search
+                "memory_search" => await ExecuteMemorySearchAsync(argsJson, ct).ConfigureAwait(false),
+                "memory_rebuild_index" => await MemorySearchToolImpl.RebuildIndexAsync(ct).ConfigureAwait(false),
                 
                 _ => JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" })
             };
@@ -526,6 +535,28 @@ namespace thuvu
                 var jobId = jobProp.GetString() ?? "";
 
                 return await AgentCommunicationToolImpl.AgentCancelAsync(agentName, jobId, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Execute memory_search tool
+        /// </summary>
+        private static async Task<string> ExecuteMemorySearchAsync(string argsJson, CancellationToken ct)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                var root = doc.RootElement;
+                
+                var query = root.TryGetProperty("query", out var queryProp) ? queryProp.GetString() ?? "" : "";
+                var limit = root.TryGetProperty("limit", out var limitProp) ? limitProp.GetInt32() : 10;
+                var includeCurrentContext = root.TryGetProperty("include_current_context", out var inclProp) && inclProp.GetBoolean();
+                
+                return await MemorySearchToolImpl.SearchAsync(query, CurrentSessionId, limit, includeCurrentContext, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

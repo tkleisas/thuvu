@@ -1004,6 +1004,43 @@ and single characters/numbers (a-z, 0-9).",
                 }
             },
 
+            // --- Memory Search Tools ---
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "memory_search",
+                    Description = "Search past conversation messages across all sessions. Use this to recall prior discussions, decisions, code changes, errors, or any context from previous interactions that is no longer in the current conversation window. Searches both user requests and assistant responses.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "query":{"type":"string","description":"Search query — natural language or keywords to find in past messages"},
+                        "limit":{"type":"integer","default":10,"description":"Maximum number of results (1-50)"},
+                        "include_current_context":{"type":"boolean","default":false,"description":"Include messages already in the current conversation context"}
+                      },
+                      "required":["query"]
+                    }
+                    """).RootElement
+                }
+            },
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "memory_rebuild_index",
+                    Description = "Rebuild the full-text search index for memory search. Use if memory_search returns no results on a database with existing messages, or after a database migration.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{}
+                    }
+                    """).RootElement
+                }
+            },
+
             // --- Agent Communication Tools ---
             new Tool
             {
@@ -1251,6 +1288,10 @@ Line and character are 1-based (as shown in editors). For workspaceSymbol, use t
                 ["index_stats"] = ToolCategory.CodeIndex,
                 ["index_clear"] = ToolCategory.CodeIndex,
                 
+                // Memory Search
+                ["memory_search"] = ToolCategory.CodeIndex,
+                ["memory_rebuild_index"] = ToolCategory.CodeIndex,
+                
                 // Agents
                 ["agent_list"] = ToolCategory.Agents,
                 ["agent_submit"] = ToolCategory.Agents,
@@ -1289,7 +1330,9 @@ Line and character are 1-based (as shown in editors). For workspaceSymbol, use t
                 ["code_index"] = new[] { "symbol", "class", "method", "parse" },
                 ["code_query"] = new[] { "find", "symbol", "class", "method" },
                 ["delegate_to_agent"] = new[] { "sub-agent", "specialist", "delegate", "helper" },
-                ["lsp"] = new[] { "definition", "references", "hover", "symbol", "diagnostics", "type", "implementation", "calls" }
+                ["lsp"] = new[] { "definition", "references", "hover", "symbol", "diagnostics", "type", "implementation", "calls" },
+                ["memory_search"] = new[] { "recall", "remember", "past", "history", "conversation", "previous" },
+                ["memory_rebuild_index"] = new[] { "rebuild", "reindex", "fts" }
             };
             
             // Deferred categories (not Core)
