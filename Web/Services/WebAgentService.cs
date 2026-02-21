@@ -54,6 +54,10 @@ namespace thuvu.Web.Services
         private readonly HttpClient _http;
         private readonly ConcurrentDictionary<string, WebAgentSession> _sessions = new();
         
+        // Client mode: proxy to remote agent server instead of running AgentLoop in-process
+        private thuvu.Services.AgentClient? _client;
+        public bool IsClientMode => _client != null;
+        
         // Event raised when permission is needed - subscribers should send SignalR event
         public event Action<string, PendingPermissionRequest>? OnPermissionRequired;
 
@@ -64,6 +68,15 @@ namespace thuvu.Web.Services
             // Clear any existing handlers
             PermissionManager.CustomPermissionPrompt = null;
             PermissionManager.AsyncPermissionPrompt = null;
+        }
+        
+        /// <summary>
+        /// Switch to client mode: proxy all requests to a remote agent server.
+        /// </summary>
+        public void SetClientMode(thuvu.Services.AgentClient client)
+        {
+            _client = client;
+            AgentLogger.LogInfo("WebAgentService switched to client mode: {Url}", client.BaseUrl);
         }
         
         /// <summary>
@@ -182,8 +195,21 @@ namespace thuvu.Web.Services
             {
                 existing.LastActivityAt = DateTime.Now;
                 // Refresh tools based on current configuration
-                existing.Tools = BuildTools.GetToolsForSession();
+                if (!IsClientMode)
+                    existing.Tools = BuildTools.GetToolsForSession();
                 return existing;
+            }
+
+            // Client mode: lightweight session (server manages the real state)
+            if (IsClientMode)
+            {
+                var clientSession = new WebAgentSession
+                {
+                    Messages = new List<ChatMessage>(),
+                    Tools = new List<Tool>()
+                };
+                _sessions[clientSession.SessionId] = clientSession;
+                return clientSession;
             }
 
             // Try to load from database if session ID provided
@@ -1014,6 +1040,14 @@ namespace thuvu.Web.Services
             string message,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
+            // Client mode: proxy to remote server
+            if (IsClientMode)
+            {
+                await foreach (var evt in SendMessageViaClientAsync(sessionId, message, ct))
+                    yield return evt;
+                yield break;
+            }
+            
             var session = GetSession(sessionId);
             if (session == null)
             {
@@ -1679,6 +1713,14 @@ namespace thuvu.Web.Services
             string imageMimeType,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
+            // Client mode: proxy to remote server (images sent as message for now)
+            if (IsClientMode)
+            {
+                await foreach (var evt in SendMessageViaClientAsync(sessionId, message, ct))
+                    yield return evt;
+                yield break;
+            }
+            
             var session = GetSession(sessionId);
             if (session == null)
             {
@@ -1861,6 +1903,14 @@ namespace thuvu.Web.Services
             string command,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
+            // Client mode: proxy slash commands to remote server
+            if (IsClientMode)
+            {
+                await foreach (var evt in ExecuteCommandViaClientAsync(sessionId, command, ct))
+                    yield return evt;
+                yield break;
+            }
+            
             var session = GetSession(sessionId);
             if (session == null)
             {
@@ -3093,8 +3143,175 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
                     return null;
             }
         }
+        
+        #region Client Mode (proxy to remote agent server)
+        
+        /// <summary>
+        /// Send a message via AgentClient and bridge events to AgentStreamEvent.
+        /// Maps the session ID to a server-side conversation.
+        /// </summary>
+        private async IAsyncEnumerable<AgentStreamEvent> SendMessageViaClientAsync(
+            string sessionId,
+            string message,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            if (_client == null) yield break;
+            
+            // Ensure conversation exists on server
+            if (_client.ConversationId == null)
+            {
+                var convId = await _client.CreateConversationAsync(ct: ct);
+                if (convId == null)
+                {
+                    yield return new AgentStreamEvent { Type = "error", Data = "Failed to create server conversation" };
+                    yield break;
+                }
+            }
+            
+            // Create channel to collect events from AgentClient callbacks
+            var channel = System.Threading.Channels.Channel.CreateUnbounded<AgentStreamEvent>();
+            var writer = channel.Writer;
+            
+            // Wire up AgentClient events → channel
+            Action<string> onToken = t => writer.TryWrite(new AgentStreamEvent { Type = "token", Data = t });
+            Action<string> onReasoning = t => writer.TryWrite(new AgentStreamEvent { Type = "reasoning", Data = t });
+            Action<string, string> onToolCall = (name, args) => writer.TryWrite(new AgentStreamEvent { Type = "tool_call", ToolName = name, Data = args });
+            Action<string, string, string, TimeSpan> onToolComplete = (name, args, result, elapsed) =>
+                writer.TryWrite(new AgentStreamEvent { Type = "tool_result", ToolName = name, Data = result });
+            Action<string> onContentReplace = c => writer.TryWrite(new AgentStreamEvent { Type = "content_replace", Data = c });
+            Action<Usage> onUsage = u => writer.TryWrite(new AgentStreamEvent
+            {
+                Type = "usage",
+                Data = System.Text.Json.JsonSerializer.Serialize(new { promptTokens = u.PromptTokens, completionTokens = u.CompletionTokens, totalTokens = u.TotalTokens })
+            });
+            Action onComplete = () =>
+            {
+                writer.TryWrite(new AgentStreamEvent { Type = "done", Data = "" });
+                writer.TryComplete();
+            };
+            Action<string> onError = e =>
+            {
+                writer.TryWrite(new AgentStreamEvent { Type = "error", Data = e });
+                writer.TryComplete();
+            };
+            
+            // Permission relay: server asks → we forward to web UI → respond back
+            Func<string, string, string, string, Task<bool>> onPermission = async (id, tool, args, desc) =>
+            {
+                var request = new PendingPermissionRequest
+                {
+                    RequestId = id,
+                    ToolName = tool,
+                    ArgsJson = args
+                };
+                
+                // Write permission event to SSE stream for web UI
+                writer.TryWrite(new AgentStreamEvent
+                {
+                    Type = "permission_request",
+                    ToolName = tool,
+                    Data = System.Text.Json.JsonSerializer.Serialize(new { requestId = id, toolName = tool, args, description = desc })
+                });
+                
+                // Store pending permission and wait for response from web UI
+                if (_sessions.TryGetValue(sessionId, out var session))
+                    session.PendingPermissions[id] = request;
+                    
+                OnPermissionRequired?.Invoke(sessionId, request);
+                
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+                    return await request.ResponseTcs.Task.WaitAsync(cts.Token) != 'N';
+                }
+                catch
+                {
+                    return false; // Timeout → deny
+                }
+            };
+            
+            // Subscribe to events
+            _client.OnToken += onToken;
+            _client.OnReasoningToken += onReasoning;
+            _client.OnToolCall += onToolCall;
+            _client.OnToolComplete += onToolComplete;
+            _client.OnContentReplace += onContentReplace;
+            _client.OnUsage += onUsage;
+            _client.OnComplete += onComplete;
+            _client.OnError += onError;
+            _client.OnPermissionRequest += onPermission;
+            
+            // Send message in background task
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _client.SendMessageAsync(message);
+                }
+                catch (Exception ex)
+                {
+                    writer.TryWrite(new AgentStreamEvent { Type = "error", Data = ex.Message });
+                }
+                finally
+                {
+                    writer.TryComplete();
+                }
+            }, ct);
+            
+            // Stream events from channel
+            try
+            {
+                await foreach (var evt in channel.Reader.ReadAllAsync(ct))
+                {
+                    yield return evt;
+                }
+            }
+            finally
+            {
+                // Unsubscribe
+                _client.OnToken -= onToken;
+                _client.OnReasoningToken -= onReasoning;
+                _client.OnToolCall -= onToolCall;
+                _client.OnToolComplete -= onToolComplete;
+                _client.OnContentReplace -= onContentReplace;
+                _client.OnUsage -= onUsage;
+                _client.OnComplete -= onComplete;
+                _client.OnError -= onError;
+                _client.OnPermissionRequest -= onPermission;
+            }
+        }
+        
+        /// <summary>
+        /// Execute a slash command via AgentClient.
+        /// </summary>
+        private async IAsyncEnumerable<AgentStreamEvent> ExecuteCommandViaClientAsync(
+            string sessionId,
+            string command,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            if (_client == null) yield break;
+            
+            if (_client.ConversationId == null)
+            {
+                await _client.CreateConversationAsync(ct: ct);
+            }
+            
+            var (success, output, error) = await _client.SendCommandAsync(command, ct);
+            
+            if (success)
+            {
+                yield return new AgentStreamEvent { Type = "token", Data = output };
+            }
+            else
+            {
+                yield return new AgentStreamEvent { Type = "error", Data = error ?? "Command failed" };
+            }
+            
+            yield return new AgentStreamEvent { Type = "done", Data = "" };
+        }
+        
+        #endregion
     }
-
     /// <summary>
     /// Event streamed from agent to client
     /// </summary>

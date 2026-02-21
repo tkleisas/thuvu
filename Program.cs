@@ -178,7 +178,15 @@ namespace thuvu
             // If web mode (without API agent mode), start the web server standalone
             if (useWeb && !useApi)
             {
-                await thuvu.Web.WebHost.RunAsync(args);
+                // Web + server mode: web UI proxies to remote agent server
+                if (useServer && !noServer)
+                {
+                    await thuvu.Web.WebHost.RunAsync(args, serverUrl: serverUrl);
+                }
+                else
+                {
+                    await thuvu.Web.WebHost.RunAsync(args);
+                }
                 return;
             }
 

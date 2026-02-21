@@ -17,7 +17,7 @@ namespace thuvu.Web
         /// <summary>
         /// Start the web server with Blazor and SignalR
         /// </summary>
-        public static async Task RunAsync(string[] args, CancellationToken ct = default)
+        public static async Task RunAsync(string[] args, CancellationToken ct = default, string? serverUrl = null)
         {
             // Find the wwwroot directory - check multiple locations
             var currentDir = Directory.GetCurrentDirectory();
@@ -83,6 +83,27 @@ namespace thuvu.Web
             });
 
             var app = builder.Build();
+
+            // If serverUrl provided, put WebAgentService into client mode
+            if (!string.IsNullOrEmpty(serverUrl))
+            {
+                var agentClient = new thuvu.Services.AgentClient(serverUrl);
+                var connected = await agentClient.ConnectAsync(ct);
+                if (!connected)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"Cannot connect to agent server at {serverUrl}");
+                    Console.ResetColor();
+                    return;
+                }
+                
+                var webService = app.Services.GetRequiredService<WebAgentService>();
+                webService.SetClientMode(agentClient);
+                
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"Web UI connected to agent server at {serverUrl}");
+                Console.ResetColor();
+            }
 
             // Initialize TokenTracker with context length from config
             // Priority: 1) Model-specific config, 2) AgentConfig setting, 3) Default 32768
