@@ -89,12 +89,12 @@ namespace thuvu.Web
         /// <summary>
         /// POST /api/conversations - Create a new conversation
         /// </summary>
-        private static IResult CreateConversation(HttpContext ctx)
+        private static async Task<IResult> CreateConversation(HttpRequest request)
         {
             try
             {
-                var body = ctx.Request.HasJsonContentType()
-                    ? JsonSerializer.Deserialize<CreateConversationRequest>(ctx.Request.Body, _jsonOptions)
+                var body = request.HasJsonContentType()
+                    ? await JsonSerializer.DeserializeAsync<CreateConversationRequest>(request.Body, _jsonOptions)
                     : null;
 
                 var conv = ConversationService.Instance.CreateConversation(
@@ -332,13 +332,13 @@ namespace thuvu.Web
         /// POST /api/conversations/{id}/command - Execute a slash command
         /// Body: { "command": "/diff --staged" }
         /// </summary>
-        private static async Task<IResult> SendCommand(string id, HttpContext ctx, CancellationToken ct)
+        private static async Task<IResult> SendCommand(string id, HttpRequest request, CancellationToken ct)
         {
             var conv = ConversationService.Instance.GetConversation(id);
             if (conv == null)
                 return Results.Json(new { error = "Conversation not found" }, statusCode: 404);
 
-            var body = await JsonSerializer.DeserializeAsync<SendCommandRequest>(ctx.Request.Body, _jsonOptions, ct);
+            var body = await JsonSerializer.DeserializeAsync<SendCommandRequest>(request.Body, _jsonOptions, ct);
             if (body == null || string.IsNullOrWhiteSpace(body.Command))
                 return Results.Json(new { error = "Missing command" }, statusCode: 400);
 
@@ -365,9 +365,9 @@ namespace thuvu.Web
         /// POST /api/permissions/{id} - Respond to a permission prompt
         /// Body: { "approved": true }
         /// </summary>
-        private static async Task<IResult> RespondToPermission(string id, HttpContext ctx, CancellationToken ct)
+        private static async Task<IResult> RespondToPermission(string id, HttpRequest request, CancellationToken ct)
         {
-            var body = await JsonSerializer.DeserializeAsync<PermissionResponse>(ctx.Request.Body, _jsonOptions, ct);
+            var body = await JsonSerializer.DeserializeAsync<PermissionResponse>(request.Body, _jsonOptions, ct);
             if (body == null)
                 return Results.Json(new { error = "Invalid request" }, statusCode: 400);
 
