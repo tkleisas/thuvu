@@ -57,17 +57,23 @@ namespace thuvu.Tools
                 if (applied)
                 {
                     // Trigger code index update for the patched file
+                    string? lspDiagnostics = null;
                     if (targetFile != null)
                     {
                         var fullPath = Path.Combine(rootDir, targetFile);
                         TriggerIndexUpdateAsync(fullPath);
+                        lspDiagnostics = GetLspDiagnosticsSync(fullPath);
                     }
                     
-                    return JsonSerializer.Serialize(new 
-                    { 
-                        applied = true,
-                        message = "Patch applied successfully"
-                    });
+                    var result = new Dictionary<string, object?>
+                    {
+                        ["applied"] = true,
+                        ["message"] = "Patch applied successfully"
+                    };
+                    if (lspDiagnostics != null)
+                        result["diagnostics"] = lspDiagnostics;
+                    
+                    return JsonSerializer.Serialize(result);
                 }
                 else
                 {
@@ -217,6 +223,30 @@ namespace thuvu.Tools
             {
                 // Ignore any errors in triggering the update
             }
+        }
+        
+        private static string? GetLspDiagnosticsSync(string fullPath)
+        {
+            if (!Models.LspConfig.Config.Enabled || !Models.LspConfig.Config.AutoDiagnostics)
+                return null;
+            try
+            {
+                if (!Services.Lsp.LspService.Instance.IsInitialized) return null;
+                var server = Services.Lsp.LspService.Instance.GetServerForFileAsync(fullPath).GetAwaiter().GetResult();
+                if (server is Services.Lsp.OmniSharpServer omni)
+                {
+                    var diags = omni.NotifyAndWaitForDiagnosticsAsync(fullPath, Models.LspConfig.Config.DiagnosticsTimeoutMs).GetAwaiter().GetResult();
+                    if (diags.Count == 0) return null;
+                    var parts = new List<string>();
+                    foreach (var e in diags.Where(d => d.Severity == Services.Lsp.LspDiagnosticSeverity.Error).Take(5))
+                        parts.Add($"ERROR line {e.Range.StartLine + 1}: {e.Code} {e.Message}");
+                    foreach (var w in diags.Where(d => d.Severity == Services.Lsp.LspDiagnosticSeverity.Warning).Take(3))
+                        parts.Add($"WARN line {w.Range.StartLine + 1}: {w.Code} {w.Message}");
+                    return parts.Count > 0 ? string.Join("\n", parts) : null;
+                }
+                return null;
+            }
+            catch { return null; }
         }
     }
 }

@@ -218,6 +218,9 @@ namespace thuvu.Tools
                 // Trigger code index update for source files (fire and forget)
                 TriggerIndexUpdateAsync(fullPath);
                 
+                // Check LSP diagnostics if available
+                var lspDiagnostics = GetLspDiagnosticsSync(fullPath);
+                
                 // Build response with optional warning
                 var response = new Dictionary<string, object>
                 {
@@ -234,6 +237,9 @@ namespace thuvu.Tools
                     
                 if (backupPath != null)
                     response["backup_path"] = backupPath;
+                
+                if (lspDiagnostics != null)
+                    response["diagnostics"] = lspDiagnostics;
                 
                 // Add warning for future large writes
                 if (contentBytes > ContentWarningThreshold)
@@ -503,17 +509,28 @@ namespace thuvu.Tools
                     // Trigger code index update for source files (fire and forget)
                     TriggerIndexUpdateAsync(fullPath);
                     
-                    return JsonSerializer.Serialize(new
-                    { 
-                        success = true,
-                        complete = true,
-                        path = fullPath,
-                        size_bytes = contentBytes,
-                        lines = lineCount,
-                        sha256 = newSha256,
-                        was_new_file = !fileExists,
-                        chunks_received = totalChunks
-                    });
+                    // Check LSP diagnostics if available
+                    string? lspDiagnostics = null;
+                    if (Models.LspConfig.Config.Enabled && Models.LspConfig.Config.AutoDiagnostics)
+                    {
+                        lspDiagnostics = GetLspDiagnosticsSync(fullPath);
+                    }
+                    
+                    var result = new Dictionary<string, object?>
+                    {
+                        ["success"] = true,
+                        ["complete"] = true,
+                        ["path"] = fullPath,
+                        ["size_bytes"] = contentBytes,
+                        ["lines"] = lineCount,
+                        ["sha256"] = newSha256,
+                        ["was_new_file"] = !fileExists,
+                        ["chunks_received"] = totalChunks
+                    };
+                    if (lspDiagnostics != null)
+                        result["diagnostics"] = lspDiagnostics;
+                    
+                    return JsonSerializer.Serialize(result);
                 }
                 else
                 {
@@ -636,6 +653,68 @@ namespace thuvu.Tools
             catch
             {
                 // Ignore any errors in triggering the update
+            }
+        }
+        
+        /// <summary>
+        /// Get LSP diagnostics synchronously with timeout. For use in sync write path.
+        /// </summary>
+        private static string? GetLspDiagnosticsSync(string fullPath)
+        {
+            if (!Models.LspConfig.Config.Enabled || !Models.LspConfig.Config.AutoDiagnostics)
+                return null;
+            
+            try
+            {
+                if (!Services.Lsp.LspService.Instance.IsInitialized) return null;
+                var timeout = Models.LspConfig.Config.DiagnosticsTimeoutMs;
+                using var cts = new CancellationTokenSource(timeout);
+                return GetLspDiagnosticsAsync(fullPath).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// Get LSP diagnostics for a file after write.
+        /// </summary>
+        private static async Task<string?> GetLspDiagnosticsAsync(string fullPath)
+        {
+            try
+            {
+                if (!Services.Lsp.LspService.Instance.IsInitialized) return null;
+                
+                var server = await Services.Lsp.LspService.Instance.GetServerForFileAsync(fullPath);
+                if (server == null) return null;
+                
+                if (server is Services.Lsp.OmniSharpServer omni)
+                {
+                    var diags = await omni.NotifyAndWaitForDiagnosticsAsync(fullPath, Models.LspConfig.Config.DiagnosticsTimeoutMs);
+                    if (diags.Count == 0) return null;
+                    
+                    var errors = diags.Where(d => d.Severity == Services.Lsp.LspDiagnosticSeverity.Error).ToList();
+                    var warnings = diags.Where(d => d.Severity == Services.Lsp.LspDiagnosticSeverity.Warning).ToList();
+                    
+                    if (errors.Count == 0 && warnings.Count == 0) return null;
+                    
+                    var parts = new List<string>();
+                    foreach (var e in errors.Take(5))
+                        parts.Add($"ERROR line {e.Range.StartLine + 1}: {e.Code} {e.Message}");
+                    foreach (var w in warnings.Take(3))
+                        parts.Add($"WARN line {w.Range.StartLine + 1}: {w.Code} {w.Message}");
+                    return string.Join("\n", parts);
+                }
+                else
+                {
+                    await server.NotifyFileChangedAsync(fullPath);
+                    return await Services.Lsp.LspService.Instance.GetDiagnosticsSummaryAsync(fullPath);
+                }
+            }
+            catch
+            {
+                return null;
             }
         }
     }

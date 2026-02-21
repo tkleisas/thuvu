@@ -268,6 +268,9 @@ namespace thuvu
                 "tool_search" => await Task.Run(() => ExecuteToolSearch(argsJson), ct).ConfigureAwait(false),
                 "tool_load" => await Task.Run(() => ExecuteToolLoad(argsJson), ct).ConfigureAwait(false),
                 
+                // LSP Code Intelligence
+                "lsp" => await LspToolImpl.ExecuteAsync(argsJson, ct).ConfigureAwait(false),
+                
                 _ => JsonSerializer.Serialize(new { error = $"Unknown tool: {name}" })
             };
         }

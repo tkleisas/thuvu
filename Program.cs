@@ -56,6 +56,7 @@ namespace thuvu
             RagConfig.LoadConfig();
             McpConfig.LoadConfig();
             SqliteConfig.LoadConfig();
+            LspConfig.LoadConfig();
             
             // Initialize model registry (try to load from config, fall back to AgentConfig)
             try
@@ -126,6 +127,7 @@ namespace thuvu
                 RagConfig.LoadConfig();
                 McpConfig.LoadConfig();
                 SqliteConfig.LoadConfig();
+                LspConfig.LoadConfig();
             }
             
             // Load agent API config (always load this)
@@ -178,6 +180,13 @@ namespace thuvu
 
             // Initialize RAG service
             RagToolImpl.Initialize(http);;
+
+            // Initialize LSP service (lazy — servers spawn on first file access)
+            if (LspConfig.Config.Enabled)
+            {
+                var lspService = thuvu.Services.Lsp.LspService.Initialize(AgentConfig.GetWorkDirectory());
+                RegisterLspServerFactories(lspService);
+            }
 
             // Run health checks (skip in API mode — agent will report LLM errors per-job)
             if (!useApi)
@@ -559,6 +568,8 @@ namespace thuvu
             if (user.Equals("/exit", StringComparison.OrdinalIgnoreCase))
             {
                 PermissionManager.ClearSessionPermissions();
+                // Shutdown LSP servers gracefully
+                try { thuvu.Services.Lsp.LspService.Instance.Dispose(); } catch { }
                 Environment.Exit(0);
                 return true;
             }
@@ -757,6 +768,12 @@ namespace thuvu
             if (user.StartsWith("/orchestrate", StringComparison.OrdinalIgnoreCase))
             {
                 await CommandHandlers.HandleOrchestrateCommandAsync(user, http, ct);
+                return true;
+            }
+
+            if (user.StartsWith("/lsp", StringComparison.OrdinalIgnoreCase))
+            {
+                HandleLspCommand(user);
                 return true;
             }
 
@@ -1127,6 +1144,115 @@ namespace thuvu
                     ConsoleHelpers.PrintKeyValue("/models coding [id]", "Get/set coding model", ConsoleColor.Green);
                     ConsoleHelpers.PrintKeyValue("/models add", "Info on adding models", ConsoleColor.Green);
                     break;
+            }
+        }
+        
+        private static void HandleLspCommand(string command)
+        {
+            var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var subCommand = parts.Length > 1 ? parts[1].ToLowerInvariant() : "status";
+            
+            switch (subCommand)
+            {
+                case "status":
+                    if (!LspConfig.Config.Enabled)
+                    {
+                        ConsoleHelpers.PrintInfo("[LSP] Disabled in configuration");
+                        return;
+                    }
+                    try
+                    {
+                        var servers = thuvu.Services.Lsp.LspService.Instance.GetStatus();
+                        if (servers.Count == 0)
+                        {
+                            ConsoleHelpers.PrintInfo("[LSP] No servers running (will start on first file access)");
+                        }
+                        else
+                        {
+                            ConsoleHelpers.PrintHeader("LSP Servers", ConsoleColor.Cyan);
+                            foreach (var (id, ready) in servers)
+                            {
+                                var status = ready ? "✓ Ready" : "✗ Not Ready";
+                                var color = ready ? ConsoleColor.Green : ConsoleColor.Yellow;
+                                ConsoleHelpers.PrintKeyValue(id, status, ConsoleColor.White, color);
+                            }
+                        }
+                        ConsoleHelpers.PrintKeyValue("Auto-Diagnostics", LspConfig.Config.AutoDiagnostics ? "On" : "Off", ConsoleColor.DarkGray);
+                        ConsoleHelpers.PrintKeyValue("Timeout", $"{LspConfig.Config.DiagnosticsTimeoutMs}ms", ConsoleColor.DarkGray);
+                    }
+                    catch
+                    {
+                        ConsoleHelpers.PrintInfo("[LSP] Service not initialized");
+                    }
+                    break;
+                    
+                case "restart":
+                    try
+                    {
+                        thuvu.Services.Lsp.LspService.Instance.Dispose();
+                        var svc = thuvu.Services.Lsp.LspService.Initialize(AgentConfig.GetWorkDirectory());
+                        RegisterLspServerFactories(svc);
+                        ConsoleHelpers.PrintSuccess("[LSP] Service restarted");
+                    }
+                    catch (Exception ex)
+                    {
+                        ConsoleHelpers.PrintError($"[LSP] Restart failed: {ex.Message}");
+                    }
+                    break;
+                    
+                case "diagnostics":
+                    var file = parts.Length > 2 ? parts[2] : null;
+                    if (file == null)
+                    {
+                        ConsoleHelpers.PrintInfo("Usage: /lsp diagnostics <file>");
+                        return;
+                    }
+                    try
+                    {
+                        var fullPath = Path.GetFullPath(file, AgentConfig.GetWorkDirectory());
+                        var summary = thuvu.Services.Lsp.LspService.Instance.GetDiagnosticsSummaryAsync(fullPath).GetAwaiter().GetResult();
+                        Console.WriteLine(summary ?? "No diagnostics (clean)");
+                    }
+                    catch (Exception ex)
+                    {
+                        ConsoleHelpers.PrintError($"[LSP] {ex.Message}");
+                    }
+                    break;
+                    
+                default:
+                    ConsoleHelpers.PrintHeader("LSP Commands", ConsoleColor.Cyan);
+                    ConsoleHelpers.PrintKeyValue("/lsp status", "Show LSP server status", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/lsp restart", "Restart all LSP servers", ConsoleColor.Green);
+                    ConsoleHelpers.PrintKeyValue("/lsp diagnostics <file>", "Show diagnostics for a file", ConsoleColor.Green);
+                    break;
+            }
+        }
+        
+        private static void RegisterLspServerFactories(thuvu.Services.Lsp.LspService lspService)
+        {
+            var omnisharpConfig = LspConfig.Config.GetServerConfig("omnisharp");
+            if (omnisharpConfig?.Disabled != true)
+            {
+                lspService.RegisterServerFactory(ext =>
+                {
+                    if (ext is ".cs" or ".csx")
+                    {
+                        var server = new thuvu.Services.Lsp.OmniSharpServer();
+                        // Set explicit path if configured
+                        if (!string.IsNullOrEmpty(omnisharpConfig?.Path))
+                            server.ExePath = omnisharpConfig.Path;
+                        // Try auto-download path
+                        else
+                        {
+                            var downloadedPath = thuvu.Services.Lsp.LspDownloadService
+                                .EnsureOmniSharpAsync(omnisharpConfig).GetAwaiter().GetResult();
+                            if (downloadedPath != null)
+                                server.ExePath = downloadedPath;
+                        }
+                        return server;
+                    }
+                    return null;
+                });
             }
         }
     }

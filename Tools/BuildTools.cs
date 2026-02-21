@@ -1133,6 +1133,43 @@ The sub-agent runs synchronously and returns a detailed result with actions take
                     }
                     """).RootElement
                 }
+            },
+            // LSP Code Intelligence
+            new Tool
+            {
+                Type = "function",
+                Function = new FunctionDef
+                {
+                    Name = "lsp",
+                    Description = @"Interact with Language Server Protocol (LSP) for code intelligence. Provides type-aware navigation, references, diagnostics, and symbol search.
+
+Operations:
+- goToDefinition: Find where a symbol is defined (cross-file, cross-project)
+- findReferences: Find all usages of a symbol (type-aware, not just text search)
+- goToImplementation: Find implementations of an interface/abstract method
+- hover: Get type info and documentation for a symbol
+- documentSymbol: List all symbols (classes, methods, fields) in a file
+- workspaceSymbol: Search symbols across the entire project (uses 'query' parameter)
+- prepareCallHierarchy: Get call hierarchy item at a position
+- incomingCalls: Find all functions/methods that call the function at a position
+- outgoingCalls: Find all functions/methods called by the function at a position
+- diagnostics: Get current compiler errors/warnings for a file
+
+Line and character are 1-based (as shown in editors). For workspaceSymbol, use the 'query' parameter instead of line/character.",
+                    Parameters = JsonDocument.Parse("""
+                    {
+                      "type":"object",
+                      "properties":{
+                        "operation":{"type":"string","enum":["goToDefinition","findReferences","goToImplementation","hover","documentSymbol","workspaceSymbol","prepareCallHierarchy","incomingCalls","outgoingCalls","diagnostics"],"description":"The LSP operation to perform"},
+                        "filePath":{"type":"string","description":"Path to the file (absolute or relative to project root)"},
+                        "line":{"type":"integer","minimum":1,"description":"Line number (1-based)"},
+                        "character":{"type":"integer","minimum":1,"description":"Character offset (1-based)"},
+                        "query":{"type":"string","description":"Search query for workspaceSymbol operation"}
+                      },
+                      "required":["operation","filePath"]
+                    }
+                    """).RootElement
+                }
             }
         };
 
@@ -1223,7 +1260,10 @@ The sub-agent runs synchronously and returns a detailed result with actions take
                 ["delegate_to_agent"] = ToolCategory.Agents,
                 
                 // MCP
-                ["execute_code"] = ToolCategory.Mcp
+                ["execute_code"] = ToolCategory.Mcp,
+                
+                // LSP
+                ["lsp"] = ToolCategory.CodeIndex
             };
             
             // Keywords for better search
@@ -1248,7 +1288,8 @@ The sub-agent runs synchronously and returns a detailed result with actions take
                 ["process_start"] = new[] { "run", "execute", "launch", "background" },
                 ["code_index"] = new[] { "symbol", "class", "method", "parse" },
                 ["code_query"] = new[] { "find", "symbol", "class", "method" },
-                ["delegate_to_agent"] = new[] { "sub-agent", "specialist", "delegate", "helper" }
+                ["delegate_to_agent"] = new[] { "sub-agent", "specialist", "delegate", "helper" },
+                ["lsp"] = new[] { "definition", "references", "hover", "symbol", "diagnostics", "type", "implementation", "calls" }
             };
             
             // Deferred categories (not Core)
