@@ -122,6 +122,11 @@ namespace thuvu.Models
             if (!string.IsNullOrEmpty(agentName)) AgentName = agentName;
             if (headless.HasValue) Headless = headless.Value;
             if (enabled.HasValue) Enabled = enabled.Value;
+
+            // Allow token override via environment variable (more secure than CLI arg)
+            var envToken = Environment.GetEnvironmentVariable("THUVU_API_TOKEN");
+            if (!string.IsNullOrEmpty(envToken))
+                BearerToken = envToken;
         }
     }
 
