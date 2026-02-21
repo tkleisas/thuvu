@@ -189,7 +189,8 @@ namespace thuvu.Models
         /// <summary>
         /// Submit a new job. Returns null if agent is busy.
         /// </summary>
-        public async Task<AgentJob?> SubmitJobAsync(string prompt, CancellationToken ct = default)
+        public async Task<AgentJob?> SubmitJobAsync(string prompt, CancellationToken ct = default,
+            string? modelOverride = null, string? systemPromptOverride = null)
         {
             lock (_jobLock)
             {
@@ -202,6 +203,8 @@ namespace thuvu.Models
                 Id = Guid.NewGuid().ToString("N")[..12],
                 Status = JobStatus.Pending,
                 Prompt = prompt,
+                ModelOverride = modelOverride,
+                SystemPromptOverride = systemPromptOverride,
                 SubmittedAt = DateTime.UtcNow,
                 Journal = new List<JournalEntry>()
             };
@@ -476,6 +479,8 @@ namespace thuvu.Models
         public string Id { get; set; } = "";
         public JobStatus Status { get; set; }
         public string Prompt { get; set; } = "";
+        public string? ModelOverride { get; set; }
+        public string? SystemPromptOverride { get; set; }
         public string? Result { get; set; }
         public string? Error { get; set; }
         public DateTime SubmittedAt { get; set; }

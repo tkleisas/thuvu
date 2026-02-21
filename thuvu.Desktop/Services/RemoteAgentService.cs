@@ -125,8 +125,15 @@ public class RemoteAgentService : IAgentService, IDisposable
 
     private async Task SubmitAndStreamAsync(string prompt, CancellationToken ct)
     {
-        // Submit job
-        var payload = JsonSerializer.Serialize(new { prompt }, _jsonOptions);
+        // Build payload with optional model and system prompt overrides
+        var jobRequest = new Dictionary<string, string?> { ["prompt"] = prompt };
+        if (!string.IsNullOrEmpty(ModelOverride))
+            jobRequest["model"] = ModelOverride;
+        var systemMsg = _messages.FirstOrDefault(m => m.Role == "system");
+        if (systemMsg != null)
+            jobRequest["systemPrompt"] = systemMsg.Content;
+
+        var payload = JsonSerializer.Serialize(jobRequest, _jsonOptions);
         var content = new StringContent(payload, Encoding.UTF8, "application/json");
         var submitResp = await _http.PostAsync($"{BaseUrl}/api/jobs", content, ct);
 

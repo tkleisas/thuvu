@@ -98,7 +98,8 @@ namespace thuvu.Web
                     }, statusCode: 409);
                 }
 
-                var job = await jobService.SubmitJobAsync(body.Prompt, ct);
+                var job = await jobService.SubmitJobAsync(body.Prompt, ct,
+                    modelOverride: body.Model, systemPromptOverride: body.SystemPrompt);
                 if (job == null)
                 {
                     return Results.Json(new { success = false, error = "Failed to submit job" }, statusCode: 500);
@@ -306,6 +307,8 @@ namespace thuvu.Web
         private class SubmitJobRequest
         {
             public string Prompt { get; set; } = "";
+            public string? Model { get; set; }
+            public string? SystemPrompt { get; set; }
         }
     }
 
@@ -315,7 +318,7 @@ namespace thuvu.Web
     public static class AgentJobProcessor
     {
         private static Func<string, string, CancellationToken, Task<string>>? _processCallback;
-        private static Func<string, string, Action<AgentStreamEvent>, CancellationToken, Task<string>>? _streamingCallback;
+        private static Func<string, string, Action<AgentStreamEvent>, CancellationToken, string?, string?, Task<string>>? _streamingCallback;
 
         /// <summary>
         /// Set the callback for processing jobs (called from Program.cs after agent loop is ready).
@@ -328,7 +331,7 @@ namespace thuvu.Web
         /// <summary>
         /// Set the streaming callback that emits AgentStreamEvents during processing.
         /// </summary>
-        public static void SetStreamingCallback(Func<string, string, Action<AgentStreamEvent>, CancellationToken, Task<string>> callback)
+        public static void SetStreamingCallback(Func<string, string, Action<AgentStreamEvent>, CancellationToken, string?, string?, Task<string>> callback)
         {
             _streamingCallback = callback;
         }
@@ -357,7 +360,8 @@ namespace thuvu.Web
                 if (_streamingCallback != null)
                 {
                     result = await _streamingCallback(jobId, job.Prompt,
-                        evt => jobService.EmitEvent(evt), ct);
+                        evt => jobService.EmitEvent(evt), ct,
+                        job.ModelOverride, job.SystemPromptOverride);
                 }
                 else if (_processCallback != null)
                 {

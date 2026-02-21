@@ -40,19 +40,35 @@ public class AgentProcessManager
     /// </summary>
     public async Task<AgentProcessInfo?> SpawnAgentAsync(string agentId, string? name = null)
     {
+        var diagLog = _registryDir != null ? Path.Combine(_registryDir, "spawn_diag.log") : null;
+        void Diag(string msg)
+        {
+            var line = $"[{DateTime.Now:HH:mm:ss.fff}] {msg}";
+            AgentLogger.LogInfo(line);
+            if (diagLog != null) try { File.AppendAllText(diagLog, line + "\n"); } catch { }
+        }
+
+        Diag($"SpawnAgentAsync called. ExePath={_thuvuExePath}, Exists={(_thuvuExePath != null && File.Exists(_thuvuExePath))}");
+
         if (_thuvuExePath == null || !File.Exists(_thuvuExePath))
         {
-            AgentLogger.LogError("Cannot spawn agent: thuvu executable not found");
+            Diag("FAIL: thuvu executable not found");
             return null;
         }
 
         var port = FindAvailablePort();
         var token = GenerateToken();
 
+        // Pass the Desktop's config file so the spawned agent inherits model/auth settings
+        var configPath = AgentConfig.GetConfigPath();
+        var configArg = File.Exists(configPath) ? $" --config \"{configPath}\"" : "";
+
+        Diag($"Port={port}, WorkDir={_projectDir}, Config={configPath}, Args=--api --port {port}{configArg}");
+
         var startInfo = new ProcessStartInfo
         {
             FileName = _thuvuExePath,
-            Arguments = $"--api --port {port}",
+            Arguments = $"--api --port {port}{configArg}",
             WorkingDirectory = _projectDir ?? Directory.GetCurrentDirectory(),
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -67,10 +83,11 @@ public class AgentProcessManager
         try
         {
             process = Process.Start(startInfo)!;
+            Diag($"Process started, PID={process.Id}");
         }
         catch (Exception ex)
         {
-            AgentLogger.LogError("Failed to spawn agent: {Error}", ex.Message);
+            Diag($"FAIL: Process.Start threw: {ex.Message}");
             return null;
         }
 
@@ -95,8 +112,7 @@ public class AgentProcessManager
             if (process.HasExited)
             {
                 var stderr = await process.StandardError.ReadToEndAsync();
-                AgentLogger.LogError("Agent process exited with code {Code}: {Stderr}",
-                    process.ExitCode, stderr.Length > 500 ? stderr[..500] : stderr);
+                Diag($"FAIL: Process exited with code {process.ExitCode}. Stderr: {(stderr.Length > 500 ? stderr[..500] : stderr)}");
                 return null;
             }
 
@@ -107,21 +123,21 @@ public class AgentProcessManager
                     http.DefaultRequestHeaders.Authorization =
                         new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 var resp = await http.GetAsync($"{info.Url}/api/agent/info");
+                Diag($"Health check {i+1}: {resp.StatusCode}");
                 if (resp.IsSuccessStatusCode)
                 {
                     connected = true;
                     break;
                 }
             }
-            catch { }
+            catch (Exception ex) { Diag($"Health check {i+1}: {ex.GetType().Name} - {ex.Message}"); }
         }
 
         if (!connected)
         {
             var stderr = "";
             try { stderr = process.StandardError.ReadToEnd(); } catch { }
-            AgentLogger.LogError("Agent process started (PID {Pid}) but not responding on port {Port}. Stderr: {Stderr}",
-                process.Id, port, stderr.Length > 500 ? stderr[..500] : stderr);
+            Diag($"FAIL: Not responding after 15s. PID={process.Id}, Port={port}. Stderr: {(stderr.Length > 500 ? stderr[..500] : stderr)}");
             try { process.Kill(); } catch { }
             return null;
         }
@@ -129,7 +145,7 @@ public class AgentProcessManager
         _processes[agentId] = info;
         WriteRegistryFile(info);
 
-        AgentLogger.LogInfo("Spawned agent '{Name}' (PID {Pid}) on port {Port}", info.Name, info.Pid, info.Port);
+        Diag($"SUCCESS: Agent '{name}' spawned on port {port}, PID={info.Pid}");
         return info;
     }
 

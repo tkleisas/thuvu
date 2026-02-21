@@ -179,16 +179,19 @@ namespace thuvu
             // Initialize RAG service
             RagToolImpl.Initialize(http);;
 
-            // Run health checks
-            Console.WriteLine();
-            ConsoleHelpers.PrintStatus("Running health checks...");
-            var healthReport = await HealthCheck.RunAllChecksAsync(http, CancellationToken.None);
-            HealthCheck.PrintReport(healthReport);
-
-            if (!healthReport.CanStart)
+            // Run health checks (skip in API mode — agent will report LLM errors per-job)
+            if (!useApi)
             {
-                ConsoleHelpers.PrintError("Cannot start - fix critical issues above");
-                return;
+                Console.WriteLine();
+                ConsoleHelpers.PrintStatus("Running health checks...");
+                var healthReport = await HealthCheck.RunAllChecksAsync(http, CancellationToken.None);
+                HealthCheck.PrintReport(healthReport);
+
+                if (!healthReport.CanStart)
+                {
+                    ConsoleHelpers.PrintError("Cannot start - fix critical issues above");
+                    return;
+                }
             }
 
             // Initialize token tracker with context length
@@ -252,11 +255,26 @@ namespace thuvu
                 await AgentJobService.Instance.InitializeAsync();
                 
                 // Set up the streaming job processor callback
-                thuvu.Web.AgentJobProcessor.SetStreamingCallback(async (jobId, prompt, emit, ct) =>
+                thuvu.Web.AgentJobProcessor.SetStreamingCallback(async (jobId, prompt, emit, ct, modelOverride, systemPromptOverride) =>
                 {
+                    // Resolve model: use override from client, or fall back to default
+                    var modelId = modelOverride ?? AgentConfig.Config.Model;
+                    var modelEndpoint = ModelRegistry.Instance.GetModel(modelId);
+                    var effectiveHttp = http;
+                    
+                    // If a different model is requested, create a dedicated HttpClient for it
+                    if (modelEndpoint != null && modelOverride != null)
+                    {
+                        effectiveHttp = modelEndpoint.CreateHttpClient();
+                        modelId = modelEndpoint.ModelId;
+                    }
+
+                    var systemPrompt = systemPromptOverride 
+                        ?? SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive);
+
                     var jobMessages = new List<ChatMessage>
                     {
-                        new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)),
+                        new("system", systemPrompt),
                         new("user", prompt)
                     };
                     
@@ -268,7 +286,7 @@ namespace thuvu
                         if (AgentConfig.Config.Stream)
                         {
                             result = await AgentLoop.CompleteWithToolsStreamingAsync(
-                                http, AgentConfig.Config.Model, jobMessages, tools, ct,
+                                effectiveHttp, modelId, jobMessages, tools, ct,
                                 onToken: token => emit(AgentStreamEvent.Token(token)),
                                 onToolResult: (name, json) => 
                                 {
@@ -281,7 +299,7 @@ namespace thuvu
                         else
                         {
                             result = await AgentLoop.CompleteWithToolsAsync(
-                                http, AgentConfig.Config.Model, jobMessages, tools, ct,
+                                effectiveHttp, modelId, jobMessages, tools, ct,
                                 onToolResult: (name, json) =>
                                 {
                                     emit(AgentStreamEvent.ToolComplete(name, "", json, 0));
