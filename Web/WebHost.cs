@@ -75,10 +75,11 @@ namespace thuvu.Web
                 return http;
             });
 
-            // Configure Kestrel
+            // Configure Kestrel - bind to localhost only for security
+            var port = AgentApiConfig.Instance.Enabled ? AgentApiConfig.Instance.Port : 5000;
             builder.WebHost.ConfigureKestrel(options =>
             {
-                options.ListenLocalhost(5000); // HTTP
+                options.ListenLocalhost(port); // Localhost only — no external access
             });
 
             var app = builder.Build();
