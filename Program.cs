@@ -182,6 +182,14 @@ namespace thuvu
                 return;
             }
 
+            // Client/server mode: connect to a running agent server (or auto-spawn one)
+            // Skip all local initialization — the server handles everything
+            if (useServer && !noServer && !useTui)
+            {
+                await RunCliClientModeAsync(serverUrl);
+                return;
+            }
+
             using var http = new HttpClient();
             AgentConfig.ApplyConfig(http);
 
@@ -195,8 +203,8 @@ namespace thuvu
                 RegisterLspServerFactories(lspService);
             }
 
-            // Run health checks (skip in API mode — agent will report LLM errors per-job)
-            if (!useApi)
+            // Run health checks (skip in API mode and TUI client mode)
+            if (!useApi && !(useTui && useServer && !noServer))
             {
                 Console.WriteLine();
                 ConsoleHelpers.PrintStatus("Running health checks...");
@@ -473,13 +481,6 @@ namespace thuvu
                 Console.ResetColor();
                 Console.WriteLine("Note: The desktop project must be run directly via thuvu.Desktop executable.");
                 Console.WriteLine("Run: dotnet run --project thuvu.Desktop");
-                return;
-            }
-
-            // Client/server mode: connect to a running agent server (or auto-spawn one)
-            if (useServer && !noServer)
-            {
-                await RunCliClientModeAsync(serverUrl);
                 return;
             }
 
