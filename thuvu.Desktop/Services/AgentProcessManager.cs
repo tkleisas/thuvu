@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using thuvu.Models;
+using thuvu.Services;
 
 namespace thuvu.Desktop.Services;
 
@@ -204,14 +205,14 @@ public class AgentProcessManager
     }
 
     /// <summary>
-    /// Create a RemoteAgentService connected to an existing agent process.
+    /// Create an AgentClient connected to an existing agent process.
     /// </summary>
-    public RemoteAgentService? CreateRemoteService(string agentId)
+    public AgentClient? CreateRemoteService(string agentId)
     {
         var info = GetRunningAgent(agentId);
         if (info == null) return null;
 
-        return new RemoteAgentService(info.Url, info.Token)
+        return new AgentClient(info.Url, info.Token)
         {
             SessionId = agentId
         };

@@ -80,13 +80,13 @@ public class AgentRegistry
             return (chat, null);
         }
 
-        var agent = new RemoteAgentService(processInfo.Url, processInfo.Token)
+        var agent = new AgentClient(processInfo.Url, processInfo.Token)
         {
             WorkDirectory = WorkDirectory,
             SessionId = id
         };
 
-        // Verify connection
+        // Verify connection and create conversation
         var connected = await agent.ConnectAsync();
         if (!connected)
         {
@@ -94,6 +94,7 @@ public class AgentRegistry
             agent.Dispose();
             return (chat, null);
         }
+        await agent.CreateConversationAsync();
 
         chat.SetAgentService(agent);
         SaveSessionToDb(id, name, agent);
@@ -173,7 +174,7 @@ public class AgentRegistry
         if (id.StartsWith("Detached_") && int.TryParse(id[9..], out var num))
             _counter = Math.Max(_counter, num);
 
-        var remote = new RemoteAgentService(processInfo.Url, processInfo.Token)
+        var remote = new AgentClient(processInfo.Url, processInfo.Token)
         {
             WorkDirectory = WorkDirectory,
             SessionId = id
@@ -185,6 +186,7 @@ public class AgentRegistry
             remote.Dispose();
             return (CreateDisconnectedChat(id, name), null);
         }
+        await remote.CreateConversationAsync();
 
         var chat = new ChatViewModel
         {
@@ -233,9 +235,9 @@ public class AgentRegistry
         if (_agents.TryGetValue(chatId, out var entry))
         {
             // Stop detached agent process if applicable
-            if (entry.Agent is RemoteAgentService remote)
+            if (entry.Agent is AgentClient client)
             {
-                remote.Dispose();
+                client.Dispose();
                 AgentProcessManager.Instance.StopAgent(chatId);
             }
         }
