@@ -59,7 +59,7 @@ public class AgentRegistry
     }
 
     /// <summary>Create a detached agent running in a separate process</summary>
-    public (ChatViewModel chat, IAgentService? agent) CreateDetachedAgent(string? name = null)
+    public async Task<(ChatViewModel chat, IAgentService? agent)> CreateDetachedAgentAsync(string? name = null)
     {
         _counter++;
         var id = $"Detached_{_counter}";
@@ -74,7 +74,7 @@ public class AgentRegistry
         };
 
         // Spawn agent process
-        var processInfo = AgentProcessManager.Instance.SpawnAgentAsync(id, name).GetAwaiter().GetResult();
+        var processInfo = await AgentProcessManager.Instance.SpawnAgentAsync(id, name);
         if (processInfo == null)
         {
             return (chat, null);
@@ -87,7 +87,7 @@ public class AgentRegistry
         };
 
         // Verify connection
-        var connected = agent.ConnectAsync().GetAwaiter().GetResult();
+        var connected = await agent.ConnectAsync();
         if (!connected)
         {
             AgentProcessManager.Instance.StopAgent(id);

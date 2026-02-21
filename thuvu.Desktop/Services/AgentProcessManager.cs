@@ -16,6 +16,7 @@ public class AgentProcessManager
     private readonly Dictionary<string, AgentProcessInfo> _processes = new();
     private string? _registryDir;
     private string? _thuvuExePath;
+    private string? _projectDir;
 
     /// <summary>All known agent processes (running or stale)</summary>
     public IReadOnlyDictionary<string, AgentProcessInfo> Processes => _processes;
@@ -25,9 +26,12 @@ public class AgentProcessManager
     /// </summary>
     public void Initialize(string projectDir, string? thuvuExePath = null)
     {
+        _projectDir = projectDir;
         _registryDir = Path.Combine(projectDir, ".db", "agents");
         Directory.CreateDirectory(_registryDir);
         _thuvuExePath = thuvuExePath ?? FindThuvuExe();
+        AgentLogger.LogInfo("AgentProcessManager initialized. Exe: {Exe}, Registry: {Dir}",
+            _thuvuExePath ?? "(not found)", _registryDir);
         DiscoverExistingAgents();
     }
 
@@ -49,7 +53,7 @@ public class AgentProcessManager
         {
             FileName = _thuvuExePath,
             Arguments = $"--api --port {port}",
-            WorkingDirectory = Path.GetDirectoryName(_registryDir)!.Replace(Path.Combine(".db", "agents"), ""),
+            WorkingDirectory = _projectDir ?? Directory.GetCurrentDirectory(),
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -82,16 +86,26 @@ public class AgentProcessManager
             ExePath = _thuvuExePath
         };
 
-        // Wait briefly for the server to start
+        // Wait for the server to start, checking if process crashed
         var connected = false;
         for (int i = 0; i < 15; i++)
         {
             await Task.Delay(1000);
+
+            if (process.HasExited)
+            {
+                var stderr = await process.StandardError.ReadToEndAsync();
+                AgentLogger.LogError("Agent process exited with code {Code}: {Stderr}",
+                    process.ExitCode, stderr.Length > 500 ? stderr[..500] : stderr);
+                return null;
+            }
+
             try
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-                http.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                if (!string.IsNullOrEmpty(token))
+                    http.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 var resp = await http.GetAsync($"{info.Url}/api/agent/info");
                 if (resp.IsSuccessStatusCode)
                 {
@@ -104,7 +118,10 @@ public class AgentProcessManager
 
         if (!connected)
         {
-            AgentLogger.LogError("Agent process started but not responding on port {Port}", port);
+            var stderr = "";
+            try { stderr = process.StandardError.ReadToEnd(); } catch { }
+            AgentLogger.LogError("Agent process started (PID {Pid}) but not responding on port {Port}. Stderr: {Stderr}",
+                process.Id, port, stderr.Length > 500 ? stderr[..500] : stderr);
             try { process.Kill(); } catch { }
             return null;
         }
@@ -276,15 +293,26 @@ public class AgentProcessManager
                 return Path.GetFullPath(candidate);
         }
 
-        // Try to find via dotnet tool or build output
+        // Try to find via build output relative to solution root
         var solutionDir = FindSolutionDirectory();
         if (solutionDir != null)
         {
-            var buildOutput = Path.Combine(solutionDir, "bin", "Debug", "net9.0", "thuvu.exe");
-            if (File.Exists(buildOutput)) return buildOutput;
-
-            buildOutput = Path.Combine(solutionDir, "bin", "Release", "net9.0", "thuvu.exe");
-            if (File.Exists(buildOutput)) return buildOutput;
+            // Search all framework/config combinations
+            var binDir = Path.Combine(solutionDir, "bin");
+            if (Directory.Exists(binDir))
+            {
+                try
+                {
+                    var found = Directory.GetFiles(binDir, "thuvu.exe", SearchOption.AllDirectories);
+                    if (found.Length > 0)
+                    {
+                        // Prefer Debug over Release
+                        var debug = found.FirstOrDefault(f => f.Contains("Debug"));
+                        return debug ?? found[0];
+                    }
+                }
+                catch { }
+            }
         }
 
         return null;

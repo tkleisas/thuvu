@@ -443,7 +443,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         StatusText = "Spawning detached agent...";
 
-        var (chatVm, agent) = _registry.CreateDetachedAgent();
+        var (chatVm, agent) = await _registry.CreateDetachedAgentAsync();
         if (agent == null)
         {
             StatusText = "Failed to spawn detached agent";
