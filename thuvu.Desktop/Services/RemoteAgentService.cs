@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using thuvu.Models;
 using thuvu.Services;
+using thuvu.Tools;
 
 namespace thuvu.Desktop.Services;
 
@@ -51,6 +52,7 @@ public class RemoteAgentService : IAgentService, IDisposable
 
     private string? _remoteModel;
     private string? _remoteHostUrl;
+    private Usage? _lastUsage;
 
     public RemoteAgentService(string baseUrl, string? bearerToken = null)
     {
@@ -96,6 +98,7 @@ public class RemoteAgentService : IAgentService, IDisposable
         IsProcessing = true;
         _currentCts = new CancellationTokenSource();
         _messages.Add(new ChatMessage("user", prompt));
+        RecordMessage("user", requestContent: prompt);
 
         try
         {
@@ -227,6 +230,7 @@ public class RemoteAgentService : IAgentService, IDisposable
                     var result = root.TryGetProperty("result", out var tr) ? tr.GetString() ?? "" : "";
                     var elapsed = root.TryGetProperty("elapsed", out var te) ? te.GetDouble() : 0;
                     OnToolComplete?.Invoke(name, args, result, TimeSpan.FromSeconds(elapsed));
+                    RecordMessage("tool_call", toolName: name, toolArgs: args, toolResult: result);
                     break;
 
                 case "content_replace":
@@ -237,13 +241,19 @@ public class RemoteAgentService : IAgentService, IDisposable
                 case "usage":
                     var usage = JsonSerializer.Deserialize<Usage>(data, _jsonOptions);
                     if (usage != null)
+                    {
+                        _lastUsage = usage;
                         OnUsage?.Invoke(usage);
+                    }
                     break;
 
                 case "complete":
                     var response = root.TryGetProperty("response", out var resp) ? resp.GetString() ?? "" : "";
                     if (!string.IsNullOrEmpty(response))
+                    {
                         _messages.Add(new ChatMessage("assistant", response));
+                        RecordMessage("assistant", responseContent: response);
+                    }
                     OnComplete?.Invoke();
                     break;
 
@@ -288,6 +298,42 @@ public class RemoteAgentService : IAgentService, IDisposable
             _messages[0] = new ChatMessage("system", promptContent);
         else
             _messages.Insert(0, new ChatMessage("system", promptContent));
+    }
+
+    /// <summary>Fire-and-forget message recording to SQLite</summary>
+    private void RecordMessage(string messageType, string? requestContent = null,
+        string? responseContent = null, string? toolName = null, string? toolArgs = null,
+        string? toolResult = null)
+    {
+        var sid = SessionId;
+        if (string.IsNullOrEmpty(sid)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var record = new MessageRecord
+                {
+                    SessionId = sid,
+                    AgentId = "desktop",
+                    StartedAt = DateTime.Now,
+                    AgentRole = "main",
+                    AgentDepth = 0,
+                    ModelId = EffectiveModel,
+                    MessageType = messageType,
+                    RequestContent = requestContent,
+                    ResponseContent = responseContent,
+                    ToolName = toolName,
+                    ToolArgsJson = toolArgs,
+                    ToolResultJson = toolResult,
+                    PromptTokens = _lastUsage?.PromptTokens,
+                    CompletionTokens = _lastUsage?.CompletionTokens,
+                    TotalTokens = _lastUsage?.TotalTokens,
+                    Status = "completed"
+                };
+                await SqliteService.Instance.StartMessageAsync(record);
+            }
+            catch { }
+        });
     }
 
     public void ClearMessages()
