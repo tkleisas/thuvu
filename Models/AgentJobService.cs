@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 
@@ -129,6 +130,61 @@ namespace thuvu.Models
         /// Get the current job (if any).
         /// </summary>
         public AgentJob? CurrentJob => _currentJob;
+
+        // --- Streaming event support ---
+        private Channel<AgentStreamEvent>? _eventChannel;
+        private readonly object _channelLock = new();
+
+        /// <summary>
+        /// Create a new event channel for the current job. Previous channel is completed.
+        /// </summary>
+        public Channel<AgentStreamEvent> CreateEventChannel()
+        {
+            lock (_channelLock)
+            {
+                _eventChannel?.Writer.TryComplete();
+                _eventChannel = Channel.CreateUnbounded<AgentStreamEvent>(new UnboundedChannelOptions
+                {
+                    SingleReader = false,
+                    SingleWriter = true
+                });
+                return _eventChannel;
+            }
+        }
+
+        /// <summary>
+        /// Get a reader for the current event channel. Returns null if no active channel.
+        /// </summary>
+        public ChannelReader<AgentStreamEvent>? GetEventReader()
+        {
+            lock (_channelLock)
+            {
+                return _eventChannel?.Reader;
+            }
+        }
+
+        /// <summary>
+        /// Write an event to the current channel (fire and forget).
+        /// </summary>
+        public void EmitEvent(AgentStreamEvent evt)
+        {
+            lock (_channelLock)
+            {
+                _eventChannel?.Writer.TryWrite(evt);
+            }
+        }
+
+        /// <summary>
+        /// Complete the current event channel (signals end of stream).
+        /// </summary>
+        public void CompleteEventChannel()
+        {
+            lock (_channelLock)
+            {
+                _eventChannel?.Writer.TryComplete();
+                _eventChannel = null;
+            }
+        }
 
         /// <summary>
         /// Submit a new job. Returns null if agent is busy.
@@ -462,5 +518,25 @@ namespace thuvu.Models
         Completed,
         Failed,
         Cancelled
+    }
+
+    /// <summary>
+    /// A real-time streaming event emitted during job processing.
+    /// Used by the SSE endpoint to push updates to connected clients.
+    /// </summary>
+    public class AgentStreamEvent
+    {
+        public string Type { get; set; } = "";
+        public string Data { get; set; } = "";
+
+        public static AgentStreamEvent Token(string text) => new() { Type = "token", Data = JsonSerializer.Serialize(new { text }) };
+        public static AgentStreamEvent Reasoning(string text) => new() { Type = "reasoning", Data = JsonSerializer.Serialize(new { text }) };
+        public static AgentStreamEvent ToolCall(string name, string args) => new() { Type = "tool_call", Data = JsonSerializer.Serialize(new { name, args }) };
+        public static AgentStreamEvent ToolComplete(string name, string args, string result, double elapsedSeconds) =>
+            new() { Type = "tool_complete", Data = JsonSerializer.Serialize(new { name, args, result, elapsed = elapsedSeconds }) };
+        public static AgentStreamEvent ContentReplace(string content) => new() { Type = "content_replace", Data = JsonSerializer.Serialize(new { content }) };
+        public static AgentStreamEvent Complete(string response) => new() { Type = "complete", Data = JsonSerializer.Serialize(new { response }) };
+        public static AgentStreamEvent Error(string message) => new() { Type = "error", Data = JsonSerializer.Serialize(new { message }) };
+        public static AgentStreamEvent UsageInfo(object usage) => new() { Type = "usage", Data = JsonSerializer.Serialize(usage) };
     }
 }

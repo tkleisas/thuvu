@@ -251,34 +251,31 @@ namespace thuvu
                 // Initialize the job service
                 await AgentJobService.Instance.InitializeAsync();
                 
-                // Set up the job processor callback that will run prompts through the agent loop
-                thuvu.Web.AgentJobProcessor.SetProcessCallback(async (prompt, jobId, ct) =>
+                // Set up the streaming job processor callback
+                thuvu.Web.AgentJobProcessor.SetStreamingCallback(async (jobId, prompt, emit, ct) =>
                 {
-                    // Create a fresh conversation for this job
                     var jobMessages = new List<ChatMessage>
                     {
                         new("system", SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive)),
                         new("user", prompt)
                     };
                     
-                    // Add journal entry for start
                     await AgentJobService.Instance.AddJournalEntryAsync("Processing prompt...", ct);
                     
                     try
                     {
-                        // Run the agent loop
                         string? result;
                         if (AgentConfig.Config.Stream)
                         {
                             result = await AgentLoop.CompleteWithToolsStreamingAsync(
                                 http, AgentConfig.Config.Model, jobMessages, tools, ct,
-                                onToken: _ => { },
+                                onToken: token => emit(AgentStreamEvent.Token(token)),
                                 onToolResult: (name, json) => 
                                 {
-                                    // Log tool calls to journal
+                                    emit(AgentStreamEvent.ToolComplete(name, "", json, 0));
                                     AgentJobService.Instance.AddJournalEntryAsync($"Tool: {name}").Wait();
                                 },
-                                onUsage: _ => { }
+                                onUsage: usage => emit(AgentStreamEvent.UsageInfo(usage))
                             );
                         }
                         else
@@ -287,6 +284,7 @@ namespace thuvu
                                 http, AgentConfig.Config.Model, jobMessages, tools, ct,
                                 onToolResult: (name, json) =>
                                 {
+                                    emit(AgentStreamEvent.ToolComplete(name, "", json, 0));
                                     AgentJobService.Instance.AddJournalEntryAsync($"Tool: {name}").Wait();
                                 }
                             );

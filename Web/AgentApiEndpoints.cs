@@ -1,6 +1,7 @@
 using System;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -36,6 +37,7 @@ namespace thuvu.Web
             // Job endpoints
             api.MapPost("/jobs", SubmitJob);
             api.MapGet("/jobs/current", GetCurrentJob);
+            api.MapGet("/jobs/{id}/stream", StreamJob);
             api.MapGet("/jobs/{id}", GetJob);
             api.MapDelete("/jobs/{id}", CancelJob);
             api.MapGet("/jobs", GetRecentJobs);
@@ -162,6 +164,65 @@ namespace thuvu.Web
         }
 
         /// <summary>
+        /// GET /api/jobs/{id}/stream - SSE stream of job events
+        /// </summary>
+        private static async Task StreamJob(string id, HttpContext ctx, CancellationToken ct)
+        {
+            var job = await AgentJobService.Instance.GetJobAsync(id, ct);
+            if (job == null)
+            {
+                ctx.Response.StatusCode = 404;
+                await ctx.Response.WriteAsJsonAsync(new { success = false, error = "Job not found" }, ct);
+                return;
+            }
+
+            // If job already completed, send single complete/error event and close
+            if (job.Status == JobStatus.Completed || job.Status == JobStatus.Failed || job.Status == JobStatus.Cancelled)
+            {
+                ctx.Response.Headers["Content-Type"] = "text/event-stream";
+                ctx.Response.Headers["Cache-Control"] = "no-cache";
+                ctx.Response.Headers["Connection"] = "keep-alive";
+
+                if (job.Status == JobStatus.Completed)
+                    await WriteSseEvent(ctx.Response, "complete", JsonSerializer.Serialize(new { response = job.Result ?? "" }));
+                else if (job.Status == JobStatus.Failed)
+                    await WriteSseEvent(ctx.Response, "error", JsonSerializer.Serialize(new { message = job.Error ?? "Unknown error" }));
+                else
+                    await WriteSseEvent(ctx.Response, "error", JsonSerializer.Serialize(new { message = "Job was cancelled" }));
+                return;
+            }
+
+            // Get event channel reader for active job
+            var reader = AgentJobService.Instance.GetEventReader();
+            if (reader == null)
+            {
+                ctx.Response.StatusCode = 409;
+                await ctx.Response.WriteAsJsonAsync(new { success = false, error = "No active event stream" }, ct);
+                return;
+            }
+
+            ctx.Response.Headers["Content-Type"] = "text/event-stream";
+            ctx.Response.Headers["Cache-Control"] = "no-cache";
+            ctx.Response.Headers["Connection"] = "keep-alive";
+
+            try
+            {
+                await foreach (var evt in reader.ReadAllAsync(ct))
+                {
+                    await WriteSseEvent(ctx.Response, evt.Type, evt.Data);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (ChannelClosedException) { }
+        }
+
+        private static async Task WriteSseEvent(HttpResponse response, string eventType, string data)
+        {
+            await response.WriteAsync($"event: {eventType}\ndata: {data}\n\n");
+            await response.Body.FlushAsync();
+        }
+
+        /// <summary>
         /// DELETE /api/jobs/{id} - Cancel a job
         /// </summary>
         private static async Task<IResult> CancelJob(string id, CancellationToken ct)
@@ -254,6 +315,7 @@ namespace thuvu.Web
     public static class AgentJobProcessor
     {
         private static Func<string, string, CancellationToken, Task<string>>? _processCallback;
+        private static Func<string, string, Action<AgentStreamEvent>, CancellationToken, Task<string>>? _streamingCallback;
 
         /// <summary>
         /// Set the callback for processing jobs (called from Program.cs after agent loop is ready).
@@ -264,7 +326,15 @@ namespace thuvu.Web
         }
 
         /// <summary>
-        /// Process a job asynchronously.
+        /// Set the streaming callback that emits AgentStreamEvents during processing.
+        /// </summary>
+        public static void SetStreamingCallback(Func<string, string, Action<AgentStreamEvent>, CancellationToken, Task<string>> callback)
+        {
+            _streamingCallback = callback;
+        }
+
+        /// <summary>
+        /// Process a job asynchronously with SSE event streaming.
         /// </summary>
         public static async Task ProcessJobAsync(string jobId, CancellationToken ct)
         {
@@ -274,29 +344,49 @@ namespace thuvu.Web
             if (job == null || job.Status != JobStatus.Pending)
                 return;
 
+            // Create event channel for SSE streaming
+            var channel = jobService.CreateEventChannel();
+
             try
             {
                 await jobService.StartJobAsync(ct);
                 await jobService.AddJournalEntryAsync("Starting to process request...", ct);
 
-                if (_processCallback == null)
+                string? result = null;
+
+                if (_streamingCallback != null)
+                {
+                    result = await _streamingCallback(jobId, job.Prompt,
+                        evt => jobService.EmitEvent(evt), ct);
+                }
+                else if (_processCallback != null)
+                {
+                    result = await _processCallback(jobId, job.Prompt, ct);
+                }
+                else
                 {
                     await jobService.FailJobAsync("Agent processor not initialized", ct);
+                    jobService.CompleteEventChannel();
                     return;
                 }
 
-                // Process the prompt through the agent
-                var result = await _processCallback(jobId, job.Prompt, ct);
-
-                await jobService.CompleteJobAsync(result, ct);
+                // Emit complete event before closing channel
+                jobService.EmitEvent(AgentStreamEvent.Complete(result ?? ""));
+                await jobService.CompleteJobAsync(result ?? "", ct);
             }
             catch (OperationCanceledException)
             {
+                jobService.EmitEvent(AgentStreamEvent.Error("Job cancelled"));
                 await jobService.CancelJobAsync(CancellationToken.None);
             }
             catch (Exception ex)
             {
+                jobService.EmitEvent(AgentStreamEvent.Error(ex.Message));
                 await jobService.FailJobAsync(ex.Message, CancellationToken.None);
+            }
+            finally
+            {
+                jobService.CompleteEventChannel();
             }
         }
     }
