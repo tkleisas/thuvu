@@ -16,6 +16,12 @@
     <Compile Remove="thuvu.Desktop\**" />
     <Content Remove="thuvu.Desktop\**" />
     <None Remove="thuvu.Desktop\**" />
+    <Compile Remove="thuvu.Interop\**" />
+    <Content Remove="thuvu.Interop\**" />
+    <None Remove="thuvu.Interop\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="thuvu.Interop\thuvu.Interop.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />

@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "thuvu.Core", "thuvu.Core\th
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "thuvu.Desktop", "thuvu.Desktop\thuvu.Desktop.csproj", "{6637BCD8-BC81-4508-B2E4-F839804193A8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "thuvu.Interop", "thuvu.Interop\thuvu.Interop.csproj", "{A82D6224-F693-47C4-B47E-A73D94E5E7D8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{6637BCD8-BC81-4508-B2E4-F839804193A8}.Release|x64.Build.0 = Release|Any CPU
 		{6637BCD8-BC81-4508-B2E4-F839804193A8}.Release|x86.ActiveCfg = Release|Any CPU
 		{6637BCD8-BC81-4508-B2E4-F839804193A8}.Release|x86.Build.0 = Release|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Debug|x64.Build.0 = Debug|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Debug|x86.Build.0 = Debug|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Release|x64.ActiveCfg = Release|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Release|x64.Build.0 = Release|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Release|x86.ActiveCfg = Release|Any CPU
+		{A82D6224-F693-47C4-B47E-A73D94E5E7D8}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
