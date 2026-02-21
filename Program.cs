@@ -91,6 +91,9 @@ namespace thuvu
             bool useWeb = false;
             bool useApi = false;
             bool useDesktop = false;
+            bool useServer = false;    // --server: connect to agent server
+            bool noServer = false;     // --no-server: force in-process mode
+            string? serverUrl = null;  // --server <url>
             bool testUiAutomation = false;
             bool testProcessMgmt = false;
             bool testSqlite = false;
@@ -104,6 +107,9 @@ namespace thuvu
                 else if (arg == "--web") useWeb = true;
                 else if (arg == "--api") useApi = true;
                 else if (arg == "--desktop") useDesktop = true;
+                else if (arg == "--server" && i + 1 < args.Length) { useServer = true; serverUrl = args[++i]; }
+                else if (arg == "--server") useServer = true;
+                else if (arg == "--no-server") noServer = true;
                 else if (arg == "--test-ui") testUiAutomation = true;
                 else if (arg == "--test-process") testProcessMgmt = true;
                 else if (arg == "--test-sqlite") testSqlite = true;
@@ -454,6 +460,13 @@ namespace thuvu
                 Console.ResetColor();
                 Console.WriteLine("Note: The desktop project must be run directly via thuvu.Desktop executable.");
                 Console.WriteLine("Run: dotnet run --project thuvu.Desktop");
+                return;
+            }
+
+            // Client/server mode: connect to a running agent server (or auto-spawn one)
+            if (useServer && !noServer)
+            {
+                await RunCliClientModeAsync(serverUrl);
                 return;
             }
 
@@ -1333,6 +1346,207 @@ namespace thuvu
                     return null;
                 });
             }
+        }
+
+        /// <summary>
+        /// Run the CLI in client mode — connects to a running agent server via HTTP+SSE.
+        /// Falls back to auto-spawning a server if none is found.
+        /// </summary>
+        private static async Task RunCliClientModeAsync(string? serverUrl)
+        {
+            ConsoleHelpers.PrintHeader($"T.H.U.V.U. v{Helpers.GetCurrentGitTag()} [Client Mode]", ConsoleColor.Cyan);
+            Console.WriteLine();
+
+            thuvu.Services.AgentClient? client = null;
+
+            if (!string.IsNullOrEmpty(serverUrl))
+            {
+                // Connect to explicit server URL
+                ConsoleHelpers.PrintStatus($"Connecting to {serverUrl}...");
+                client = new thuvu.Services.AgentClient(serverUrl);
+                if (!await client.ConnectAsync())
+                {
+                    ConsoleHelpers.PrintError($"Cannot connect to server at {serverUrl}");
+                    return;
+                }
+            }
+            else
+            {
+                // Auto-discover running server
+                ConsoleHelpers.PrintStatus("Looking for running agent server...");
+                var serverInfo = await thuvu.Services.AgentServerLocator.FindRunningServerAsync();
+
+                if (serverInfo != null)
+                {
+                    ConsoleHelpers.PrintSuccess($"Found server at {serverInfo.Url} (PID {serverInfo.Pid})");
+                    client = new thuvu.Services.AgentClient(serverInfo.Url, serverInfo.Token);
+                    if (!await client.ConnectAsync())
+                    {
+                        ConsoleHelpers.PrintError("Server found but failed to connect");
+                        return;
+                    }
+                }
+                else
+                {
+                    // Auto-spawn a server
+                    ConsoleHelpers.PrintStatus("No server found. Starting agent server...");
+                    var spawned = await thuvu.Services.AgentServerLocator.SpawnServerAsync();
+                    if (spawned == null)
+                    {
+                        ConsoleHelpers.PrintError("Failed to start agent server. Use --no-server for in-process mode.");
+                        return;
+                    }
+                    ConsoleHelpers.PrintSuccess($"Server started at {spawned.Url} (PID {spawned.Pid})");
+                    client = new thuvu.Services.AgentClient(spawned.Url, spawned.Token);
+                    if (!await client.ConnectAsync())
+                    {
+                        ConsoleHelpers.PrintError("Server started but failed to connect");
+                        return;
+                    }
+                }
+            }
+
+            // Create a conversation
+            var convId = await client.CreateConversationAsync(model: AgentConfig.Config.Model);
+            if (convId == null)
+            {
+                ConsoleHelpers.PrintError("Failed to create conversation");
+                return;
+            }
+
+            ConsoleHelpers.PrintKeyValue("Server", client.BaseUrl, ConsoleColor.DarkGray, ConsoleColor.Cyan);
+            ConsoleHelpers.PrintKeyValue("Model", client.EffectiveModel, ConsoleColor.DarkGray, ConsoleColor.Green);
+            ConsoleHelpers.PrintKeyValue("Conversation", convId, ConsoleColor.DarkGray, ConsoleColor.Gray);
+            ConsoleHelpers.PrintKeyValue("Work Dir", AgentConfig.GetWorkDirectory(), ConsoleColor.DarkGray, ConsoleColor.Gray);
+            Console.WriteLine();
+            ConsoleHelpers.WithColor(ConsoleColor.DarkGray, () =>
+                Console.WriteLine("Type /exit to quit, /help for commands. All processing happens on the server."));
+            Console.WriteLine();
+
+            // Wire up events for console output
+            bool receivedFirstToken = false;
+            CancellationTokenSource? thinkingCts = null;
+
+            client.OnToken += token =>
+            {
+                if (!receivedFirstToken)
+                {
+                    receivedFirstToken = true;
+                    thinkingCts?.Cancel();
+                    ConsoleHelpers.ClearThinkingIndicator();
+                    ConsoleHelpers.EndReasoningSection();
+                    ConsoleHelpers.PrintStreamingHeader(client.EffectiveModel);
+                }
+                ConsoleHelpers.PrintStreamingToken(token);
+            };
+
+            client.OnReasoningToken += token =>
+            {
+                if (!receivedFirstToken)
+                {
+                    receivedFirstToken = true;
+                    thinkingCts?.Cancel();
+                    ConsoleHelpers.ClearThinkingIndicator();
+                }
+                ConsoleHelpers.PrintReasoningToken(token);
+            };
+
+            client.OnToolCall += (name, args) =>
+            {
+                if (!receivedFirstToken)
+                {
+                    receivedFirstToken = true;
+                    thinkingCts?.Cancel();
+                    ConsoleHelpers.ClearThinkingIndicator();
+                }
+            };
+
+            client.OnToolComplete += (name, args, result, elapsed) =>
+            {
+                ConsoleHelpers.AutoPrettyPrinterCallback(name, result);
+            };
+
+            client.OnUsage += usage =>
+            {
+                ConsoleHelpers.PrintStreamingFooter();
+                ConsoleHelpers.PrintTokenUsage(usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens);
+            };
+
+            client.OnComplete += () =>
+            {
+                if (!receivedFirstToken)
+                {
+                    thinkingCts?.Cancel();
+                    ConsoleHelpers.ClearThinkingIndicator();
+                }
+            };
+
+            client.OnError += error =>
+            {
+                thinkingCts?.Cancel();
+                ConsoleHelpers.ClearThinkingIndicator();
+                ConsoleHelpers.PrintError(error);
+            };
+
+            client.OnPermissionRequest += async (id, tool, permArgs, desc) =>
+            {
+                Console.WriteLine();
+                ConsoleHelpers.PrintWarning($"Permission required: {tool}");
+                if (!string.IsNullOrEmpty(desc))
+                    ConsoleHelpers.PrintInfo(desc);
+                Console.Write("Allow? [y/N] ");
+                var response = Console.ReadLine();
+                return response?.Trim().ToLowerInvariant() is "y" or "yes";
+            };
+
+            // Main input loop
+            while (true)
+            {
+                ConsoleHelpers.PrintPrompt();
+                var user = Console.ReadLine();
+                if (user == null) continue;
+
+                if (user.Equals("/exit", StringComparison.OrdinalIgnoreCase))
+                    break;
+
+                if (string.IsNullOrWhiteSpace(user)) continue;
+
+                // Slash commands go through the server
+                if (user.StartsWith("/"))
+                {
+                    var (success, output, error) = await client.SendCommandAsync(user);
+                    if (!string.IsNullOrEmpty(output))
+                        Console.WriteLine(output);
+                    if (!string.IsNullOrEmpty(error))
+                        ConsoleHelpers.PrintError(error);
+                    continue;
+                }
+
+                // Regular message — stream via SSE
+                receivedFirstToken = false;
+                ConsoleHelpers.PrintDivider();
+                ConsoleHelpers.PrintStatus($"{ConsoleHelpers.IconSend} Sending to server... (Ctrl+C to cancel)");
+                ConsoleHelpers.StartStreaming();
+
+                thinkingCts = new CancellationTokenSource();
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!thinkingCts.Token.IsCancellationRequested && !receivedFirstToken)
+                        {
+                            ConsoleHelpers.PrintThinkingIndicator();
+                            await Task.Delay(250, thinkingCts.Token);
+                        }
+                    }
+                    catch (OperationCanceledException) { }
+                }, thinkingCts.Token);
+
+                await client.SendMessageAsync(user);
+                Console.WriteLine();
+            }
+
+            client.Dispose();
         }
     }
 }
