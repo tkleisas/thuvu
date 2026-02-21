@@ -288,6 +288,7 @@ namespace thuvu
 
                 // Initialize conversation service for client/server architecture
                 ConversationService.Initialize();
+                await ConversationService.Instance.RestoreFromDatabaseAsync();
                 
                 // Set up the streaming job processor callback
                 thuvu.Web.AgentJobProcessor.SetStreamingCallback(async (jobId, prompt, emit, ct, modelOverride, systemPromptOverride) =>

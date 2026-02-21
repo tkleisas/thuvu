@@ -261,6 +261,9 @@ namespace thuvu.Web
                     conv.Status = ConversationStatus.Idle;
                     conv.CompleteEventChannel();
                     linkedCts.Dispose();
+                    
+                    // Persist conversation state to SQLite
+                    _ = ConversationService.Instance.PersistConversationAsync(conv.Id);
                 }
             }, CancellationToken.None);
 

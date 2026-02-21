@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using thuvu.Tools;
 
 namespace thuvu.Models
 {
@@ -79,6 +80,133 @@ namespace thuvu.Models
             }
             return false;
         }
+
+        /// <summary>
+        /// Persist a conversation to SQLite (session + messages).
+        /// Called after message processing completes.
+        /// </summary>
+        public async Task PersistConversationAsync(string id)
+        {
+            var conv = GetConversation(id);
+            if (conv == null) return;
+
+            try
+            {
+                var sqlite = SqliteService.Instance;
+                
+                // Upsert session record
+                var sessionData = new SessionData
+                {
+                    SessionId = conv.Id,
+                    CreatedAt = conv.CreatedAt,
+                    LastActivityAt = conv.LastActivityAt,
+                    SystemPrompt = conv.SystemPrompt,
+                    ModelId = conv.Model ?? AgentConfig.Config.Model,
+                    AgentRole = "conversation",
+                    Title = conv.Messages.FirstOrDefault(m => m.Role == "user")?.Content?[..Math.Min(80, conv.Messages.First(m => m.Role == "user").Content.Length)] ?? "Untitled",
+                    WorkDirectory = conv.WorkDirectory ?? AgentConfig.Config.WorkDirectory
+                };
+                await sqlite.SaveSessionAsync(sessionData);
+
+                // Persist each message that hasn't been saved yet
+                foreach (var msg in conv.Messages)
+                {
+                    if (msg.Persisted) continue;
+                    
+                    var record = new MessageRecord
+                    {
+                        SessionId = conv.Id,
+                        StartedAt = msg.Timestamp,
+                        CompletedAt = msg.Timestamp,
+                        MessageType = msg.Role,
+                        RequestContent = msg.Role == "user" ? msg.Content : null,
+                        ResponseContent = msg.Role == "assistant" ? msg.Content : null,
+                        ModelId = conv.Model ?? AgentConfig.Config.Model,
+                        Status = "completed"
+                    };
+
+                    if (msg.ToolCalls != null && msg.ToolCalls.Count > 0)
+                    {
+                        var tc = msg.ToolCalls[0];
+                        record.ToolName = tc.Name;
+                        record.ToolArgsJson = tc.Args;
+                        record.ToolResultJson = tc.Result;
+                    }
+
+                    await sqlite.StartMessageAsync(record);
+                    msg.Persisted = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to persist conversation {Id}: {Error}", conv.Id, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Restore recent conversations from SQLite on startup.
+        /// </summary>
+        public async Task RestoreFromDatabaseAsync(int maxRecent = 10)
+        {
+            try
+            {
+                var sqlite = SqliteService.Instance;
+                var recentSessions = await sqlite.GetRecentSessionsAsync(maxRecent);
+
+                foreach (var session in recentSessions)
+                {
+                    // Skip if already in memory
+                    if (_conversations.ContainsKey(session.SessionId)) continue;
+                    
+                    // Only restore sessions from the last 24 hours
+                    if (session.LastActivityAt < DateTime.Now.AddHours(-24)) continue;
+
+                    var messages = await sqlite.GetActiveSessionMessagesAsync(session.SessionId);
+                    
+                    var conv = new Conversation
+                    {
+                        Id = session.SessionId,
+                        Model = session.ModelId,
+                        SystemPrompt = session.SystemPrompt,
+                        WorkDirectory = session.WorkDirectory,
+                        CreatedAt = session.CreatedAt,
+                    };
+
+                    foreach (var msg in messages)
+                    {
+                        var role = msg.MessageType ?? "user";
+                        var content = role switch
+                        {
+                            "user" => msg.RequestContent ?? "",
+                            "assistant" => msg.ResponseContent ?? "",
+                            "tool_call" => msg.ToolArgsJson ?? "",
+                            "tool_result" => msg.ToolResultJson ?? "",
+                            _ => msg.ResponseContent ?? msg.RequestContent ?? ""
+                        };
+                        
+                        if (!string.IsNullOrEmpty(content))
+                        {
+                            conv.Messages.Add(new ConversationMessage
+                            {
+                                Role = role,
+                                Content = content,
+                                Timestamp = msg.StartedAt,
+                                Persisted = true
+                            });
+                        }
+                    }
+
+                    conv.LastActivityAt = session.LastActivityAt;
+                    _conversations[conv.Id] = conv;
+                }
+
+                AgentLogger.LogInfo("Restored {Count} conversations from database", _conversations.Count);
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to restore conversations: {Error}", ex.Message);
+            }
+        }
     }
 
     public enum ConversationStatus
@@ -91,9 +219,9 @@ namespace thuvu.Models
 
     public class Conversation : IDisposable
     {
-        public string Id { get; } = Guid.NewGuid().ToString("N")[..12];
+        public string Id { get; set; } = Guid.NewGuid().ToString("N")[..12];
         public ConversationStatus Status { get; set; } = ConversationStatus.Idle;
-        public DateTime CreatedAt { get; } = DateTime.UtcNow;
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime LastActivityAt { get; set; } = DateTime.UtcNow;
 
         // Configuration overrides (null = use server defaults)
@@ -222,6 +350,7 @@ namespace thuvu.Models
         public string Content { get; set; } = "";
         public DateTime Timestamp { get; set; }
         public List<ConversationToolCall>? ToolCalls { get; set; }
+        public bool Persisted { get; set; }
     }
 
     public class ConversationToolCall
