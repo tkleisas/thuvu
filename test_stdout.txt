@@ -1,0 +1,27 @@
+C:\projects\thuvu\bin\Debug\net8.0-windows\
+info: THUVU[0]
+      THUVU starting...
+info: THUVU[0]
+      RAG config loaded from root, Enabled=False
+info: THUVU[0]
+      SQLite config using defaults, Path=C:\projects\logscanner\work\thuvu.db
+info: THUVU[0]
+      Agent API config using defaults (disabled)
+
+[16:45:29] Running health checks...
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  Health Check Results                                                ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  [XX] LM Studio      http://127.0.0.1:1234    Not running            ║
+║     > No connection could be made because the target machine activ...║
+║  [!!] Git            git --version            git version 2.4...     ║
+║     ! Work directory is not a git repository                         ║
+║  [OK] Work Directory C:\projects\logscanne... Writable               ║
+║  [OK] Deno           deno                     Disabled (MCP off)     ║
+║  [OK] PostgreSQL     localhost:5433           Disabled (RAG off)     ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  [X] Cannot start - fix critical issues above                        ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+ ✗ Cannot start - fix critical issues above

@@ -118,6 +118,8 @@ public class AgentRegistry
         // Parse numeric suffix to keep counter ahead of restored IDs
         if (id.StartsWith("Chat_") && int.TryParse(id[5..], out var num))
             _counter = Math.Max(_counter, num);
+        else if (id.StartsWith("Detached_") && int.TryParse(id[9..], out var dnum))
+            _counter = Math.Max(_counter, dnum);
 
         var agent = new DesktopAgentService { WorkDirectory = WorkDirectory, SessionId = id };
         if (!string.IsNullOrEmpty(session.ModelId))
@@ -159,6 +161,64 @@ public class AgentRegistry
 
         _agents[id] = new AgentEntry(id, name, chat, agent);
         return (chat, agent);
+    }
+
+    /// <summary>Reconnect to a running detached agent process discovered on startup</summary>
+    public async Task<(ChatViewModel chat, IAgentService? agent)> ReconnectDetachedAgentAsync(
+        AgentProcessInfo processInfo, SqSessionData? session = null, List<MessageRecord>? messages = null)
+    {
+        var id = processInfo.AgentId;
+        var name = processInfo.Name;
+
+        if (id.StartsWith("Detached_") && int.TryParse(id[9..], out var num))
+            _counter = Math.Max(_counter, num);
+
+        var remote = new RemoteAgentService(processInfo.Url, processInfo.Token)
+        {
+            WorkDirectory = WorkDirectory,
+            SessionId = id
+        };
+
+        var connected = await remote.ConnectAsync();
+        if (!connected)
+        {
+            remote.Dispose();
+            return (CreateDisconnectedChat(id, name), null);
+        }
+
+        var chat = new ChatViewModel
+        {
+            Id = id,
+            Title = $"🔗 {name}",
+            CanClose = true,
+            SessionName = name
+        };
+        chat.SetAgentService(remote);
+
+        // Restore UI messages from DB if available
+        if (messages != null && messages.Count > 0)
+            RestoreUiMessages(chat, messages);
+
+        chat.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ChatViewModel.IsProcessing))
+                OnAgentStateChanged?.Invoke(id, chat.IsProcessing);
+        };
+
+        _agents[id] = new AgentEntry(id, name, chat, remote);
+        return (chat, remote);
+    }
+
+    private ChatViewModel CreateDisconnectedChat(string id, string name)
+    {
+        var chat = new ChatViewModel
+        {
+            Id = id,
+            Title = $"❌ {name}",
+            CanClose = true,
+            SessionName = name
+        };
+        return chat;
     }
 
     /// <summary>Get the agent service for a given chat ID</summary>

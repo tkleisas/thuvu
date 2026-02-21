@@ -118,6 +118,48 @@ public partial class MainWindowViewModel : ObservableObject
             AgentLogger.LogError("Failed to restore sessions: {Error}", ex.Message);
         }
 
+        // Reconnect to discovered detached agent processes
+        try
+        {
+            var discoveredAgents = AgentProcessManager.Instance.Processes;
+            foreach (var (agentId, processInfo) in discoveredAgents)
+            {
+                if (_registry.Agents.ContainsKey(agentId)) continue; // already restored
+
+                // Try to load session data from DB for this agent
+                thuvu.Tools.SessionData? session = null;
+                List<MessageRecord>? messages = null;
+                try
+                {
+                    if (SqliteService.Instance != null)
+                    {
+                        var allSessions = SqliteService.Instance.GetSessionsByAgentIdAsync("desktop")
+                            .GetAwaiter().GetResult();
+                        session = allSessions.FirstOrDefault(s => s.SessionId == agentId);
+                        if (session != null)
+                            messages = SqliteService.Instance.GetSessionMessagesAsync(session.SessionId)
+                                .GetAwaiter().GetResult();
+                    }
+                }
+                catch { }
+
+                var (chatVm, agent) = _registry.ReconnectDetachedAgentAsync(processInfo, session, messages)
+                    .GetAwaiter().GetResult();
+                if (agent != null)
+                {
+                    WireAgentToStatusBar(agent);
+                    WireChatOrchestration(chatVm);
+                    if (docDock != null) _factory.AddDockable(docDock, chatVm);
+                    firstAgent ??= agent;
+                    restored = true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.LogError("Failed to reconnect detached agents: {Error}", ex.Message);
+        }
+
         // If nothing was restored, create a fresh first chat
         if (!restored)
         {
