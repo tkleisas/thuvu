@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using thuvu.Models;
+using thuvu.Services;
 using thuvu.Tools;
 
 namespace thuvu.Desktop.Services;
@@ -9,7 +10,7 @@ namespace thuvu.Desktop.Services;
 /// Service bridging the AgentLoop to the desktop UI.
 /// Manages sessions, streaming, tool execution and permission requests.
 /// </summary>
-public class DesktopAgentService
+public class DesktopAgentService : IAgentService
 {
     private HttpClient _http;
     private readonly List<Tool> _tools;
@@ -172,7 +173,7 @@ public class DesktopAgentService
     }
 
     /// <summary>Send a message with one or more attached images (vision/multimodal)</summary>
-    public async Task SendMessageWithImagesAsync(string prompt, IReadOnlyList<ViewModels.ImageData> images)
+    public async Task SendMessageWithImagesAsync(string prompt, IReadOnlyList<AgentImageData> images)
     {
         if (IsProcessing) return;
         IsProcessing = true;

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using thuvu.Desktop.ViewModels;
 using thuvu.Models;
+using thuvu.Services;
 using thuvu.Tools;
 using SqSessionData = thuvu.Tools.SessionData;
 
@@ -27,7 +28,7 @@ public class AgentRegistry
     public string? WorkDirectory { get; set; }
 
     /// <summary>Create a new agent+chat pair with a unique ID</summary>
-    public (ChatViewModel chat, DesktopAgentService agent) CreateAgent(string? name = null)
+    public (ChatViewModel chat, IAgentService agent) CreateAgent(string? name = null)
     {
         _counter++;
         var id = $"Chat_{_counter}";
@@ -58,7 +59,7 @@ public class AgentRegistry
     }
 
     /// <summary>Restore an agent from SQLite session + message records</summary>
-    public (ChatViewModel chat, DesktopAgentService agent) RestoreAgentFromDb(
+    public (ChatViewModel chat, IAgentService agent) RestoreAgentFromDb(
         SqSessionData session, List<MessageRecord> messages)
     {
         var id = session.SessionId;
@@ -111,7 +112,7 @@ public class AgentRegistry
     }
 
     /// <summary>Get the agent service for a given chat ID</summary>
-    public DesktopAgentService? GetAgent(string chatId)
+    public IAgentService? GetAgent(string chatId)
     {
         return _agents.TryGetValue(chatId, out var entry) ? entry.Agent : null;
     }
@@ -159,7 +160,7 @@ public class AgentRegistry
         }
     }
 
-    private static void SaveSessionToDb(string id, string name, DesktopAgentService agent)
+    private static void SaveSessionToDb(string id, string name, IAgentService agent)
     {
         var session = new SqSessionData
         {
@@ -261,5 +262,5 @@ public record AgentEntry(
     string Id,
     string Name,
     ChatViewModel Chat,
-    DesktopAgentService Agent
+    IAgentService Agent
 );

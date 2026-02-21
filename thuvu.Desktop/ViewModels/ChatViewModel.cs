@@ -7,6 +7,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using thuvu.Desktop.Services;
 using thuvu.Models;
+using thuvu.Services;
 
 namespace thuvu.Desktop.ViewModels;
 
@@ -100,7 +101,7 @@ public partial class ChatViewModel : DocumentViewModel
     private bool _canSend = true;
 
     private CancellationTokenSource? _orchestrationCts;
-    private DesktopAgentService? _agentService;
+    private IAgentService? _agentService;
 
     /// <summary>Raised when an orchestration sub-agent changes state (agentId, status)</summary>
     public event Action<string, string>? OrchestrationAgentChanged;
@@ -124,7 +125,7 @@ public partial class ChatViewModel : DocumentViewModel
     [ObservableProperty] private PromptChoice? _selectedPrompt;
 
     /// <summary>The agent service powering this chat</summary>
-    public DesktopAgentService? AgentService => _agentService;
+    public IAgentService? AgentService => _agentService;
 
     public ChatViewModel()
     {
@@ -275,7 +276,7 @@ public partial class ChatViewModel : DocumentViewModel
     /// <summary>Current prompt template ID for persistence</summary>
     public string? CurrentPromptTemplateId => SelectedPrompt?.TemplateId;
 
-    public void SetAgentService(DesktopAgentService service)
+    public void SetAgentService(IAgentService service)
     {
         _agentService = service;
         LoadAvailableModels();
@@ -349,7 +350,8 @@ public partial class ChatViewModel : DocumentViewModel
         });
 
         if (images.Count > 0)
-            await _agentService.SendMessageWithImagesAsync(prompt, images);
+            await _agentService.SendMessageWithImagesAsync(prompt,
+                images.Select(i => new AgentImageData { Base64 = i.Base64, MimeType = i.MimeType }).ToList());
         else
             await _agentService.SendMessageAsync(prompt);
     }

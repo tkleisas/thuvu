@@ -9,6 +9,7 @@ using System.Text.Json;
 using thuvu.Desktop.Models;
 using thuvu.Desktop.Services;
 using thuvu.Models;
+using thuvu.Services;
 using thuvu.Tools;
 
 namespace thuvu.Desktop.ViewModels;
@@ -76,7 +77,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         // Try to restore saved sessions from SQLite
         bool restored = false;
-        DesktopAgentService? firstAgent = null;
+        IAgentService? firstAgent = null;
         ChatViewModel? activeChat = null;
 
         try
@@ -280,7 +281,7 @@ public partial class MainWindowViewModel : ObservableObject
         StatusText = $"Agent {agentId} terminated";
     }
 
-    private void WireAgentToStatusBar(DesktopAgentService agent)
+    private void WireAgentToStatusBar(IAgentService agent)
     {
         agent.OnToolComplete += (name, args, result, elapsed) =>
         {
@@ -303,7 +304,7 @@ public partial class MainWindowViewModel : ObservableObject
         };
     }
 
-    private static int ResolveMaxContext(DesktopAgentService agent, thuvu.Models.Usage usage)
+    private static int ResolveMaxContext(IAgentService agent, thuvu.Models.Usage usage)
     {
         var max = usage.MaxContextLength ?? 0;
         if (max <= 0)
@@ -339,7 +340,7 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>Get the active chat's agent service</summary>
-    private DesktopAgentService? GetActiveAgent()
+    private IAgentService? GetActiveAgent()
     {
         if (DockLayout == null) return null;
         var docDock = FindDocumentDock(DockLayout);
