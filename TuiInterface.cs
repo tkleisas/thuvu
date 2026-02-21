@@ -27,6 +27,9 @@ namespace thuvu
         private CancellationTokenSource? _thinkingAnimationCts;
         private bool _isProcessing = false;
 
+        // Client/server mode
+        private readonly thuvu.Services.AgentClient? _client;
+
         // UI Components
         private Label? _statusLabel;
         private Label? _workLabel;
@@ -47,6 +50,17 @@ namespace thuvu
         public TuiInterface(HttpClient http, List<Tool> tools, List<ChatMessage> initialMessages)
         {
             _http = http;
+            _tools = tools;
+            _messages = initialMessages;
+        }
+
+        /// <summary>
+        /// Constructor for client/server mode — uses AgentClient instead of direct AgentLoop.
+        /// </summary>
+        public TuiInterface(thuvu.Services.AgentClient client, List<Tool> tools, List<ChatMessage> initialMessages)
+        {
+            _client = client;
+            _http = new HttpClient(); // unused in client mode
             _tools = tools;
             _messages = initialMessages;
         }
@@ -505,7 +519,27 @@ namespace thuvu
             if (command.StartsWith("/clear", StringComparison.OrdinalIgnoreCase))
             {
                 _messages = new List<ChatMessage> { new("system", _messages[0].Content) };
+                if (_client != null) _client.ClearMessages();
                 AppendActionText("[OK] Conversation cleared.");
+                return;
+            }
+
+            // In client mode, route most slash commands through the server
+            if (_client != null && command.StartsWith("/") && !command.StartsWith("/stream", StringComparison.OrdinalIgnoreCase)
+                && !command.StartsWith("/models", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var (success, output, error) = await _client.SendCommandAsync(command);
+                    if (!string.IsNullOrEmpty(output))
+                        AppendActionText(output);
+                    if (!string.IsNullOrEmpty(error))
+                        AppendActionText(error, isError: true);
+                }
+                catch (Exception ex)
+                {
+                    AppendActionText($"Command error: {ex.Message}", isError: true);
+                }
                 return;
             }
 
@@ -682,6 +716,13 @@ namespace thuvu
                     UpdateStatus();
                 });
 
+                // Client/server mode: route through AgentClient
+                if (_client != null)
+                {
+                    await HandleChatViaClientAsync(command, ct);
+                    return;
+                }
+
                 try
                 {
                     string? final;
@@ -849,6 +890,160 @@ namespace thuvu
                     _currentRequestCts?.Dispose();
                     _currentRequestCts = null;
                 }
+            }
+        }
+
+        /// <summary>
+        /// Handle chat message via AgentClient (client/server mode).
+        /// Wires SSE events to TUI output.
+        /// </summary>
+        private async Task HandleChatViaClientAsync(string command, CancellationToken ct)
+        {
+            bool receivedTokens = false;
+            var tokenBuffer = new System.Text.StringBuilder();
+
+            _thinkingAnimationCts?.Cancel();
+            _thinkingAnimationCts = new CancellationTokenSource();
+            var thinkingToken = _thinkingAnimationCts.Token;
+            var startTime = DateTime.Now;
+
+            // Thinking animation
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!thinkingToken.IsCancellationRequested && !receivedTokens)
+                    {
+                        var elapsed = (DateTime.Now - startTime).TotalSeconds;
+                        Application.Invoke(() =>
+                        {
+                            if (_workLabel != null)
+                            {
+                                _workLabel.Text = $"Waiting {elapsed:F0}s...";
+                                _workLabel.SetNeedsDraw();
+                            }
+                        });
+                        await Task.Delay(500, thinkingToken);
+                    }
+                }
+                catch (OperationCanceledException) { }
+            }, thinkingToken);
+
+            // Wire up client events (temporary handlers for this request)
+            void OnToken(string token)
+            {
+                if (!receivedTokens)
+                {
+                    receivedTokens = true;
+                    _thinkingAnimationCts?.Cancel();
+                    AppendToActionView("ASSISTANT> ");
+                }
+                tokenBuffer.Append(token);
+                if (tokenBuffer.Length > 10 || token.Contains('\n'))
+                {
+                    var text = tokenBuffer.ToString();
+                    tokenBuffer.Clear();
+                    AppendToActionView(text);
+                }
+            }
+
+            void OnToolComplete(string name, string args, string result, TimeSpan elapsed)
+            {
+                _thinkingAnimationCts?.Cancel();
+                if (tokenBuffer.Length > 0)
+                {
+                    AppendToActionView(tokenBuffer.ToString() + "\n");
+                    tokenBuffer.Clear();
+                }
+                AppendToolText(name, result, elapsed);
+            }
+
+            void OnUsage(Usage usage)
+            {
+                Application.AddTimeout(TimeSpan.Zero, () =>
+                {
+                    try
+                    {
+                        if (_workLabel != null)
+                        {
+                            _workLabel.Text = $"Tokens: {usage.TotalTokens}";
+                            _workLabel.SetNeedsDraw();
+                        }
+                    }
+                    catch { }
+                    return false;
+                });
+                Application.Wakeup();
+            }
+
+            void OnError(string error)
+            {
+                _thinkingAnimationCts?.Cancel();
+                AppendActionText($"Error: {error}", true);
+            }
+
+            void OnComplete()
+            {
+                _thinkingAnimationCts?.Cancel();
+                if (tokenBuffer.Length > 0)
+                {
+                    AppendToActionView(tokenBuffer.ToString());
+                    tokenBuffer.Clear();
+                }
+                AppendToActionView("\n");
+            }
+
+            _client!.OnToken += OnToken;
+            _client.OnToolComplete += OnToolComplete;
+            _client.OnUsage += OnUsage;
+            _client.OnError += OnError;
+            _client.OnComplete += OnComplete;
+
+            try
+            {
+                await _client.SendMessageAsync(command);
+            }
+            catch (OperationCanceledException)
+            {
+                _thinkingAnimationCts?.Cancel();
+                AppendActionText("Request cancelled.", true);
+            }
+            catch (Exception ex)
+            {
+                AppendActionText($"Error: {ex.Message}", true);
+            }
+            finally
+            {
+                // Unsubscribe handlers
+                _client!.OnToken -= OnToken;
+                _client.OnToolComplete -= OnToolComplete;
+                _client.OnUsage -= OnUsage;
+                _client.OnError -= OnError;
+                _client.OnComplete -= OnComplete;
+
+                _thinkingAnimationCts?.Cancel();
+                _thinkingAnimationCts?.Dispose();
+                _thinkingAnimationCts = null;
+
+                Application.AddTimeout(TimeSpan.Zero, () =>
+                {
+                    try
+                    {
+                        if (_workLabel != null)
+                        {
+                            _workLabel.Text = " ";
+                            _workLabel.SetNeedsDraw();
+                        }
+                        SetProcessingState(false);
+                        UpdateStatus();
+                    }
+                    catch { }
+                    return false;
+                });
+                Application.Wakeup();
+
+                _currentRequestCts?.Dispose();
+                _currentRequestCts = null;
             }
         }
 

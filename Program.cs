@@ -446,9 +446,22 @@ namespace thuvu
 
             if (useTui)
             {
-                // Use Terminal.GUI interface
-                var tuiInterface = new TuiInterface(http, tools, messages);
-                tuiInterface.Run();
+                if (useServer && !noServer)
+                {
+                    // TUI in client/server mode
+                    var client = await ConnectOrSpawnServerAsync(serverUrl);
+                    if (client == null) return;
+                    await client.CreateConversationAsync(model: AgentConfig.Config.Model);
+                    var tuiClient = new TuiInterface(client, tools, messages);
+                    tuiClient.Run();
+                    client.Dispose();
+                }
+                else
+                {
+                    // TUI in direct/in-process mode
+                    var tuiInterface = new TuiInterface(http, tools, messages);
+                    tuiInterface.Run();
+                }
                 return;
             }
 
@@ -1349,30 +1362,25 @@ namespace thuvu
         }
 
         /// <summary>
-        /// Run the CLI in client mode — connects to a running agent server via HTTP+SSE.
-        /// Falls back to auto-spawning a server if none is found.
+        /// Connect to an existing server or auto-spawn one. Reusable by CLI and TUI client modes.
         /// </summary>
-        private static async Task RunCliClientModeAsync(string? serverUrl)
+        private static async Task<thuvu.Services.AgentClient?> ConnectOrSpawnServerAsync(string? serverUrl)
         {
-            ConsoleHelpers.PrintHeader($"T.H.U.V.U. v{Helpers.GetCurrentGitTag()} [Client Mode]", ConsoleColor.Cyan);
-            Console.WriteLine();
-
             thuvu.Services.AgentClient? client = null;
 
             if (!string.IsNullOrEmpty(serverUrl))
             {
-                // Connect to explicit server URL
                 ConsoleHelpers.PrintStatus($"Connecting to {serverUrl}...");
                 client = new thuvu.Services.AgentClient(serverUrl);
                 if (!await client.ConnectAsync())
                 {
                     ConsoleHelpers.PrintError($"Cannot connect to server at {serverUrl}");
-                    return;
+                    return null;
                 }
+                ConsoleHelpers.PrintSuccess($"Connected to {serverUrl}");
             }
             else
             {
-                // Auto-discover running server
                 ConsoleHelpers.PrintStatus("Looking for running agent server...");
                 var serverInfo = await thuvu.Services.AgentServerLocator.FindRunningServerAsync();
 
@@ -1383,28 +1391,42 @@ namespace thuvu
                     if (!await client.ConnectAsync())
                     {
                         ConsoleHelpers.PrintError("Server found but failed to connect");
-                        return;
+                        return null;
                     }
                 }
                 else
                 {
-                    // Auto-spawn a server
                     ConsoleHelpers.PrintStatus("No server found. Starting agent server...");
                     var spawned = await thuvu.Services.AgentServerLocator.SpawnServerAsync();
                     if (spawned == null)
                     {
                         ConsoleHelpers.PrintError("Failed to start agent server. Use --no-server for in-process mode.");
-                        return;
+                        return null;
                     }
                     ConsoleHelpers.PrintSuccess($"Server started at {spawned.Url} (PID {spawned.Pid})");
                     client = new thuvu.Services.AgentClient(spawned.Url, spawned.Token);
                     if (!await client.ConnectAsync())
                     {
                         ConsoleHelpers.PrintError("Server started but failed to connect");
-                        return;
+                        return null;
                     }
                 }
             }
+
+            return client;
+        }
+
+        /// <summary>
+        /// Run the CLI in client mode — connects to a running agent server via HTTP+SSE.
+        /// Falls back to auto-spawning a server if none is found.
+        /// </summary>
+        private static async Task RunCliClientModeAsync(string? serverUrl)
+        {
+            ConsoleHelpers.PrintHeader($"T.H.U.V.U. v{Helpers.GetCurrentGitTag()} [Client Mode]", ConsoleColor.Cyan);
+            Console.WriteLine();
+
+            var client = await ConnectOrSpawnServerAsync(serverUrl);
+            if (client == null) return;
 
             // Create a conversation
             var convId = await client.CreateConversationAsync(model: AgentConfig.Config.Model);
