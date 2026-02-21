@@ -61,6 +61,10 @@ public partial class MainWindowViewModel : ObservableObject
         try { SqliteService.Instance.InitializeAsync().GetAwaiter().GetResult(); }
         catch (Exception ex) { AgentLogger.LogError("SQLite init failed: {Error}", ex.Message); }
 
+        // Initialize agent process manager for detached mode
+        AgentProcessManager.Instance.Initialize(_project.ProjectDirectory);
+        AgentProcessManager.Instance.CleanupStaleAgents();
+
         _factory = new DockFactory();
         var layout = _factory.CreateLayout();
         _factory.InitLayout(layout);
@@ -428,6 +432,34 @@ public partial class MainWindowViewModel : ObservableObject
         _agentsPanel?.AddAgent(chatVm.Id!, entry.Value?.Name ?? chatVm.Title ?? "Chat");
 
         StatusText = $"New chat: {chatVm.Title}";
+    }
+
+    [RelayCommand]
+    private async Task NewDetachedChat()
+    {
+        if (DockLayout == null) return;
+        var docDock = FindDocumentDock(DockLayout);
+        if (docDock == null) return;
+
+        StatusText = "Spawning detached agent...";
+
+        var (chatVm, agent) = _registry.CreateDetachedAgent();
+        if (agent == null)
+        {
+            StatusText = "Failed to spawn detached agent";
+            return;
+        }
+
+        WireAgentToStatusBar(agent);
+        WireChatOrchestration(chatVm);
+        _factory.AddDockable(docDock, chatVm);
+        _factory.SetActiveDockable(chatVm);
+        _factory.SetFocusedDockable(docDock, chatVm);
+
+        var entry = _registry.Agents.FirstOrDefault(kv => kv.Value.Chat == chatVm);
+        _agentsPanel?.AddAgent(chatVm.Id!, entry.Value?.Name ?? chatVm.Title ?? "Chat");
+
+        StatusText = $"Detached chat: {chatVm.Title}";
     }
 
     [RelayCommand]

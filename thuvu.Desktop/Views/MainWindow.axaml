@@ -18,6 +18,7 @@
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
                 <MenuItem Header="_New Chat" Command="{Binding NewChatCommand}" InputGesture="Ctrl+T" />
+                <MenuItem Header="New _Detached Chat" Command="{Binding NewDetachedChatCommand}" InputGesture="Ctrl+Shift+T" />
                 <MenuItem Header="_Open File..." Command="{Binding OpenFileCommand}" InputGesture="Ctrl+O" />
                 <Separator />
                 <MenuItem Header="_Settings" Command="{Binding ShowSettingsCommand}" />

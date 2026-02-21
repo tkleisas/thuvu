@@ -58,6 +58,56 @@ public class AgentRegistry
         return (chat, agent);
     }
 
+    /// <summary>Create a detached agent running in a separate process</summary>
+    public (ChatViewModel chat, IAgentService? agent) CreateDetachedAgent(string? name = null)
+    {
+        _counter++;
+        var id = $"Detached_{_counter}";
+        name ??= $"Detached {_counter}";
+
+        var chat = new ChatViewModel
+        {
+            Id = id,
+            Title = $"🔗 {name}",
+            CanClose = true,
+            SessionName = name
+        };
+
+        // Spawn agent process
+        var processInfo = AgentProcessManager.Instance.SpawnAgentAsync(id, name).GetAwaiter().GetResult();
+        if (processInfo == null)
+        {
+            return (chat, null);
+        }
+
+        var agent = new RemoteAgentService(processInfo.Url, processInfo.Token)
+        {
+            WorkDirectory = WorkDirectory,
+            SessionId = id
+        };
+
+        // Verify connection
+        var connected = agent.ConnectAsync().GetAwaiter().GetResult();
+        if (!connected)
+        {
+            AgentProcessManager.Instance.StopAgent(id);
+            agent.Dispose();
+            return (chat, null);
+        }
+
+        chat.SetAgentService(agent);
+        SaveSessionToDb(id, name, agent);
+
+        chat.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ChatViewModel.IsProcessing))
+                OnAgentStateChanged?.Invoke(id, chat.IsProcessing);
+        };
+
+        _agents[id] = new AgentEntry(id, name, chat, agent);
+        return (chat, agent);
+    }
+
     /// <summary>Restore an agent from SQLite session + message records</summary>
     public (ChatViewModel chat, IAgentService agent) RestoreAgentFromDb(
         SqSessionData session, List<MessageRecord> messages)
@@ -120,6 +170,15 @@ public class AgentRegistry
     /// <summary>Remove an agent when its chat tab is closed</summary>
     public void RemoveAgent(string chatId)
     {
+        if (_agents.TryGetValue(chatId, out var entry))
+        {
+            // Stop detached agent process if applicable
+            if (entry.Agent is RemoteAgentService remote)
+            {
+                remote.Dispose();
+                AgentProcessManager.Instance.StopAgent(chatId);
+            }
+        }
         _agents.Remove(chatId);
         _ = Task.Run(async () => { try { await SqliteService.Instance.DeleteSessionAsync(chatId); } catch { } });
     }

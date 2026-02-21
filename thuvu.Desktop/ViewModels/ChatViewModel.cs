@@ -127,6 +127,14 @@ public partial class ChatViewModel : DocumentViewModel
     /// <summary>The agent service powering this chat</summary>
     public IAgentService? AgentService => _agentService;
 
+    /// <summary>Whether this chat is using a detached (remote) agent</summary>
+    public bool IsDetached => _agentService is RemoteAgentService;
+
+    /// <summary>Connection status for detached agents</summary>
+    public string ConnectionStatus => _agentService is RemoteAgentService remote
+        ? (remote.IsConnected ? "🟢 Connected" : "🔴 Disconnected")
+        : "⚡ In-Process";
+
     public ChatViewModel()
     {
         Id = "Chat";
