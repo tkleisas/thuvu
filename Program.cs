@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using thuvu.Models;
 using thuvu.Tools;
+using thuvu.Web;
 
 namespace thuvu
 {
@@ -262,6 +263,9 @@ namespace thuvu
             {
                 // Initialize the job service
                 await AgentJobService.Instance.InitializeAsync();
+
+                // Initialize conversation service for client/server architecture
+                ConversationService.Initialize();
                 
                 // Set up the streaming job processor callback
                 thuvu.Web.AgentJobProcessor.SetStreamingCallback(async (jobId, prompt, emit, ct, modelOverride, systemPromptOverride) =>
@@ -331,6 +335,81 @@ namespace thuvu
                         throw;
                     }
                 });
+                
+                // Set up conversation message processor callback
+                thuvu.Web.ConversationApiEndpoints.ProcessMessageCallback = async (convId, prompt, history, emit, ct, modelOverride, systemPromptOverride, workDir) =>
+                {
+                    var modelId = modelOverride ?? AgentConfig.Config.Model;
+                    var modelEndpoint = ModelRegistry.Instance.GetModel(modelId);
+                    var effectiveHttp = http;
+                    
+                    if (modelEndpoint != null && modelOverride != null)
+                    {
+                        effectiveHttp = modelEndpoint.CreateHttpClient();
+                        modelId = modelEndpoint.ModelId;
+                    }
+
+                    var systemPrompt = systemPromptOverride 
+                        ?? SystemPromptManager.Instance.GetCurrentSystemPrompt(McpConfig.Instance.McpModeActive);
+
+                    // Build message list from conversation history
+                    var convMessages = new List<ChatMessage> { new("system", systemPrompt) };
+                    foreach (var msg in history)
+                    {
+                        convMessages.Add(new ChatMessage(msg.Role, msg.Content));
+                    }
+
+                    string? result;
+                    if (AgentConfig.Config.Stream)
+                    {
+                        result = await AgentLoop.CompleteWithToolsStreamingAsync(
+                            effectiveHttp, modelId, convMessages, tools, ct,
+                            onToken: token => emit(AgentStreamEvent.Token(token)),
+                            onToolResult: (name, json) => emit(AgentStreamEvent.ToolComplete(name, "", json, 0)),
+                            onUsage: usage => emit(AgentStreamEvent.UsageInfo(usage))
+                        );
+                    }
+                    else
+                    {
+                        result = await AgentLoop.CompleteWithToolsAsync(
+                            effectiveHttp, modelId, convMessages, tools, ct,
+                            onToolResult: (name, json) => emit(AgentStreamEvent.ToolComplete(name, "", json, 0))
+                        );
+                    }
+                    
+                    return result ?? "No response generated";
+                };
+
+                // Set up slash command processor callback
+                thuvu.Web.ConversationApiEndpoints.ProcessCommandCallback = async (convId, command, ct) =>
+                {
+                    try
+                    {
+                        // Use the existing command dispatch infrastructure
+                        var output = new System.IO.StringWriter();
+                        var originalOut = Console.Out;
+                        Console.SetOut(output);
+                        
+                        try
+                        {
+                            var handled = await TryHandleCommandAsync(command, messages, http, ct);
+                            Console.SetOut(originalOut);
+                            
+                            if (handled)
+                                return CommandResult.Ok(output.ToString().TrimEnd());
+                            else
+                                return CommandResult.Fail($"Unknown command: {command}");
+                        }
+                        finally
+                        {
+                            Console.SetOut(originalOut);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        return CommandResult.Fail(ex.Message);
+                    }
+                };
                 
                 // Start web server in background
                 var webCts = new CancellationTokenSource();

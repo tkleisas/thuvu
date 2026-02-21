@@ -135,6 +135,7 @@ namespace thuvu.Web
             if (AgentApiConfig.Instance.Enabled)
             {
                 app.MapAgentApi();
+                app.MapConversationApi();
             }
             
             // Health check endpoint for Docker/Kubernetes
