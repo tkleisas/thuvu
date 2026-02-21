@@ -712,7 +712,7 @@ secret agent school and messing up all the tasks he was assigned.
 - **Batch/Parallel Tools**: Execute multiple independent tool calls simultaneously
 - **LLM-Managed Todo**: Agent maintains a structured todo list for complex tasks
 - **Plan-Only Mode**: Read-only agent for analysis without code changes
-- **Web Search/Fetch**: Tools for accessing URLs and search engines
+- **Lightweight Web Fetch**: Simple HTTP GET tool for docs/APIs (complement to full Playwright browser)
 - **Git Worktrees**: Agent-per-worktree isolation for parallel tasks
 - **Multi-Language LSP**: Add TypeScript (tsserver), Python (pylsp), Go (gopls)
 - **Plugin System**: Discover and install community tool packs
