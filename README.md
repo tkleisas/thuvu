@@ -23,7 +23,10 @@ without the need for an API key or internet connection. I also wanted to see how
 # Build the project
 dotnet build
 
-# Run with TUI (recommended)
+# Run Desktop app (Avalonia UI — recommended)
+cd thuvu.Desktop && dotnet run
+
+# Run with TUI (terminal multi-panel interface)
 dotnet run -- --tui
 
 # Run with Web UI
@@ -75,14 +78,33 @@ THUVU works with any OpenAI-compatible API:
 ## Features
 
 ### Core Features
-- **LLM Integration**: Connect to local LLMs via LM Studio/Ollama, or cloud APIs
+- **LLM Integration**: Connect to local LLMs via LM Studio/Ollama, or cloud APIs (DeepSeek, OpenRouter, OpenAI)
 - **Multi-Model Support**: Configure multiple models with automatic selection based on task type
 - **Model-Specific Prompts**: Each model can have its own system prompt template
-- **Tool System**: 25+ tools for file operations, dotnet, git, NuGet, browser automation, and more
+- **Tool System**: 30+ tools for file operations, dotnet, git, NuGet, browser automation, LSP, and more
 - **Permission System**: Granular permission control with persistence and Web UI approval dialog
-- **Multiple Interfaces**: CLI, TUI (Terminal.GUI), and Web (Blazor Server) interfaces
+- **Four Interfaces**: CLI, TUI (Terminal.GUI), Web (Blazor Server), and Desktop (Avalonia)
 - **Context Management**: Automatic summarization when context is near limit, token tracking
 - **Tool Result Compression**: Automatic compression of large tool outputs to save tokens
+- **LSP Code Intelligence**: OmniSharp-powered go-to-definition, find-references, hover, and auto-diagnostics for C#
+
+### Desktop Application (Avalonia UI)
+Cross-platform desktop client with a modern multi-panel interface:
+- **Multi-Chat Tabs**: Run multiple conversations simultaneously
+- **Agents Panel**: Manage in-process and detached agent instances
+- **File Tree Browser**: Navigate project files with integrated editor
+- **Terminal View**: Embedded terminal output
+- **Diff View**: Visual git diff display
+- **Model & Prompt Selection**: Dropdown selectors for switching models and prompts per-chat
+- **Detached Agents**: Spawn agents as separate processes that survive Desktop restarts
+  - Model/prompt overrides passed to detached agents
+  - Auto-reconnection to running agents on startup
+  - Full message persistence for chat history restore
+
+```bash
+# Run the Desktop app
+cd thuvu.Desktop && dotnet run
+```
 
 ### Web Interface
 Modern Blazor Server web UI with real-time SignalR streaming:
@@ -260,6 +282,46 @@ context_get({})
 
 See [docs/code-indexing.md](docs/code-indexing.md) for full documentation.
 
+### LSP Code Intelligence
+Language Server Protocol integration for IDE-quality code navigation and real-time diagnostics. Currently supports C# via OmniSharp, with architecture ready for TypeScript, Python, and Go.
+
+**Operations available via the `lsp` tool:**
+- `goToDefinition` — Find where a symbol is defined (cross-file, cross-project)
+- `findReferences` — Find all usages of a symbol (type-aware)
+- `goToImplementation` — Find implementations of interfaces/abstract methods
+- `hover` — Get type info and documentation
+- `documentSymbol` — List all symbols in a file
+- `workspaceSymbol` — Search symbols across the project
+- `prepareCallHierarchy` / `incomingCalls` / `outgoingCalls` — Call hierarchy navigation
+- `diagnostics` — Get compiler errors/warnings for a file
+
+**Auto-Diagnostics**: After every file write or patch, the agent automatically checks for compiler errors via LSP — catching mistakes instantly without running `dotnet build`.
+
+**OmniSharp Setup**: OmniSharp auto-downloads on first use. Override in config:
+```json
+{
+  "LspConfig": {
+    "Enabled": true,
+    "AutoDiagnostics": true,
+    "DiagnosticsTimeoutMs": 3000,
+    "Servers": {
+      "omnisharp": {
+        "Path": "",
+        "AutoDownload": true,
+        "Extensions": [".cs", ".csx"]
+      }
+    }
+  }
+}
+```
+
+**Slash Commands:**
+```bash
+/lsp status         # Show LSP server status
+/lsp restart        # Restart all LSP servers
+/lsp diagnostics <file>  # Show diagnostics for a file
+```
+
 ### Multi-Agent Communication API
 Run THUVU as an API server that accepts jobs from other agents. This enables distributed task execution across multiple specialized agents.
 
@@ -419,6 +481,7 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 | `/plan <task>` | Decompose task into subtasks |
 | `/orchestrate [options]` | Run multi-agent orchestration |
 | `/models [list\|use]` | List and switch models |
+| `/lsp [status\|restart\|diagnostics]` | LSP server management |
 | `/summarize` | Summarize conversation to reduce context |
 | `/health` | Check service health |
 
@@ -501,6 +564,11 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 | `index_stats` | Get code index statistics | ReadOnly |
 | `index_clear` | Clear all indexed data | Write |
 
+### LSP Code Intelligence Tools
+| Tool | Description | Risk Level |
+|------|-------------|------------|
+| `lsp` | LSP operations: goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation, callHierarchy, diagnostics | ReadOnly |
+
 ### Agent Communication Tools
 | Tool | Description | Risk Level |
 |------|-------------|------------|
@@ -555,62 +623,73 @@ Basic `appsettings.json`:
 ## Architecture
 
 ```
-thuvu/
-├── Program.cs              # Entry point, command routing
-├── AgentLoop.cs            # LLM conversation loop with tool calling
-├── ToolExecutor.cs         # Tool dispatch and execution
-├── TuiInterface.cs         # Terminal.GUI main interface
-├── Dockerfile              # Production Docker image
-│
-├── Models/                 # Data models and core logic
-│   ├── AgentConfig.cs          # Main configuration
-│   ├── ModelConfig.cs          # Multi-model registry
-│   ├── SystemPromptManager.cs  # Model-specific prompts
-│   ├── TaskDecomposition.cs    # Task planning
-│   ├── TaskOrchestrator.cs     # Multi-agent coordination
-│   ├── PermissionManager.cs    # Security permissions
-│   ├── TokenTracker.cs         # Context tracking
-│   └── McpCodeExecutor.cs      # Deno sandbox
-│
-├── Web/                    # Blazor Server Web Interface
-│   ├── WebHost.cs              # ASP.NET Core host
-│   ├── Hubs/AgentHub.cs        # SignalR hub
+thuvu.sln
+├── thuvu/                      # CLI + Agent Core (entry point)
+│   ├── Program.cs              # Entry point, command routing
+│   ├── AgentLoop.cs            # LLM conversation loop with tool calling
+│   ├── ToolExecutor.cs         # Tool dispatch and execution
+│   ├── TuiInterface.cs         # Terminal.GUI interface
+│   │
+│   ├── Models/                 # Data models and core logic
+│   │   ├── AgentConfig.cs          # Main configuration
+│   │   ├── ModelConfig.cs          # Multi-model registry
+│   │   ├── LspConfig.cs            # LSP server configuration
+│   │   ├── SystemPromptManager.cs  # Model-specific prompts
+│   │   ├── TaskDecomposition.cs    # Task planning
+│   │   ├── TaskOrchestrator.cs     # Multi-agent coordination
+│   │   ├── PermissionManager.cs    # Security permissions
+│   │   ├── TokenTracker.cs         # Context tracking
+│   │   └── McpCodeExecutor.cs      # Deno sandbox
+│   │
 │   ├── Services/
-│   │   └── WebAgentService.cs  # Agent service
-│   └── Components/
-│       ├── Chat.razor          # Main chat UI
-│       ├── Settings.razor      # Configuration panel
-│       ├── PermissionDialog.razor  # Tool approval
-│       ├── FileTree.razor      # Workspace browser
-│       └── AgentTabs.razor     # Orchestration tabs
+│   │   └── Lsp/                    # LSP Code Intelligence
+│   │       ├── ILspServer.cs       # Language server abstraction
+│   │       ├── LspService.cs       # Server lifecycle manager
+│   │       ├── LspClient.cs        # JSON-RPC client (StreamJsonRpc)
+│   │       ├── OmniSharpServer.cs  # C# OmniSharp implementation
+│   │       └── LspDownloadService.cs # Auto-download binaries
+│   │
+│   ├── Tools/                  # Tool implementations (30+)
+│   │   ├── LspToolImpl.cs         # LSP code intelligence tool
+│   │   ├── BrowserToolImpl.cs     # Playwright browser
+│   │   ├── ReadFileToolImpl.cs    # File read with hash
+│   │   ├── WriteFileToolImpl.cs   # File write + auto-diagnostics
+│   │   ├── ApplyPatchToolImpl.cs  # Diff patch + auto-diagnostics
+│   │   └── ...
+│   │
+│   ├── Web/                    # Blazor Server Web Interface
+│   │   ├── WebHost.cs              # ASP.NET Core host
+│   │   ├── AgentApiEndpoints.cs    # Agent REST API
+│   │   ├── Hubs/AgentHub.cs       # SignalR hub
+│   │   └── Components/            # Blazor components
+│   │
+│   ├── prompts/                # System prompt templates
+│   ├── mcp/                    # MCP TypeScript ecosystem
+│   ├── docker/                 # Docker deployment
+│   └── docs/                   # Documentation
 │
-├── Tools/                  # Tool implementations
-│   ├── BrowserToolImpl.cs      # Playwright browser
-│   ├── ReadFileToolImpl.cs
-│   ├── WriteFileToolImpl.cs
-│   └── ...
+├── thuvu.Core/                 # Shared library
+│   ├── Services/
+│   │   └── IAgentService.cs        # Agent abstraction interface
+│   ├── Models/                     # Shared data models
+│   └── AgentLoop.cs                # Core agent execution
 │
-├── prompts/                # System prompt templates
-│   ├── README.md
-│   ├── deepseek.md
-│   └── qwen.md
-│
-├── docker/                 # Docker deployment
-│   ├── docker-compose.yml      # Multi-container setup
-│   ├── Dockerfile.thuvu        # App container
-│   ├── Dockerfile.postgres     # RAG database
-│   └── README.md
-│
-├── mcp/                    # MCP TypeScript ecosystem
-│   ├── servers/            # Tool wrappers
-│   └── runtime/            # Sandbox execution
-│
-├── wwwroot/                # Web static assets
-│   └── css/app.css         # Web UI styles
-│
-└── docs/                   # Documentation
-    ├── configuration.md
-    └── orchestration.md
+└── thuvu.Desktop/              # Avalonia UI Desktop Application
+    ├── Views/                  # XAML views
+    │   ├── ChatView.axaml          # Main chat interface
+    │   ├── EditorView.axaml        # Code editor
+    │   ├── AgentsPanelView.axaml   # Agent management
+    │   ├── FileTreeView.axaml      # File browser
+    │   ├── TerminalView.axaml      # Terminal output
+    │   └── DiffView.axaml          # Git diff display
+    ├── ViewModels/             # MVVM view models
+    ├── Services/
+    │   ├── DesktopAgentService.cs  # In-process agent
+    │   ├── RemoteAgentService.cs   # HTTP+SSE detached agent
+    │   ├── AgentRegistry.cs        # Agent discovery
+    │   └── AgentProcessManager.cs  # Process lifecycle
+    ├── Controls/               # Custom Avalonia controls
+    └── App.axaml.cs            # Application entry
 ```
 
 ## Documentation
@@ -621,6 +700,7 @@ thuvu/
 - [Multi-Agent Orchestration](docs/orchestration.md) - Task decomposition and parallel execution
 - [Code Indexing](docs/code-indexing.md) - SQLite-based symbol search
 - [UI Automation](docs/ui-automation-plan.md) - Screen capture and input control
+- [Agent Communication API](docs/orchestration.md#agent-api) - REST API for multi-agent setups
 
 ## Why the name THUVU?
 The name is a reference to the late and great Greek comedian Thanassis Veggos who made a 2-part film series 
@@ -628,16 +708,37 @@ where the main character (ΘΒ) Θου Βου (Thou Vou) was an aspiring secret 
 secret agent school and messing up all the tasks he was assigned.
 
 ## Next Steps
-- Improve multi-agent coordination and conflict resolution
-- Add more intelligent task decomposition based on codebase analysis
-- Support more programming languages and frameworks beyond .NET
-- Implement agent memory/learning across sessions
-- Add support for more cloud LLM providers
-- Improve browser automation with more actions
+- **Snapshot/Rollback**: Git-based checkpoints before risky operations for safe undo
+- **Batch/Parallel Tools**: Execute multiple independent tool calls simultaneously
+- **LLM-Managed Todo**: Agent maintains a structured todo list for complex tasks
+- **Plan-Only Mode**: Read-only agent for analysis without code changes
+- **Web Search/Fetch**: Tools for accessing URLs and search engines
+- **Git Worktrees**: Agent-per-worktree isolation for parallel tasks
+- **Multi-Language LSP**: Add TypeScript (tsserver), Python (pylsp), Go (gopls)
+- **Plugin System**: Discover and install community tool packs
 
-## Recent Changes (January 2026)
+## Recent Changes
 
-### Multi-Agent Communication API (NEW)
+### LSP Code Intelligence (NEW)
+Language Server Protocol integration for IDE-quality code navigation:
+
+- **OmniSharp for C#**: Go-to-definition, find-references, hover, call hierarchy
+- **Auto-Diagnostics**: Compiler errors checked after every file write/patch
+- **Auto-Download**: OmniSharp downloads automatically on first use
+- **Multi-Language Ready**: `ILspServer` abstraction for future language servers
+- **10 LSP Operations**: Full tool (`lsp`) with definition, references, implementation, symbols, diagnostics, and call hierarchy
+
+### Desktop Application (NEW)
+Avalonia-based desktop client with rich multi-panel UI:
+
+- **Multi-Chat Interface**: Tabbed conversations with independent agent sessions
+- **Dual-Mode Agents**: In-process (fast) and detached (survives restarts) modes
+- **Agent Panel**: Manage, monitor, and terminate agent instances
+- **File Tree & Editor**: Project navigation and code viewing
+- **SSE Streaming**: Real-time token streaming from detached agents
+- **Message Persistence**: SQLite-backed chat history for detached agents
+
+### Multi-Agent Communication API
 Run THUVU as an API server that accepts jobs from other agents:
 
 - **Agent API Mode**: Start with `--api` flag to enable REST API server
@@ -656,7 +757,7 @@ dotnet run -- --api --port 5001
 # Access dashboard at http://localhost:5001/agent
 ```
 
-### SQLite Code Indexing (NEW)
+### SQLite Code Indexing
 Local code indexing for fast symbol search:
 
 - **Multi-Language Support**: C# (Roslyn), TypeScript, Python, Go (regex-based)
@@ -695,41 +796,12 @@ Added support for analyzing images using vision-capable LLMs:
 - **Automatic Image Resizing**: Large images are automatically resized to prevent vision model errors
 - **Context Integration**: Vision analysis results are added to conversation history for follow-up questions
 
-New tool: `analyze_image` - Analyze images via vision-capable LLM (available in `Tools/VisionToolImpl.cs`)
+New tool: `analyze_image` - Analyze images via vision-capable LLM
 
 ### MCP/Execute Code Fixes
-Fixed critical issues with the TypeScript sandbox execution:
-
 - **Deno Permission Fix**: Fixed `--allow-read` to include both work directory and MCP directory
-- **MCP Context for Permissions**: Added `PermissionManager.EnterMcpContext()`/`ExitMcpContext()` to auto-grant permissions for nested tool calls within MCP sandbox
-- **Console.log Capture**: Fixed console.log output capture in sandbox - now returned in result instead of breaking JSON-RPC protocol
-
-### Web UI Improvements
-- **Tool Arguments Display**: Tool calls now show their arguments in the Web UI
-- **Smart JSON Truncation**: Tool results truncate individual JSON field values (500 chars) instead of truncating entire JSON
-- **Image Attachment Preview**: Shows attached image thumbnail with remove button above chat input
-
-### Files Changed
-- `Tools/VisionToolImpl.cs` (new) - Vision/image analysis tool
-- `Models/ModelConfig.cs` - Added `Vision` purpose, `SupportsVision` property, `VisionModelId`
-- `Models/McpCodeExecutor.cs` - Fixed Deno permissions, MCP context
-- `Models/PermissionManager.cs` - Added MCP context (AsyncLocal) for auto-granting nested permissions
-- `Web/Components/Chat.razor` - Image paste/drop, tool arguments display
-- `Web/Services/WebAgentService.cs` - `SendMessageWithImageAsync`, smart JSON truncation
-- `Web/Hubs/AgentHub.cs` - `SendMessageWithImage` hub method
-- `wwwroot/js/thuvu.js` - Image clipboard/file reading, auto-resize
-- `wwwroot/css/app.css` - Image attachment preview styles
-- `mcp/runtime/sandbox.ts` - Console.log capture fix
-
-### Files Added/Changed for Agent Communication & Code Indexing
-- `Models/AgentApiConfig.cs` (new) - Agent API configuration
-- `Models/AgentJobService.cs` (new) - Job management with SQLite persistence
-- `Tools/AgentCommunicationToolImpl.cs` (new) - Inter-agent communication tools
-- `Web/AgentApiEndpoints.cs` (new) - REST API endpoints for agent communication
-- `Web/Components/AgentDashboard.razor` (new) - Agent status dashboard
-- `Models/SqliteConfig.cs` (new) - SQLite configuration
-- `Tools/SqliteService.cs` (new) - SQLite database service
-- `Tools/SqliteToolImpl.cs` (new) - Code indexing tools
+- **MCP Context for Permissions**: Auto-grant permissions for nested tool calls within MCP sandbox
+- **Console.log Capture**: Fixed console.log output capture in sandbox
 - `Tools/CodeIndexer.cs` (new) - Multi-language code parser
 - `Tools/Parsers/` (new) - Language-specific parsers (Python, TypeScript, Go)
 - `Program.cs` - Added --api, --port, --config CLI flags
