@@ -482,7 +482,7 @@ Execute TypeScript in a secure Deno sandbox with access to all tools:
 | `/orchestrate [options]` | Run multi-agent orchestration |
 | `/models [list\|use]` | List and switch models |
 | `/lsp [status\|restart\|diagnostics]` | LSP server management |
-| `/summarize` | Summarize conversation to reduce context |
+| `/summarize` or `/compact` | Summarise conversation to reduce context |
 | `/health` | Check service health |
 
 ## Available Tools
@@ -707,17 +707,82 @@ The name is a reference to the late and great Greek comedian Thanassis Veggos wh
 where the main character (ΘΒ) Θου Βου (Thou Vou) was an aspiring secret agent, studying at the
 secret agent school and messing up all the tasks he was assigned.
 
-## Next Steps
-- **Snapshot/Rollback**: Git-based checkpoints before risky operations for safe undo
-- **Batch/Parallel Tools**: Execute multiple independent tool calls simultaneously
-- **LLM-Managed Todo**: Agent maintains a structured todo list for complex tasks
-- **Plan-Only Mode**: Read-only agent for analysis without code changes
-- **Lightweight Web Fetch**: Simple HTTP GET tool for docs/APIs (complement to full Playwright browser)
-- **Git Worktrees**: Agent-per-worktree isolation for parallel tasks
-- **Multi-Language LSP**: Add TypeScript (tsserver), Python (pylsp), Go (gopls)
-- **Plugin System**: Discover and install community tool packs
+## Roadmap
+
+The roadmap is organised by theme. Items within each group are roughly ordered by priority.
+
+### 🖥️ Windows Sandbox (in progress)
+
+Windows Sandbox support is partially implemented — THUVU can already launch itself inside an isolated sandbox with auto-install of Git, .NET SDK and Deno. The following work remains to make the feature fully usable:
+
+| # | Item | Notes |
+|---|------|-------|
+| 1 | **Tool caching** | Cache winget downloads to a host folder mapped read-only, so repeated launches don't re-download everything from the internet |
+| 2 | **Map host .NET runtime** | Map the host's `%ProgramFiles%\dotnet` read-only into the sandbox, eliminating the .NET SDK install step entirely |
+| 3 | **Sandbox configuration UI** | Settings panel entry to choose which extra tools to install, whether to map the dotnet runtime, and which project directory to mount |
+| 4 | **Local LLM connectivity helper** | Detect `127.0.0.1`/`localhost` in `HostUrl` and warn the user to enable network access on the LLM server before launching |
+| 5 | **Post-launch health check** | After launching the `.wsb` file, poll the sandbox's mapped project dir for a readiness sentinel file so the user gets a "Sandbox ready" notification |
+| 6 | **Self-contained publish workflow** | Add a `dotnet publish --self-contained` shortcut so the sandbox can run even without the .NET SDK mapped from the host |
+
+**LLM configuration for the sandbox**
+
+The sandbox receives a verbatim copy of `appsettings.json`. Because `127.0.0.1` inside the sandbox refers to the sandbox's own loopback — not the host — you must configure connectivity yourself before launching:
+
+- **Cloud providers** (OpenAI, Anthropic, DeepSeek, OpenRouter, etc.): work as-is, the sandbox has outbound internet access.
+- **LM Studio on the host**: go to *Developer → Allow connections from local network* and update `HostUrl` to your machine's LAN IP (e.g. `http://192.168.1.x:1234`). LM Studio v0.3.3+ supports API key auth — set `AuthToken` in `appsettings.json` if you enable it.
+- **Ollama on the host**: set `OLLAMA_HOST=0.0.0.0` and update `HostUrl` to the host's LAN IP.
+
+---
+
+### 🤖 Agent Loop & Context
+
+| # | Item |
+|---|------|
+| 1 | **Plan-only mode** — read-only agent that analyses and plans without writing files |
+| 2 | **LLM-managed todo list** — agent maintains a structured task list, resumable across sessions |
+| 3 | **Snapshot / rollback** — git-based checkpoint before risky multi-file operations |
+| 4 | **Batch/parallel tool calls** — execute independent tool calls in a single round-trip |
+| 5 | **Better stop detection** — classify end-of-task vs. stall vs. error when agent loop exits early |
+
+### 🔧 Tooling & Integrations
+
+| # | Item |
+|---|------|
+| 1 | **Lightweight HTTP fetch** — simple `http_get` tool for reading docs/APIs (complement to full Playwright browser) |
+| 2 | **Multi-language LSP** — add TypeScript (`tsserver`), Python (`pylsp`), Go (`gopls`) |
+| 3 | **Git worktrees** — one worktree per agent for safe parallel task execution on the same repo |
+| 4 | **Plugin system** — discover and install community tool packs |
+
+### 🖼️ Desktop Application
+
+| # | Item |
+|---|------|
+| 1 | **Inline diff editor** — accept/reject hunks directly in the diff panel |
+| 2 | **Conversation search** — full-text search across chat history |
+| 3 | **Agent session export** — export a conversation + all tool calls to Markdown/HTML |
+| 4 | **Notifications** — system tray notification when a long-running agent task finishes |
+
+---
 
 ## Recent Changes
+
+### Desktop Application Polish
+A series of quality-of-life improvements to the Avalonia desktop client:
+
+- **Window position memory**: app reopens on the same screen/position it was closed on; falls back gracefully if the monitor is disconnected
+- **Correct model in status bar**: the status bar now shows the model selected in the *active chat's* dropdown, not the global default
+- **Context restore fix**: on reopen, only non-summarized messages are loaded from SQLite, preventing a 400 error caused by over-filling the context window
+- **`/compact` command**: trigger conversation summarisation on demand from any interface (Desktop, TUI, Web, CLI) — persists to SQLite and marks old messages as summarised
+- **Agent loop iteration counter**: the Agents panel shows `Loop X/Y` (current / max) while an agent is running
+- **Auto-summarisation 400 fix**: fixed a bug where summarisation fired mid-loop and caused two consecutive `assistant` messages, triggering a 400 from the LLM provider
+
+### Windows Sandbox Support (experimental)
+Launch THUVU inside an isolated Windows Sandbox with a single menu action (*Agent → Launch in Windows Sandbox*):
+
+- App binaries mapped read-only; project directory mounted read-write and discarded on close
+- Auto-installs Git, .NET SDK 8, and Deno via `winget` on sandbox boot
+- `appsettings.json` copied verbatim — cloud providers work as-is; local LLM servers need LAN exposure (see Roadmap for details)
+- Menu item is disabled when Windows Sandbox is not installed
 
 ### LSP Code Intelligence (NEW)
 Language Server Protocol integration for IDE-quality code navigation:
