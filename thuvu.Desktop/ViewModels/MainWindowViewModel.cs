@@ -585,6 +585,40 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    private string GetWindowPlacementPath() =>
+        Path.Combine(_project.ProjectDirectory, ".db", "window.json");
+
+    public void SaveWindowPlacement(WindowPlacement placement)
+    {
+        try
+        {
+            var path = GetWindowPlacementPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var json = JsonSerializer.Serialize(placement, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.LogError("Failed to save window placement: {Error}", ex.Message);
+        }
+    }
+
+    public WindowPlacement? LoadWindowPlacement()
+    {
+        var path = GetWindowPlacementPath();
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<WindowPlacement>(json);
+        }
+        catch (Exception ex)
+        {
+            AgentLogger.LogError("Failed to load window placement: {Error}", ex.Message);
+            return null;
+        }
+    }
+
     #endregion
 
     [RelayCommand]

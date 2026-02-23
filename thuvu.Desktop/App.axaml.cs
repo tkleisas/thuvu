@@ -46,10 +46,23 @@ public partial class App : Application
                 DataContext = new MainWindowViewModel(startupDialog.SelectedProject)
             };
 
+            // Restore last window placement (position, size, maximized state)
+            var placement = ((MainWindowViewModel)mainWindow.DataContext).LoadWindowPlacement();
+            if (placement != null)
+            {
+                mainWindow.WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.Manual;
+                mainWindow.Width = placement.Width;
+                mainWindow.Height = placement.Height;
+                mainWindow.Position = new PixelPoint(placement.X, placement.Y);
+            }
+
             // Initialize appearance from project settings
             AppearanceService.Instance.Apply(startupDialog.SelectedProject.Appearance);
             desktop.MainWindow = mainWindow;
             mainWindow.Show();
+            // Restore maximized state after Show() so Avalonia can handle it correctly
+            if (placement?.State == Avalonia.Controls.WindowState.Maximized)
+                mainWindow.WindowState = Avalonia.Controls.WindowState.Maximized;
             dummyWindow.Close();
         }
 
