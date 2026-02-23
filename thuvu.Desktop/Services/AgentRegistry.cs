@@ -321,8 +321,38 @@ public class AgentRegistry
                     break;
 
                 case "tool_call":
-                    // Tool calls are embedded in assistant messages by AgentLoop;
-                    // they don't need separate reconstruction for the messages list
+                    // Reconstruct the assistant+tool message pair so the LLM receives
+                    // the full tool-use context, preserving the original token count.
+                    if (!string.IsNullOrEmpty(record.ToolName))
+                    {
+                        var callId = $"restored_{record.ToolName}_{messages.Count}";
+                        // Assistant message that requested this tool call
+                        messages.Add(new ChatMessage
+                        {
+                            Role = "assistant",
+                            Content = null,
+                            ToolCalls = new List<ToolCall>
+                            {
+                                new ToolCall
+                                {
+                                    Id = callId,
+                                    Type = "function",
+                                    Function = new FunctionCall
+                                    {
+                                        Name = record.ToolName,
+                                        Arguments = record.ToolArgsJson ?? "{}"
+                                    }
+                                }
+                            }
+                        });
+                        // Tool result message
+                        messages.Add(new ChatMessage(
+                            role: "tool",
+                            content: record.ToolResultJson ?? "",
+                            name: record.ToolName,
+                            toolCallId: callId
+                        ));
+                    }
                     break;
             }
         }
