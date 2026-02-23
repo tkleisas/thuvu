@@ -35,6 +35,10 @@
             <MenuItem Header="_Agent">
                 <MenuItem Header="_Clear Chat" Command="{Binding ClearChatCommand}" />
                 <MenuItem Header="_Cancel Request" Command="{Binding CancelRequestCommand}" />
+                <Separator />
+                <MenuItem Header="Launch in Windows _Sandbox"
+                          Command="{Binding LaunchInSandboxCommand}"
+                          IsEnabled="{Binding SandboxAvailable}" />
             </MenuItem>
             <MenuItem Header="_Help">
                 <MenuItem Header="Toggle _Theme" Command="{Binding ToggleThemeCommand}" />

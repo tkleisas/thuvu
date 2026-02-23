@@ -954,7 +954,7 @@ public partial class ChatViewModel : DocumentViewModel
         return sb.ToString().TrimEnd();
     }
 
-    private void AddSystemMessage(string content)
+    public void AddSystemMessage(string content)
     {
         Messages.Add(new ChatMessageViewModel
         {

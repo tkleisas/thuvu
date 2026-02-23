@@ -808,4 +808,36 @@ public partial class MainWindowViewModel : ObservableObject
     {
         StatusText = "T.H.U.V.U. — Tool for Heuristic Universal Versatile Usage v1.0";
     }
+
+    [ObservableProperty] private bool _sandboxAvailable = SandboxLauncher.IsAvailable();
+
+    [RelayCommand]
+    private async Task LaunchInSandbox()
+    {
+        if (!SandboxLauncher.IsAvailable())
+        {
+            StatusText = "Windows Sandbox not available. Enable it via: Settings → Apps → Optional features → Windows Sandbox.";
+            return;
+        }
+
+        var appDir     = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+        var projectDir = _project.ResolvedWorkDirectory;
+
+        string appSettingsJson;
+        try
+        {
+            var settingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            appSettingsJson  = File.Exists(settingsPath) ? await File.ReadAllTextAsync(settingsPath) : "{}";
+        }
+        catch { appSettingsJson = "{}"; }
+
+        StatusText = "Launching Windows Sandbox…";
+        var result = await SandboxLauncher.LaunchAsync(appDir, projectDir, appSettingsJson);
+        StatusText = "Sandbox launched";
+
+        // Show result in active chat as a system message
+        var docDock  = FindDocumentDock(DockLayout);
+        var chat     = docDock?.ActiveDockable as ChatViewModel;
+        chat?.AddSystemMessage(result);
+    }
 }
