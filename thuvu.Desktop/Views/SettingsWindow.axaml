@@ -149,7 +149,7 @@
                         <Grid ColumnDefinitions="*,12,*">
                             <StackPanel Grid.Column="0" Spacing="4">
                                 <TextBlock Text="Max Iterations" FontWeight="SemiBold" />
-                                <NumericUpDown Value="{Binding MaxIterations}" Minimum="1" Maximum="200"
+                                <NumericUpDown Value="{Binding MaxIterations}" Minimum="1" Maximum="10000"
                                                Increment="1" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Spacing="4">
