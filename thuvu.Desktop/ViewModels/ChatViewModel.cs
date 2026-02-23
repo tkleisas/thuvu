@@ -389,6 +389,7 @@ public partial class ChatViewModel : DocumentViewModel
             AddSystemMessage("**Available Commands**\n" +
                 "/help — Show this help\n" +
                 "/clear — Clear conversation\n" +
+                "/compact — Summarize history to reduce context size\n" +
                 "/system <text> — Set system prompt\n" +
                 "/stream on|off — Toggle streaming\n" +
                 "/diff [--staged] — Show git diff\n" +
@@ -409,6 +410,23 @@ public partial class ChatViewModel : DocumentViewModel
             _agentService!.ClearMessages();
             Messages.Clear();
             AddSystemMessage("Conversation cleared.");
+            return true;
+        }
+
+        if (trimmed.Equals("/compact", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_agentService!.IsProcessing)
+            {
+                AddSystemMessage("⚠️ Cannot compact while the agent is processing.");
+                return true;
+            }
+            var before = _agentService.Messages.Count;
+            AddSystemMessage("🗜️ Summarizing conversation history…");
+            var ok = await _agentService.CompactAsync(status => AddSystemMessage(status));
+            if (ok)
+                AddSystemMessage($"✅ Compacted: {before} → {_agentService.Messages.Count} messages in context.");
+            else
+                AddSystemMessage("⚠️ Compaction failed or there is not enough history to summarize.");
             return true;
         }
 

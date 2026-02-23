@@ -387,6 +387,52 @@ public class DesktopAgentService : IAgentService
     public string GetHostUrl() => AgentConfig.Config.HostUrl;
 
     /// <summary>
+    /// Summarize the current conversation using the LLM and persist the summary to SQLite.
+    /// Marks all previous messages as summarized so they are excluded from future restores.
+    /// </summary>
+    public async Task<bool> CompactAsync(Action<string>? onStatus = null, CancellationToken ct = default)
+    {
+        if (IsProcessing) return false;
+
+        // Collect the IDs of current DB messages to mark as summarized after success
+        var idsToSummarize = new List<long>();
+        if (!string.IsNullOrEmpty(SessionId) && SqliteService.Instance != null)
+        {
+            try
+            {
+                var records = await SqliteService.Instance.GetActiveSessionMessagesAsync(SessionId, ct);
+                idsToSummarize = records
+                    .Where(r => r.MessageType != "summary")
+                    .Select(r => r.Id)
+                    .ToList();
+            }
+            catch { /* proceed with in-memory compaction even if DB lookup fails */ }
+        }
+
+        var (success, summaryContent) = await AgentLoop.SummarizeConversationAsync(
+            _http, EffectiveModel, _messages, ct, onStatus);
+
+        if (!success || summaryContent == null)
+            return false;
+
+        // Persist: create summary record + mark old messages summarized
+        if (!string.IsNullOrEmpty(SessionId) && SqliteService.Instance != null && idsToSummarize.Count > 0)
+        {
+            try
+            {
+                await SqliteService.Instance.RecordSummarizationAsync(
+                    SessionId!, summaryContent, idsToSummarize, ct);
+            }
+            catch (Exception ex)
+            {
+                AgentLogger.LogError("Failed to persist summarization: {Error}", ex.Message);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// DelegatingHandler that logs full HTTP request/response bodies to .stream/ directory.
     /// </summary>
     private class StreamLogHandler : DelegatingHandler

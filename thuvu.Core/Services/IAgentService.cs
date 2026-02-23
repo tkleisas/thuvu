@@ -45,6 +45,11 @@ public interface IAgentService
     void ClearMessages();
     void RestoreMessages(List<ChatMessage> messages);
     void ReloadConfig();
+    /// <summary>
+    /// Summarize the current conversation into a compact context and persist it.
+    /// Returns true if summarization succeeded. Default implementation returns false.
+    /// </summary>
+    Task<bool> CompactAsync(Action<string>? onStatus = null, CancellationToken ct = default) => Task.FromResult(false);
 
     // --- Info ---
     string GetModelName();
