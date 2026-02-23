@@ -221,6 +221,11 @@ public class DesktopAgentService : IAgentService
             if (!string.IsNullOrEmpty(response))
                 RecordMessageAsync(SessionId, "assistant", responseContent: response);
 
+            // Non-streaming path: AgentLoop never called OnToken, so push the response into
+            // the UI now before firing OnComplete (which finalises the message bubble).
+            if (!AgentConfig.Config.Stream && !string.IsNullOrEmpty(response))
+                OnToken?.Invoke(response);
+
             OnComplete?.Invoke();
         }
         catch (OperationCanceledException)

@@ -170,6 +170,7 @@ namespace thuvu
             
             int maxIter = maxIterations ?? GetMaxIterations();
             int iteration = 0;
+            bool anyToolCalled = false;
             var failureTracker = new Dictionary<string, int>(); // Track consecutive failures per tool
             
             while (true)
@@ -348,6 +349,7 @@ namespace thuvu
                         ConsoleHelpers.PrintToolCall(name, argsJson, toolResult);
                         onToolResult?.Invoke(name, toolResult);
                         onToolComplete?.Invoke(name, argsJson, toolResult, toolElapsed);
+                        anyToolCalled = true;
                         
                         // Track failures for loop detection
                         // Check for actual error values, not "error":null which indicates success
@@ -398,6 +400,16 @@ namespace thuvu
                     LogAgent("Content empty but reasoning available — using reasoning as fallback content");
                     return msg.ReasoningContent;
                 }
+
+                // Guard against silent stops: always return something meaningful.
+                if (string.IsNullOrEmpty(msg.Content))
+                {
+                    var fallback = anyToolCalled
+                        ? "✅ Done."
+                        : "⚠️ The model returned an empty response.";
+                    LogAgent($"Empty content at loop exit — returning fallback: {fallback}");
+                    return fallback;
+                }
                 
                 return msg.Content;
             }
@@ -429,6 +441,7 @@ namespace thuvu
             
             int maxIter = maxIterations ?? GetMaxIterations();
             int iteration = 0;
+            bool anyToolCalled = false;
             var failureTracker = new Dictionary<string, int>();
             var executedToolCalls = new HashSet<string>(); // Track tool call signatures to detect loops
             int noProgressCount = 0;
@@ -660,6 +673,7 @@ namespace thuvu
                         var argsJson = call.Function.Arguments ?? "{}";
                         var callSignature = $"{name}:{argsJson}";
                         executedToolCalls.Add(callSignature);
+                        anyToolCalled = true;
                         
                         LogAgent($"Executing tool: {name}");
                         onToolCall?.Invoke(name, argsJson);
@@ -725,6 +739,17 @@ namespace thuvu
                 {
                     LogAgent("Content empty but reasoning available — using reasoning as fallback content");
                     return result.ReasoningContent;
+                }
+
+                // Guard against silent stops: always surface something to the user.
+                if (string.IsNullOrEmpty(result.Content))
+                {
+                    var fallback = anyToolCalled
+                        ? "✅ Done."
+                        : "⚠️ The model returned an empty response.";
+                    LogAgent($"Empty content at loop exit — emitting fallback: {fallback}");
+                    onToken?.Invoke(fallback);
+                    return fallback;
                 }
                 
                 return result.Content;
