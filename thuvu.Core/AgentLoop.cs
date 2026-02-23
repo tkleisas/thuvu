@@ -1017,8 +1017,9 @@ namespace thuvu
         /// <summary>
         /// Compress/truncate tool results to reduce token usage.
         /// Smart compression based on tool type and content.
+        /// Also used during session restore to re-apply the same size limits.
         /// </summary>
-        private static string CompressToolResult(string toolName, string result)
+        public static string CompressToolResult(string toolName, string result)
         {
             if (string.IsNullOrEmpty(result))
                 return result;

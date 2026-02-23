@@ -1,4 +1,5 @@
 using System.Text.Json;
+using thuvu;
 using thuvu.Desktop.ViewModels;
 using thuvu.Models;
 using thuvu.Services;
@@ -345,10 +346,12 @@ public class AgentRegistry
                                 }
                             }
                         });
-                        // Tool result message
+                        // Tool result message — apply same compression as the live agent loop
+                        // to prevent context overflow on session restore (DB stores full results).
+                        var compressedResult = AgentLoop.CompressToolResult(record.ToolName, record.ToolResultJson ?? "");
                         messages.Add(new ChatMessage(
                             role: "tool",
-                            content: record.ToolResultJson ?? "",
+                            content: compressedResult,
                             name: record.ToolName,
                             toolCallId: callId
                         ));
