@@ -2162,6 +2162,36 @@ namespace thuvu.Web.Services
                         events.Add(new AgentStreamEvent { Type = "command_result", Data = "✓ Conversation cleared." });
                         break;
 
+                    case "/compact":
+                    case "/summarize":
+                        events.Add(new AgentStreamEvent { Type = "status", Data = "🗜️ Summarizing conversation history…" });
+                        try
+                        {
+                            var httpForCompact = GetHttpClientForCurrentModel();
+                            var beforeCount = session.Messages.Count;
+                            var (compactOk, summaryContent) = await AgentLoop.SummarizeConversationAsync(
+                                httpForCompact, AgentConfig.Config.Model, session.Messages, ct,
+                                s => events.Add(new AgentStreamEvent { Type = "status", Data = s }));
+                            if (compactOk && summaryContent != null && SqliteService.Instance != null)
+                            {
+                                var ids = await SqliteService.Instance.GetNonSummarizedMessageIdsAsync(sessionId);
+                                if (ids.Count > 0)
+                                    await SqliteService.Instance.RecordSummarizationAsync(sessionId, summaryContent, ids, ct);
+                            }
+                            events.Add(new AgentStreamEvent
+                            {
+                                Type = "command_result",
+                                Data = compactOk
+                                    ? $"✅ Compacted: {beforeCount} → {session.Messages.Count} messages in context."
+                                    : "⚠️ Compaction failed or not enough history to summarize."
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            events.Add(new AgentStreamEvent { Type = "error", Data = $"Compaction failed: {ex.Message}" });
+                        }
+                        break;
+
                     case "/config":
                         var config = GetConfig();
                         events.Add(new AgentStreamEvent { Type = "command_result", Data = FormatConfig(config) });
@@ -2636,6 +2666,7 @@ The LLM can also use browser tools directly: `browser_navigate`, `browser_click`
 |---------|-------------|
 | `/help` | Show this help message |
 | `/clear` | Clear conversation history |
+| `/compact` | Summarize history to reduce context size |
 | `/system [text]` | View or set system prompt |
 | `/stream on\|off` | Toggle streaming mode |
 | `/config` | Show current configuration |

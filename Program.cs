@@ -850,7 +850,8 @@ namespace thuvu
                 return true;
             }
 
-            if (user.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase))
+            if (user.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase) ||
+                user.Equals("/compact", StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine("Summarizing conversation...");
                 var (success, _) = await AgentLoop.SummarizeConversationAsync(

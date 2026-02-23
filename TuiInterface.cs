@@ -677,7 +677,8 @@ namespace thuvu
                 return;
             }
 
-            if (command.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase))
+            if (command.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase) ||
+                command.Equals("/compact", StringComparison.OrdinalIgnoreCase))
             {
                 AppendActionText("Summarizing conversation...");
                 try

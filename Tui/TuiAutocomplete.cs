@@ -22,7 +22,7 @@ namespace thuvu.Tui
         
         public static readonly string[] AvailableCommands = new[]
         {
-            "/help", "/exit", "/clear", "/stream", "/models", "/config", "/set",
+            "/help", "/exit", "/clear", "/compact", "/stream", "/models", "/config", "/set",
             "/diff", "/test", "/run", "/commit", "/push", "/pull",
             "/rag", "/mcp", "/plan", "/orchestrate", "/health", "/status", "/tokens", "/summarize"
         };

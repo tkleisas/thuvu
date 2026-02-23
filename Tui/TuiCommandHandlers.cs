@@ -169,7 +169,8 @@ namespace thuvu.Tui
                 return true;
             }
 
-            if (command.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase))
+            if (command.StartsWith("/summarize", StringComparison.OrdinalIgnoreCase) ||
+                command.StartsWith("/compact", StringComparison.OrdinalIgnoreCase))
             {
                 _appendText("Summarizing conversation...", false);
                 try
@@ -209,6 +210,7 @@ COMMANDS
 /help           Show this help
 /exit           Quit
 /clear          Reset conversation
+/compact        Summarize history to reduce context size
 /status         Show session status
 /tokens         Estimate token usage
 
