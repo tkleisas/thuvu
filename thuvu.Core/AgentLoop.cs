@@ -163,7 +163,8 @@ namespace thuvu
             Action<string, string, string, TimeSpan>? onToolComplete = null,  // name, argsJson, result, elapsed
             ToolProgressCallback? onToolProgress = null,
             Action<string, string>? onToolCall = null,
-            int? maxIterations = null)
+            int? maxIterations = null,
+            Action<int, int>? onIteration = null)  // current, max
         {
             // Set current messages in context for tools that need it (e.g., vision analysis)
             AgentContext.SetCurrentMessages(messages);
@@ -181,6 +182,8 @@ namespace thuvu
                     LogAgent($"Loop limit reached ({maxIter} iterations). Stopping.");
                     return $"[Agent stopped: Maximum iteration limit ({maxIter}) reached. The task may be too complex or the model is stuck in a loop.]";
                 }
+                
+                onIteration?.Invoke(iteration, maxIter);
                 
                 // DeepSeek-reasoner: clear reasoning_content from older turns when a new user turn starts.
                 // During tool call loops (last msg is tool), keep current turn's reasoning_content intact.
@@ -434,7 +437,8 @@ namespace thuvu
             Action<string, string>? onToolCall = null,
             int? maxIterations = null,
             Action<string>? onReasoningToken = null,
-            Action<string>? onContentReplace = null)
+            Action<string>? onContentReplace = null,
+            Action<int, int>? onIteration = null)  // current, max
         {
             // Set current messages in context for tools that need it (e.g., vision analysis)
             AgentContext.SetCurrentMessages(messages);
@@ -458,6 +462,8 @@ namespace thuvu
                     onToken?.Invoke(msg);
                     return msg;
                 }
+                
+                onIteration?.Invoke(iteration, maxIter);
                 
                 // DeepSeek-reasoner: clear reasoning_content from older turns when a new user turn starts.
                 // During tool call loops (last msg is tool), keep current turn's reasoning_content intact.

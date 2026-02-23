@@ -367,6 +367,24 @@ public partial class MainWindowViewModel : ObservableObject
                 }
             });
         };
+        agent.OnIteration += (cur, max) =>
+        {
+            if (!string.IsNullOrEmpty(agent.SessionId))
+            {
+                var sid = agent.SessionId;
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    _agentsPanel?.UpdateStatus(sid, $"Loop {cur}/{max}"));
+            }
+        };
+        agent.OnComplete += () =>
+        {
+            if (!string.IsNullOrEmpty(agent.SessionId))
+            {
+                var sid = agent.SessionId;
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    _agentsPanel?.UpdateStatus(sid, "Idle"));
+            }
+        };
     }
 
     private static int ResolveMaxContext(IAgentService agent, thuvu.Models.Usage usage)

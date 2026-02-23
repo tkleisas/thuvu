@@ -27,6 +27,8 @@ public class DesktopAgentService : IAgentService
     public event Action? OnConfigReloaded;
     /// <summary>Fired when inline tool parsing strips text — replaces current assistant content</summary>
     public event Action<string>? OnContentReplace;
+    /// <summary>Fired at the start of each agent loop iteration. Args: current, max.</summary>
+    public event Action<int, int>? OnIteration;
 
     public bool IsProcessing { get; private set; }
     public IReadOnlyList<ChatMessage> Messages => _messages.AsReadOnly();
@@ -272,7 +274,8 @@ public class DesktopAgentService : IAgentService
                     _lastUsage = usage;
                 },
                 onReasoningToken: token => OnReasoningToken?.Invoke(token),
-                onContentReplace: content => OnContentReplace?.Invoke(content)
+                onContentReplace: content => OnContentReplace?.Invoke(content),
+                onIteration: (cur, max) => OnIteration?.Invoke(cur, max)
             );
         }
         else
@@ -290,7 +293,8 @@ public class DesktopAgentService : IAgentService
                     RecordMessageAsync(sid, "tool_call", toolName: name, toolArgs: args,
                         toolResult: res, durationMs: (long)elapsed.TotalMilliseconds);
                 },
-                onToolCall: (name, args) => OnToolCall?.Invoke(name, args)
+                onToolCall: (name, args) => OnToolCall?.Invoke(name, args),
+                onIteration: (cur, max) => OnIteration?.Invoke(cur, max)
             );
         }
         return response;

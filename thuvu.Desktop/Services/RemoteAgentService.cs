@@ -33,6 +33,7 @@ public class RemoteAgentService : IAgentService, IDisposable
     public event Action<string>? OnError;
     public event Action<Usage>? OnUsage;
     public event Action? OnConfigReloaded;
+    public event Action<int, int>? OnIteration; // not fired for remote agents
 
     public bool IsProcessing { get; private set; }
     public IReadOnlyList<ChatMessage> Messages => _messages.AsReadOnly();

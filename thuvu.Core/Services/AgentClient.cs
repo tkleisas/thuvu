@@ -39,6 +39,7 @@ public class AgentClient : IAgentService, IDisposable
     public event Action<string>? OnError;
     public event Action<Usage>? OnUsage;
     public event Action? OnConfigReloaded;
+    public event Action<int, int>? OnIteration; // not fired for remote agents
 
     // Permission prompt events
     public event Func<string, string, string, string, Task<bool>>? OnPermissionRequest;

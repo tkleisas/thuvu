@@ -27,6 +27,8 @@ public interface IAgentService
     event Action<string>? OnError;
     event Action<Usage>? OnUsage;
     event Action? OnConfigReloaded;
+    /// <summary>Fired at the start of each agent loop iteration. Args: current iteration, max iterations.</summary>
+    event Action<int, int>? OnIteration;
 
     // --- State ---
     bool IsProcessing { get; }
