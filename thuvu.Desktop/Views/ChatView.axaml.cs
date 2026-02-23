@@ -53,6 +53,7 @@ public partial class ChatView : UserControl
     [
         new("/help", "❓", "Show available commands"),
         new("/clear", "🗑️", "Clear conversation"),
+        new("/compact", "🗜️", "Summarize history to reduce context size"),
         new("/system", "⚙️", "Set system prompt"),
         new("/stream", "📡", "Toggle streaming on/off"),
         new("/config", "🔧", "View/manage configuration"),
