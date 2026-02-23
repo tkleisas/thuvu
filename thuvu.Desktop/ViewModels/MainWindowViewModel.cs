@@ -198,7 +198,9 @@ public partial class MainWindowViewModel : ObservableObject
             if (first != null) _factory.SetActiveDockable(first);
         }
 
-        ModelName = firstAgent?.GetModelName() ?? "No model configured";
+        ModelName = activeChat?.SelectedModel?.DisplayLabel
+                    ?? firstAgent?.GetModelName()
+                    ?? "No model configured";
         StatusText = $"{project.Name} — {firstAgent?.GetHostUrl() ?? "Ready"}";
         WindowTitle = $"T.H.U.V.U. — {project.Name}";
 
@@ -551,7 +553,8 @@ public partial class MainWindowViewModel : ObservableObject
         var activeAgent = GetActiveAgent();
         if (activeAgent != null)
         {
-            ModelName = activeAgent.GetModelName();
+            var activeChatVm = FindDocumentDock(DockLayout!)?.ActiveDockable as ChatViewModel;
+            ModelName = activeChatVm?.SelectedModel?.DisplayLabel ?? activeAgent.GetModelName();
             StatusText = $"{_project.Name} — {activeAgent.GetHostUrl()}";
         }
     }
