@@ -110,7 +110,7 @@ public partial class MainWindowViewModel : ObservableObject
                 foreach (var session in sessions)
                 {
                     if (session.MessageCount == 0) continue;
-                    var messages = SqliteService.Instance.GetSessionMessagesAsync(session.SessionId)
+                    var messages = SqliteService.Instance.GetActiveSessionMessagesAsync(session.SessionId)
                         .GetAwaiter().GetResult();
                     if (messages.Count == 0) continue;
 
@@ -153,7 +153,7 @@ public partial class MainWindowViewModel : ObservableObject
                             var allSessions = await SqliteService.Instance.GetSessionsByAgentIdAsync("desktop");
                             session = allSessions.FirstOrDefault(s => s.SessionId == agentId);
                             if (session != null)
-                                messages = await SqliteService.Instance.GetSessionMessagesAsync(session.SessionId);
+                                messages = await SqliteService.Instance.GetActiveSessionMessagesAsync(session.SessionId);
                         }
                     }
                     catch { }

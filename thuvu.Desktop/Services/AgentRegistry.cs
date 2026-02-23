@@ -360,7 +360,52 @@ public class AgentRegistry
             }
         }
 
-        return messages;
+        return TrimToContextBudget(messages);
+    }
+
+    /// <summary>
+    /// Trims the oldest exchanges from a reconstructed message list so the total
+    /// character count stays within a safe budget.  We always drop whole exchanges
+    /// (from one user message to the next) so the remaining list stays valid for
+    /// the chat protocol: system → user → ... → user → (current turn).
+    /// Budget ~300 K chars ≈ 75 K tokens — safe headroom below a 131 K-token model.
+    /// </summary>
+    private static List<ChatMessage> TrimToContextBudget(List<ChatMessage> messages)
+    {
+        const int MaxRestoreChars = 300_000;
+
+        static int MsgChars(ChatMessage m) =>
+            (m.Content?.Length ?? 0) +
+            (m.ToolCalls?.Sum(tc => (tc.Function?.Arguments?.Length ?? 0) + (tc.Function?.Name?.Length ?? 0)) ?? 0);
+
+        int totalChars = messages.Sum(MsgChars);
+        if (totalChars <= MaxRestoreChars)
+            return messages;
+
+        // Drop whole exchanges from the front.
+        // An exchange boundary is a user message (index > 0 relative to the list).
+        int startIdx = 1; // always keep messages[0] = system
+
+        while (totalChars > MaxRestoreChars)
+        {
+            // Find the next user message after startIdx so we can drop the exchange
+            // that starts at startIdx.
+            int nextUser = -1;
+            for (int i = startIdx + 1; i < messages.Count; i++)
+            {
+                if (messages[i].Role == "user") { nextUser = i; break; }
+            }
+            if (nextUser < 0) break; // only one exchange left – can't trim further
+
+            for (int i = startIdx; i < nextUser; i++)
+                totalChars -= MsgChars(messages[i]);
+
+            startIdx = nextUser;
+        }
+
+        var result = new List<ChatMessage>(messages.Count - startIdx + 1) { messages[0] };
+        result.AddRange(messages.Skip(startIdx));
+        return result;
     }
 
     /// <summary>Rebuild UI ChatMessageViewModels from DB records</summary>
