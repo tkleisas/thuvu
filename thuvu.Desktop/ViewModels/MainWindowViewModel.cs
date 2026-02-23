@@ -77,6 +77,21 @@ public partial class MainWindowViewModel : ObservableObject
             var placeholder = docDock.VisibleDockables?.OfType<ChatViewModel>().FirstOrDefault();
             if (placeholder != null)
                 _factory.RemoveDockable(placeholder, false);
+
+            // Update status-bar model name whenever the active tab changes
+            if (docDock is System.ComponentModel.INotifyPropertyChanged notifiable)
+            {
+                notifiable.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName == nameof(IDocumentDock.ActiveDockable) &&
+                        docDock.ActiveDockable is ChatViewModel activeChat)
+                    {
+                        ModelName = activeChat.SelectedModel?.DisplayLabel
+                                    ?? activeChat.AgentService?.GetModelName()
+                                    ?? ModelName;
+                    }
+                };
+            }
         }
 
         // Try to restore saved sessions from SQLite
@@ -384,6 +399,14 @@ public partial class MainWindowViewModel : ObservableObject
 
                 _agentsPanel?.UpdateStatus(agentId, status);
             }
+        };
+
+        // Keep status-bar model name in sync when this chat's model dropdown changes
+        chat.ModelSelected += displayLabel =>
+        {
+            var docDock = FindDocumentDock(DockLayout);
+            if (docDock?.ActiveDockable == chat)
+                ModelName = displayLabel;
         };
     }
 

@@ -209,6 +209,9 @@ public partial class ChatViewModel : DocumentViewModel
                         ?? AvailableModels.FirstOrDefault();
     }
 
+    /// <summary>Fired when the user picks a different model; carries the display label.</summary>
+    public event Action<string>? ModelSelected;
+
     partial void OnSelectedModelChanged(ModelChoice? value)
     {
         if (value != null && _agentService != null)
@@ -216,6 +219,7 @@ public partial class ChatViewModel : DocumentViewModel
             _agentService.SetModel(value.ModelId);
             // Auto-select prompt for this model
             AutoSelectPromptForModel(value.ModelId);
+            ModelSelected?.Invoke(value.DisplayLabel);
         }
     }
 
