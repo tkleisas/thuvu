@@ -254,7 +254,11 @@ namespace thuvu
                     if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
                     {
                         LogAgent($"Context at {tracker.UsagePercent:P0}, triggering auto-summarize");
-                        await HandleContextSizeAsync(http, model, messages, ct);
+                        bool summarized = await HandleContextSizeAsync(http, model, messages, ct);
+                        // After summarization the messages list is rebuilt; the response we just received
+                        // would create two consecutive assistant messages if we continued processing it.
+                        // Start a fresh iteration from the summarized context instead.
+                        if (summarized) continue;
                     }
                 }
                 var msg = body.Choices[0].Message;
@@ -518,7 +522,11 @@ namespace thuvu
                 if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
                 {
                     LogAgent($"Context at {tracker.UsagePercent:P0}, triggering auto-summarize");
-                    await HandleContextSizeAsync(http, model, messages, ct, s => onToken?.Invoke($"\n[{s}]\n"));
+                    bool summarized = await HandleContextSizeAsync(http, model, messages, ct, s => onToken?.Invoke($"\n[{s}]\n"));
+                    // After summarization the messages list is rebuilt; the response we just received
+                    // would create two consecutive assistant messages if we continued processing it.
+                    // Start a fresh iteration from the summarized context instead.
+                    if (summarized) continue;
                 }
 
                 // Check if the LLM signaled task completion (various formats)

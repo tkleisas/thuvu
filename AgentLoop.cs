@@ -242,7 +242,8 @@ namespace thuvu
                     if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
                     {
                         LogAgent($"Context at {tracker.UsagePercent:P0}, triggering auto-summarize");
-                        await HandleContextSizeAsync(http, model, messages, ct);
+                        bool summarized = await HandleContextSizeAsync(http, model, messages, ct);
+                        if (summarized) continue;
                     }
                 }
                 var msg = body.Choices[0].Message;
@@ -495,7 +496,8 @@ namespace thuvu
                 if (tracker.AutoSummarizeEnabled && tracker.UsagePercent >= AutoSummarizeThreshold)
                 {
                     LogAgent($"Context at {tracker.UsagePercent:P0}, triggering auto-summarize");
-                    await HandleContextSizeAsync(http, model, messages, ct, s => onToken?.Invoke($"\n[{s}]\n"));
+                    bool summarized = await HandleContextSizeAsync(http, model, messages, ct, s => onToken?.Invoke($"\n[{s}]\n"));
+                    if (summarized) continue;
                 }
 
                 // Check if the LLM signaled task completion (various formats)
