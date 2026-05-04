@@ -351,13 +351,13 @@ namespace thuvu.Tools.UIAutomation
                 
                 if (keys != null && keys.Length > 0)
                 {
-                    // Send keyboard keys - use scan codes for games
+#if WINDOWS
                     if (useScanCodes && provider is Windows.WindowsUIProvider winProvider)
                     {
-                        // Use key sequence method for better game compatibility
                         result = await winProvider.SendKeySequenceAsync(keys, delayMs, holdTimeMs, true);
                     }
                     else
+#endif
                     {
                         result = await provider.SendKeysAsync(keys, options);
                     }
@@ -505,8 +505,10 @@ namespace thuvu.Tools.UIAutomation
                 var selector = GetStringProperty(root, "selector", null);
                 var windowTitle = GetStringProperty(root, "window_title", null);
                 
-                var provider = GetProvider() as Windows.WindowsUIProvider;
-                if (provider == null)
+                var provider = GetProvider();
+#if WINDOWS
+                var winUiProvider = provider as Windows.WindowsUIProvider;
+                if (winUiProvider == null)
                 {
                     return JsonSerializer.Serialize(new { 
                         success = false, 
@@ -514,10 +516,9 @@ namespace thuvu.Tools.UIAutomation
                     });
                 }
                 
-                // If coordinates provided, get element at point
                 if (x >= 0 && y >= 0)
                 {
-                    var element = await provider.GetElementAtAsync(x, y);
+                    var element = await winUiProvider.GetElementAtAsync(x, y);
                     if (element != null)
                     {
                         return JsonSerializer.Serialize(new
@@ -538,10 +539,9 @@ namespace thuvu.Tools.UIAutomation
                     }
                 }
                 
-                // If selector provided, find elements
                 if (!string.IsNullOrEmpty(selector))
                 {
-                    var elements = await provider.FindElementsAsync(selector, windowTitle);
+                    var elements = await winUiProvider.FindElementsAsync(selector, windowTitle);
                     if (elements.Count > 0)
                     {
                         return JsonSerializer.Serialize(new
@@ -562,6 +562,12 @@ namespace thuvu.Tools.UIAutomation
                         });
                     }
                 }
+#else
+                return JsonSerializer.Serialize(new { 
+                    success = false, 
+                    error = "UI element inspection is only supported on Windows" 
+                });
+#endif
                 
                 return JsonSerializer.Serialize(new { 
                     success = false, 
@@ -592,8 +598,10 @@ namespace thuvu.Tools.UIAutomation
                 var elementSelector = GetStringProperty(root, "element_selector", null);
                 var timeoutMs = GetIntProperty(root, "timeout_ms", 10000);
                 
-                var provider = GetProvider() as Windows.WindowsUIProvider;
-                if (provider == null)
+                var provider = GetProvider();
+#if WINDOWS
+                var winUiProvider = provider as Windows.WindowsUIProvider;
+                if (winUiProvider == null)
                 {
                     return JsonSerializer.Serialize(new { 
                         success = false, 
@@ -603,10 +611,9 @@ namespace thuvu.Tools.UIAutomation
                 
                 var startTime = DateTime.Now;
                 
-                // Wait for window
                 if (!string.IsNullOrEmpty(windowTitle))
                 {
-                    var found = await provider.WaitForWindowAsync(windowTitle, timeoutMs);
+                    var found = await winUiProvider.WaitForWindowAsync(windowTitle, timeoutMs);
                     var elapsed = (DateTime.Now - startTime).TotalMilliseconds;
                     
                     if (found)
@@ -630,10 +637,9 @@ namespace thuvu.Tools.UIAutomation
                     }
                 }
                 
-                // Wait for element
                 if (!string.IsNullOrEmpty(elementSelector))
                 {
-                    var element = await provider.WaitForElementAsync(elementSelector, null, timeoutMs);
+                    var element = await winUiProvider.WaitForElementAsync(elementSelector, null, timeoutMs);
                     var elapsed = (DateTime.Now - startTime).TotalMilliseconds;
                     
                     if (element != null)
@@ -662,6 +668,12 @@ namespace thuvu.Tools.UIAutomation
                     success = false, 
                     error = "Either window_title or element_selector must be provided" 
                 });
+#else
+                return JsonSerializer.Serialize(new { 
+                    success = false, 
+                    error = "UI wait is only supported on Windows" 
+                });
+#endif
             }
             catch (Exception ex)
             {

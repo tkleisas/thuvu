@@ -13,19 +13,21 @@ namespace thuvu.Tools.UIAutomation
         /// </summary>
         public static IUIAutomationProvider Create()
         {
+#if WINDOWS
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 return new Windows.WindowsUIProvider();
             }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            else
+#endif
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                throw new PlatformNotSupportedException(
-                    "Linux UI automation is not yet implemented. Planned for Phase 3.");
+                return new Linux.LinuxUIProvider();
             }
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
                 throw new PlatformNotSupportedException(
-                    "macOS UI automation is not yet implemented. Planned for Phase 3.");
+                    "macOS UI automation is not yet implemented.");
             }
             else
             {
@@ -39,7 +41,8 @@ namespace thuvu.Tools.UIAutomation
         /// </summary>
         public static bool IsSupported()
         {
-            return RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+            return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ||
+                   RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
         }
         
         /// <summary>

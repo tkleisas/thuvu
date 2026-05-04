@@ -2,7 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
-using Terminal.Gui;
+using Terminal.Gui.Views;
+using Terminal.Gui.App;
 using thuvu.Models;
 
 namespace thuvu.Tui

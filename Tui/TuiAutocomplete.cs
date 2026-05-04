@@ -3,13 +3,15 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using Terminal.Gui;
+using Terminal.Gui.App;
+using Terminal.Gui.Views;
+using Terminal.Gui.ViewBase;
+using Terminal.Gui.App;
+using Terminal.Gui.Drawing;
+using TgAttr = Terminal.Gui.Drawing.Attribute;
 
 namespace thuvu.Tui
 {
-    /// <summary>
-    /// Handles command and file autocomplete for the TUI
-    /// </summary>
     public class TuiAutocomplete
     {
         private readonly FrameView _autocompleteFrame;
@@ -41,13 +43,13 @@ namespace thuvu.Tui
                 Width = 60,
                 Height = 12,
                 Visible = false,
-                Title = "Files (Tab=select, Esc=close)",
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new Terminal.Gui.Attribute(Color.Black, Color.Gray),
-                    Focus = new Terminal.Gui.Attribute(Color.Black, Color.Gray)
-                }
+                Title = "Files (Tab=select, Esc=close)"
             };
+            _autocompleteFrame.SetScheme(new Scheme
+            {
+                Normal = new TgAttr(Color.Black, Color.Gray),
+                Focus = new TgAttr(Color.Black, Color.Gray)
+            });
             
             _autocompleteList = new ListView
             {
@@ -55,14 +57,14 @@ namespace thuvu.Tui
                 Y = 0,
                 Width = Dim.Fill(),
                 Height = Dim.Fill(),
-                CanFocus = true,
-                Source = new ListWrapper<string>(_autocompleteItems),
-                ColorScheme = new ColorScheme
-                {
-                    Normal = new Terminal.Gui.Attribute(Color.Black, Color.Gray),
-                    Focus = new Terminal.Gui.Attribute(Color.White, Color.Blue)
-                }
+                CanFocus = true
             };
+            _autocompleteList.SetSource<string>(_autocompleteItems);
+            _autocompleteList.SetScheme(new Scheme
+            {
+                Normal = new TgAttr(Color.Black, Color.Gray),
+                Focus = new TgAttr(Color.White, Color.Blue)
+            });
             _autocompleteFrame.Add(_autocompleteList);
         }
         
@@ -208,8 +210,8 @@ namespace thuvu.Tui
         public string? GetSelectedItem()
         {
             var selected = _autocompleteList.SelectedItem;
-            if (selected >= 0 && selected < _autocompleteItems.Count)
-                return _autocompleteItems[selected];
+            if (selected.HasValue && selected.Value >= 0 && selected.Value < _autocompleteItems.Count)
+                return _autocompleteItems[selected.Value];
             return null;
         }
         

@@ -1,74 +1,70 @@
-using System;
-using Terminal.Gui;
-using TgAttribute = Terminal.Gui.Attribute;
+using Terminal.Gui.Drawing;
+using TgAttr = Terminal.Gui.Drawing.Attribute;
 
 namespace thuvu.Tui
 {
-    /// <summary>
-    /// UI color schemes and styling for the TUI
-    /// </summary>
     public static class TuiStyles
     {
-        public static ColorScheme StatusBar => new()
+        public static Scheme StatusBar => new()
         {
-            Normal = new TgAttribute(Color.Green, Color.Black)
+            Normal = new TgAttr(Color.Green, Color.Black)
         };
         
-        public static ColorScheme ActionView => new()
+        public static Scheme ActionView => new()
         {
-            Normal = new TgAttribute(Color.White, Color.Black),
-            Focus = new TgAttribute(Color.BrightYellow, Color.Black)
+            Normal = new TgAttr(Color.White, Color.Black),
+            Focus = new TgAttr(Color.BrightYellow, Color.Black)
         };
         
-        public static ColorScheme CommandLabel => new()
+        public static Scheme CommandLabel => new()
         {
-            Normal = new TgAttribute(Color.DarkGray, Color.Black)
+            Normal = new TgAttr(Color.DarkGray, Color.Black)
         };
         
-        public static ColorScheme WorkLabel => new()
+        public static Scheme WorkLabel => new()
         {
-            Normal = new TgAttribute(Color.Cyan, Color.Black)
+            Normal = new TgAttr(Color.Cyan, Color.Black)
         };
         
-        public static ColorScheme CommandField => new()
+        public static Scheme CommandField => new()
         {
-            Normal = new TgAttribute(Color.BrightYellow, Color.Black),
-            Focus = new TgAttribute(Color.BrightYellow, Color.DarkGray)
+            Normal = new TgAttr(Color.BrightYellow, Color.Black),
+            Focus = new TgAttr(Color.BrightYellow, Color.DarkGray)
         };
         
-        public static ColorScheme AutocompleteFrame => new()
+        public static Scheme AutocompleteFrame => new()
         {
-            Normal = new TgAttribute(Color.Black, Color.Gray),
-            Focus = new TgAttribute(Color.Black, Color.Gray)
+            Normal = new TgAttr(Color.Black, Color.Gray),
+            Focus = new TgAttr(Color.Black, Color.Gray)
         };
         
-        public static ColorScheme AutocompleteList => new()
+        public static Scheme AutocompleteList => new()
         {
-            Normal = new TgAttribute(Color.Black, Color.Gray),
-            Focus = new TgAttribute(Color.White, Color.Blue)
+            Normal = new TgAttr(Color.Black, Color.Gray),
+            Focus = new TgAttr(Color.White, Color.Blue)
         };
         
-        public static ColorScheme OrchestratorFrame => new()
+        public static Scheme OrchestratorFrame => new()
         {
-            Normal = new TgAttribute(Color.Cyan, Color.Black),
-            Focus = new TgAttribute(Color.Cyan, Color.Black)
+            Normal = new TgAttr(Color.Cyan, Color.Black),
+            Focus = new TgAttr(Color.Cyan, Color.Black)
         };
         
-        public static ColorScheme AgentFrame => new()
+        public static Scheme AgentFrame => new()
         {
-            Normal = new TgAttribute(Color.Green, Color.Black),
-            Focus = new TgAttribute(Color.Green, Color.Black)
+            Normal = new TgAttr(Color.Green, Color.Black),
+            Focus = new TgAttr(Color.Green, Color.Black)
         };
         
-        public static ColorScheme AgentView => new()
+        public static Scheme AgentView => new()
         {
-            Normal = new TgAttribute(Color.White, Color.Black),
-            Focus = new TgAttribute(Color.BrightYellow, Color.Black)
+            Normal = new TgAttr(Color.White, Color.Black),
+            Focus = new TgAttr(Color.BrightYellow, Color.Black)
         };
         
-        public static ColorScheme DimText => new()
+        public static Scheme DimText => new()
         {
-            Normal = new TgAttribute(Color.DarkGray, Color.Black)
+            Normal = new TgAttr(Color.DarkGray, Color.Black)
         };
         
         public const string Banner = 

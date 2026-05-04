@@ -1,13 +1,16 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PublishAot>false</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>.</DockerfileContext>
+  </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="thuvu.Core\**" />
@@ -16,6 +19,9 @@
     <Compile Remove="thuvu.Desktop\**" />
     <Content Remove="thuvu.Desktop\**" />
     <None Remove="thuvu.Desktop\**" />
+    <Compile Remove="thuvu.Tests\**" />
+    <Content Remove="thuvu.Tests\**" />
+    <None Remove="thuvu.Tests\**" />
     <Compile Remove="thuvu.Interop\**" />
     <Content Remove="thuvu.Interop\**" />
     <None Remove="thuvu.Interop\**" />
@@ -24,12 +30,6 @@
     <ProjectReference Include="thuvu.Interop\thuvu.Interop.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
-    <PackageReference Include="StreamJsonRpc" Version="2.19.27" />
-    <Reference Include="Accessibility">
-      <HintPath>$(SystemRoot)\Microsoft.NET\Framework64\v4.0.30319\Accessibility.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.12.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.11" />
@@ -39,8 +39,19 @@
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
     <PackageReference Include="Npgsql" Version="8.0.5" />
     <PackageReference Include="Pgvector" Version="0.3.0" />
+    <PackageReference Include="StreamJsonRpc" Version="2.19.27" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.10" />
     <PackageReference Include="Terminal.Gui" Version="2.*" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+    <Reference Include="Accessibility">
+      <HintPath>$(SystemRoot)\Microsoft.NET\Framework64\v4.0.30319\Accessibility.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <Compile Remove="Tools\UIAutomation\Windows\**" />
   </ItemGroup>
   <ItemGroup>
     <Content Update="appsettings.json">

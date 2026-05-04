@@ -5,12 +5,16 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using Terminal.Gui;
+using Terminal.Gui.Drivers;
+using Terminal.Gui.Views;
+using Terminal.Gui.ViewBase;
+using Terminal.Gui.Drawing;
+using Terminal.Gui.Input;
+using Terminal.Gui.App;
 using thuvu.Models;
 using thuvu.Tui;
 using CodingAgent;
 using thuvu.Tools;
-using TgAttribute = Terminal.Gui.Attribute;
 
 namespace thuvu
 {
@@ -38,11 +42,11 @@ namespace thuvu
         private TextView? _commandField;
         private Button? _sendButton;
         private Button? _cancelButton;
-        
+
         // Refactored components
         private TuiAutocomplete? _autocomplete;
         private TuiOrchestrationView? _orchestrationView;
-        private Toplevel? _top;
+        private View? _top;
         
         // Orchestration state - uses refactored TuiOrchestrationView
         private bool _orchestrationMode = false;
@@ -87,11 +91,12 @@ namespace thuvu
             
             try
             {
-                _top = new Toplevel();
+                var window = new Window();
+                _top = window;
                 _autocomplete = new TuiAutocomplete();
                 _orchestrationView = new TuiOrchestrationView(_top);
-                SetupUi(_top);
-                Application.Run(_top);
+                SetupUi(window);
+                Application.Run(window);
             }
             finally
             {
@@ -112,25 +117,22 @@ namespace thuvu
                 Application.Invoke(() =>
                 {
                     AppendActionText("[Ctrl+C: Cancelling...]", true);
-                    Application.Wakeup();
                 });
             }
         }
         
-        private void SetupUi(Toplevel top)
+        private void SetupUi(Window top)
         {
-            // Status area (top)
             _statusLabel = new Label
             {
                 X = 0,
                 Y = 0,
                 Height = 1,
                 Width = Dim.Fill(),
-                Text = GetStatusText(),
-                ColorScheme = TuiStyles.StatusBar
+                Text = GetStatusText()
             };
+            _statusLabel.SetScheme(TuiStyles.StatusBar);
             
-            // Action area (middle) - scrollable text view  
             _actionView = new TextView
             {
                 X = 0,
@@ -139,18 +141,17 @@ namespace thuvu
                 Height = Dim.Fill() - 7,
                 ReadOnly = true,
                 WordWrap = true,
-                ColorScheme = TuiStyles.ActionView,
                 Text = TuiStyles.Banner + TuiStyles.WelcomeMessage
             };
+            _actionView.SetScheme(TuiStyles.ActionView);
 
-            // Command area labels
             _commandLabel = new Label
             {
                 X = 0,
                 Y = Pos.Bottom(_actionView),
-                Text = "Command (Ctrl+Enter): ",
-                ColorScheme = TuiStyles.CommandLabel
+                Text = "Command (Ctrl+Enter): "
             };
+            _commandLabel.SetScheme(TuiStyles.CommandLabel);
             
             _workLabel = new Label
             {
@@ -158,20 +159,19 @@ namespace thuvu
                 Y = Pos.Bottom(_actionView),
                 Width = 30,
                 Height = 1,
-                Text = " ",
-                ColorScheme = TuiStyles.WorkLabel
+                Text = " "
             };
+            _workLabel.SetScheme(TuiStyles.WorkLabel);
             
-            // Multi-line command input
             _commandField = new TextView
             {
                 X = 0,
                 Y = Pos.Bottom(_actionView) + 1,
                 Width = Dim.Fill() - 12,
                 Height = 4,
-                WordWrap = true,
-                ColorScheme = TuiStyles.CommandField
+                WordWrap = true
             };
+            _commandField.SetScheme(TuiStyles.CommandField);
 
             _sendButton = new Button
             {
@@ -189,10 +189,17 @@ namespace thuvu
                 Visible = false
             };
             
-            // Setup autocomplete selection handler
-            _autocomplete!.List.OpenSelectedItem += OnAutocompleteSelected;
+            // Setup autocomplete selection handler via ValueChanged
+            _autocomplete!.List.ValueChanged += (s, e) =>
+            {
+                if (_autocomplete.IsVisible && _autocomplete.List.SelectedItem.HasValue)
+                {
+                    var selected = _autocomplete.GetSelectedItem();
+                    if (selected != null)
+                        OnAutocompleteSelected(null, new ListViewItemEventArgs(0, selected));
+                }
+            };
 
-            // Event handlers
             _sendButton.Accepting += (s, e) => OnSendClicked();
             _cancelButton.Accepting += (s, e) => OnCancelClicked();
             _commandField.KeyDown += OnCommandKeyDown;
@@ -205,7 +212,7 @@ namespace thuvu
                 // Skip navigation keys when autocomplete is visible
                 if (_autocomplete!.IsVisible)
                 {
-                    if (e == Key.CursorDown || e == Key.CursorUp || e == Key.Tab || e == Key.Esc || e == Key.Enter)
+                    if (e.KeyCode == KeyCode.CursorDown || e.KeyCode == KeyCode.CursorUp || e.KeyCode == KeyCode.Tab || e.KeyCode == KeyCode.Esc || e.KeyCode == KeyCode.Enter)
                         return;
                 }
                 
@@ -219,7 +226,7 @@ namespace thuvu
             // Global ESC and Ctrl+C handler
             top.KeyDown += (s, e) =>
             {
-                if (e == Key.Esc)
+                if (e.KeyCode == KeyCode.Esc)
                 {
                     if (_autocomplete!.IsVisible)
                     {
@@ -232,7 +239,7 @@ namespace thuvu
                         e.Handled = true;
                     }
                 }
-                else if (e == Key.C.WithCtrl)
+                else if (e.KeyCode == KeyCode.C && e.IsCtrl)
                 {
                     if (_isProcessing)
                     {
@@ -331,7 +338,6 @@ namespace thuvu
                 catch { }
                 return false;
             });
-            Application.Wakeup();
         }
 
         private void AppendToolText(string toolName, string result)
@@ -376,7 +382,6 @@ namespace thuvu
                 catch { /* ignore UI errors */ }
                 return false; // Don't repeat
             });
-            Application.Wakeup();
         }
         
         private static string FormatElapsed(TimeSpan elapsed)
@@ -427,7 +432,7 @@ namespace thuvu
         private void OnCommandKeyDown(object? sender, Key e)
         {
             // Ctrl+Enter to send
-            if (e == Key.Enter.WithCtrl)
+            if (e.KeyCode == KeyCode.Enter && e.IsCtrl)
             {
                 e.Handled = true;
                 ProcessCommandAsync();
@@ -435,7 +440,7 @@ namespace thuvu
             }
             
             // Tab for autocomplete
-            if (e == Key.Tab && _autocomplete!.IsVisible)
+            if (e.KeyCode == KeyCode.Tab && _autocomplete!.IsVisible)
             {
                 e.Handled = true;
                 var selected = _autocomplete.GetSelectedItem();
@@ -449,13 +454,13 @@ namespace thuvu
             // Arrow keys for autocomplete navigation
             if (_autocomplete!.IsVisible)
             {
-                if (e == Key.CursorDown)
+                if (e.KeyCode == KeyCode.CursorDown)
                 {
                     e.Handled = true;
                     _autocomplete.MoveDown();
                     return;
                 }
-                if (e == Key.CursorUp)
+                if (e.KeyCode == KeyCode.CursorUp)
                 {
                     e.Handled = true;
                     _autocomplete.MoveUp();
@@ -805,7 +810,6 @@ namespace thuvu
                                     catch { }
                                     return false;
                                 });
-                                Application.Wakeup();
                             },
                             onToolComplete: (name, args, result, elapsed) =>
                             {
@@ -858,7 +862,6 @@ namespace thuvu
                         catch { }
                         return false;
                     });
-                    Application.Wakeup();
                     AppendActionText("Request cancelled.", true);
                 }
                 catch (Exception ex)
@@ -886,7 +889,6 @@ namespace thuvu
                         catch { }
                         return false;
                     });
-                    Application.Wakeup();
                     
                     _currentRequestCts?.Dispose();
                     _currentRequestCts = null;
@@ -974,7 +976,6 @@ namespace thuvu
                     catch { }
                     return false;
                 });
-                Application.Wakeup();
             }
 
             void OnError(string error)
@@ -1041,7 +1042,6 @@ namespace thuvu
                     catch { }
                     return false;
                 });
-                Application.Wakeup();
 
                 _currentRequestCts?.Dispose();
                 _currentRequestCts = null;

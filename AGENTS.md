@@ -20,21 +20,26 @@ T.H.U.V.U. is a **local-first AI coding agent** that performs software engineeri
 
 | Component | Status | Description |
 |-----------|--------|-------------|
+| **Cross-Platform** | ✅ Done | Targets `net10.0`; works on Windows and Linux |
 | **Core Agent Loop** | ✅ Done | `AgentLoop.cs` - Streaming/non-streaming LLM interactions with tool calling |
 | **LLM Integration** | ✅ Done | OpenAI-compatible REST API (LM Studio), multi-model support |
-| **Tool System** | ✅ Done | 20+ tools for file ops, dotnet, git, NuGet |
+| **Tool System** | ✅ Done | 40+ tools for file ops, dotnet, git, NuGet, browser, UI automation, process management |
 | **Permission System** | ✅ Done | `PermissionManager.cs` - Granular read/write permissions |
 | **RAG Support** | ✅ Done | PostgreSQL/pgvector semantic search |
 | **MCP Code Execution** | ✅ Done | TypeScript sandbox via Deno (Phases 1-7) |
-| **TUI Interface** | ✅ Done | Terminal.GUI-based interface with progress feedback |
+| **TUI Interface** | ✅ Done | Terminal.GUI v2-based interface with progress feedback |
 | **Configuration** | ✅ Done | `appsettings.json` centralized config |
 | **Logging** | ✅ Done | Structured logging with session tracking |
 | **Skills System** | ✅ Done | Save/load reusable TypeScript workflows |
 | **Task Decomposition** | ✅ Done | `TaskDecomposition.cs` - Break complex tasks into subtasks |
 | **Multi-Agent Orchestration** | ✅ Done | `TaskOrchestrator.cs` - Coordinate multiple agents |
 | **Agent Communication API** | ✅ Done | REST API for agent-to-agent communication via HTTP |
-| **UI Automation** | ✅ Done | Screen capture, window control, element inspection |
+| **UI Automation** | ✅ Done | Windows (FlaUI/Win32) + Linux (xdotool/ImageMagick) |
 | **SQLite Code Indexing** | ✅ Done | Multi-language code analysis with symbol storage |
+| **LSP Integration** | ✅ Done | OmniSharp and language server protocol support |
+| **Browser Automation** | ✅ Done | Playwright-based web browsing and testing |
+| **Vision Analysis** | ✅ Done | Screenshot analysis via vision-capable LLMs |
+| **Process Management** | ✅ Done | Background process start/read/write/stop with sessions |
 
 ### 📁 Project Structure
 
@@ -518,7 +523,7 @@ Each agent session maintains:
 
 ## 8. Milestones
 
-### Milestone 1: MVP - Core Agent with Git Safety (Target: 2 weeks)
+### Milestone 1: MVP - Core Agent with Git Safety ✅ COMPLETE
 
 **Goal:** A working agent that can safely perform coding tasks with rollback capability.
 
@@ -537,6 +542,11 @@ Each agent session maintains:
 | Checkpoint System | `AgentSessionManager.cs` | Tag milestones, enable rollback |
 | Rollback Command | `/rollback` | Reset to checkpoint or commit |
 | Token Tracking | `TokenTracker.cs` | Warn at 70%/85% context usage |
+| Multi-Agent Orchestration | `TaskOrchestrator.cs` | Coordinate multiple agents |
+| Plan/Task Decomposition | `TaskDecomposition.cs` | /plan and /orchestrate commands |
+| Browser Automation | `BrowserToolImpl.cs` | Playwright-based web browsing |
+| LSP Integration | `LspClient.cs` | OmniSharp code intelligence |
+| UI Automation (Linux) | `LinuxUIProvider.cs` | xdotool/ImageMagick-based UI interaction |
 
 #### 🔲 Remaining (To Complete MVP)
 
@@ -545,16 +555,17 @@ Each agent session maintains:
 | Auto-commit on tool execution | P1 | 1 day | Commit after write_file, apply_patch |
 | Integration testing | P1 | 2 days | End-to-end tests for MVP features |
 
-#### ❌ Deferred (Not in MVP)
+#### ✅ Completed (Moved from Milestones 2-3)
 
-- MCP/Deno Sandbox
-- RAG/PostgreSQL
-- TUI Interface
-- Multi-model orchestration
-- Task Templates
-- Progress Indicators
-- Dry-run Mode
-- Skills System
+- MCP/Deno Sandbox ✅
+- RAG/PostgreSQL ✅
+- TUI Interface ✅
+- Multi-model orchestration ✅
+- Task Templates ✅
+- Skills System ✅
+- Progress Indicators ✅
+- Dry-run Mode ✅
+- Conflict Detection ✅
 
 #### MVP User Story
 
@@ -589,19 +600,19 @@ If tests fail at step 6:
 
 ---
 
-### Milestone 2: Enhanced Safety & RAG (Target: +3 weeks)
+### Milestone 2: Enhanced Safety & RAG ✅ COMPLETE
 
 | Feature | Description |
 |---------|-------------|
 | MCP/Deno Sandbox | TypeScript execution in sandbox |
 | RAG Support | PostgreSQL/pgvector semantic search |
-| TUI Interface | Terminal.GUI for better UX |
+| TUI Interface | Terminal.Gui v2 for better UX |
 | Dry-run Mode | Preview changes before executing |
 | Conflict Detection | Warn before problematic merges |
 
 ---
 
-### Milestone 3: Productivity Features (Target: +3 weeks)
+### Milestone 3: Productivity Features ✅ COMPLETE
 
 | Feature | Description |
 |---------|-------------|
@@ -741,15 +752,35 @@ export async function myTool(params: MyParams): Promise<MyResult> {
 
 ### 9.2 Testing
 
+**THUVU follows Test-Driven Development (TDD)** for all new features and bug fixes.
+
+#### TDD Process
+1. **Red**: Write a failing test that defines the expected behavior
+2. **Green**: Write minimal code to make the test pass
+3. **Refactor**: Clean up the code while keeping tests green
+
+#### Test Project
+- `thuvu.Tests/` — xUnit test project with `MockHttpMessageHandler` for LLM mocking
+- Tests organized by component: `Tools/`, `Models/`, `Services/`, `Tui/`
+- Platform-specific tests guarded by `[Fact]` + `RuntimeInformation.IsOSPlatform()` checks
+
 ```bash
-# Run permission system demo
-/test-permissions
+# Run all tests
+dotnet test
 
-# Run MCP integration tests
-/test-mcp
+# Run specific test
+dotnet test --filter "FullyQualifiedName~MyTest"
 
-# Test specific tool
-/run dotnet test --filter "ToolName"
+# Run with coverage
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+#### Legacy Tests
+These run as standalone demos/validations:
+```bash
+/test-permissions    # Permission system demo
+/test-mcp            # MCP integration tests
+/run dotnet test     # Test specific tool
 ```
 
 ### 9.3 Configuration Override
@@ -761,9 +792,13 @@ Set environment variable `LM_AGENT_CONFIG` to use custom config path.
 ## 11. Dependencies
 
 ### Required
-- **.NET 8.0+**
+- **.NET 10.0+**
 - **LM Studio** (or OpenAI-compatible API)
 - **Deno** (for MCP code execution)
+
+### Linux UI Automation (optional)
+- **xdotool** - Window management, mouse/keyboard input
+- **ImageMagick (import)** or **scrot** or **gnome-screenshot** - Screenshots
 
 ### Optional
 - **PostgreSQL 15+** with pgvector (for RAG)
@@ -772,7 +807,7 @@ Set environment variable `LM_AGENT_CONFIG` to use custom config path.
 ### NuGet Packages
 - `Microsoft.Extensions.Logging`
 - `Npgsql` (PostgreSQL driver)
-- `Terminal.Gui` (TUI interface)
+- `Terminal.Gui` v2 (TUI interface)
 
 ---
 
@@ -829,7 +864,7 @@ dotnet run
 | No web browsing | Use RAG to index documentation locally | Phase 14: Web search |
 | Large files slow | Chunk large files before processing | Phase 12: Streaming |
 | Context overflow | Use `/clear` to reset conversation | Phase 9: Compression |
-| Windows paths only | Use WSL for Unix paths | Cross-platform paths |
+| UI element inspection Linux-only | Use ui_capture + vision model instead | Future: Linux accessibility APIs |
 
 ---
 
@@ -1077,3 +1112,4 @@ Preview changes without executing (useful for risky operations):
 | 2025-12-13 | 0.0.3 | RAG support, structured logging |
 | 2025-08-16 | 0.0.2 | TUI interface, permission system |
 | 2025-08-01 | 0.0.1 | Initial release |
+| 2026-05-04 | 0.1.0 | Cross-platform Linux support: net10.0 migration, Linux UI automation (xdotool/import/scrot), Terminal.Gui v2 migration, TDD guidelines |
